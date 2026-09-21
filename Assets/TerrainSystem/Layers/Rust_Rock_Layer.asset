@@ -1,0 +1,127 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9f92c902ab9556e468b43981d4b3f3d5, type: 3}
+  m_Name: Rust_Rock_Layer
+  m_EditorClassIdentifier: Assembly-CSharp::LocalTerrainPrototype.LTSurfaceLayer
+  baseColorMap: {fileID: 2800000, guid: f50deb7d216f7ac49a0548db314af5fd, type: 3}
+  tint: {r: 1, g: 1, b: 1, a: 1}
+  normalMap: {fileID: 2800000, guid: 028ba1d3e88d60247a19243f9eedbeef, type: 3}
+  normalStrength: 1
+  maskMap: {fileID: 2800000, guid: 02a3dbb5499266242826440d91ac161b, type: 3}
+  aoStrength: 1
+  heightStrength: 1
+  heightOffset: 0
+  displacement: 0
+  displacementAmplitude: 0.1
+  displacementCenter: 0
+  displacementSmoothingMip: 3
+  deformation: 0
+  deformationDepth: 0.15
+  deformationRecovery: 20
+  deformationTessellation: 32
+  metallic: 0
+  smoothness: 0
+  tileSizeMetres: {x: 4, y: 4}
+  tileOffsetMetres: {x: 0, y: 0}
+  details:
+  - id: 84a539afbef34cd1ab41e738c31e204c
+    enabled: 1
+    prefab: {fileID: 387600614627108884, guid: 627b5945498ec7c498f891d8714cbafc, type: 3}
+    category: 3
+    density: 0.5
+    probability: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.4, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: d7f78b8fcbed465b9ca9a4a27fc3647f
+    enabled: 1
+    prefab: {fileID: 4697047626839586244, guid: 02bf3ce088c4cd44691a8d353dbecb08, type: 3}
+    category: 3
+    density: 0.5
+    probability: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.4, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 08bed5adb4d34eb98031e84f375c0818
+    enabled: 1
+    prefab: {fileID: 3849192596600764344, guid: 7b3368f29c1493241a20833dae27ef24, type: 3}
+    category: 3
+    density: 0.5
+    probability: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.4, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 145935ffbd60422e9065a42155e382df
+    enabled: 1
+    prefab: {fileID: 2560732552008188974, guid: dc455798303e65e4f8d0b8b8e74340d1, type: 3}
+    category: 3
+    density: 0.5
+    probability: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.4, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5

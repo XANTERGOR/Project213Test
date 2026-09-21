@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 3dfbc99abb7253448bde821eef5d846f
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 101306
+  packageName: Photographic Grass Ultimate
+  packageVersion: 1.0
+  assetPath: Assets/DA/GrassUltimate/Model/DryGrass/Material/DryGrass.mat
+  uploadId: 717339

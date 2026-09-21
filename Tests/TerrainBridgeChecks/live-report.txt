@@ -1,0 +1,12 @@
+Request bridge-uniform-rings-20260913-v1
+cut x1, height x1: Local Terrain Prototype: validated
+cut x0,5, height x1: Local Terrain Prototype: validated
+cut x1,5, height x1: Local Terrain Prototype: validated
+cut x1, height x0,5: Local Terrain Prototype: validated
+cut x1, height x2: FAILED System.InvalidOperationException: Rock bridge needs closed, non-branching intersection contours. Check the source mesh for open or overlapping faces.
+  at LocalTerrainPrototype.LTEditorEngine.OrderedBoundaryLoops (System.Collections.Generic.List`1[T] segments) [0x000fd] in G:\UnityProjects\Project213-Testing\Assets\TerrainSystem\LocalTerrain\Editor\LTEditor.cs:522 
+  at LocalTerrainPrototype.LTEditorEngine.UpdateTrimmedRockMeshes (LocalTerrainPrototype.LTWorld world, System.Collections.Generic.List`1[T] stamps, System.Collections.Generic.List`1[T] pending, System.Boolean validateOnly) [0x0071b] in G:\UnityProjects\Project213-Testing\Assets\TerrainSystem\LocalTerrain\Editor\LTEditor.cs:1081 
+  at LocalTerrainPrototype.LTEditorEngine.Rebuild (LocalTerrainPrototype.LTWorld w, LocalTerrainPrototype.LTEditorEngine+State state, System.Boolean validateOnly) [0x00923] in G:\UnityProjects\Project213-Testing\Assets\TerrainSystem\LocalTerrain\Editor\LTEditor.cs:1212 
+  at LocalTerrainPrototype.LTEditorEngine.ValidateBridgeGeometry (System.Single cutScale, System.Single heightScale) [0x0016b] in G:\UnityProjects\Project213-Testing\Assets\TerrainSystem\LocalTerrain\Editor\LTEditor.cs:1137 
+  at LocalTerrainPrototype.LTBridgeCheckRunner.Run () [0x00114] in G:\UnityProjects\Project213-Testing\Assets\TerrainSystem\LocalTerrain\Editor\LTBridgeCheckRunner.cs:26 
+DONE

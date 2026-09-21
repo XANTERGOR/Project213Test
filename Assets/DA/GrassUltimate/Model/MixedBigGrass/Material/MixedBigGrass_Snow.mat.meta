@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 712cdc985626e4f489a358f46a729b8d
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 101306
+  packageName: Photographic Grass Ultimate
+  packageVersion: 1.0
+  assetPath: Assets/DA/GrassUltimate/Model/MixedBigGrass/Material/MixedBigGrass_Snow.mat
+  uploadId: 717339

@@ -1,0 +1,242 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9f92c902ab9556e468b43981d4b3f3d5, type: 3}
+  m_Name: Sand_Layer
+  m_EditorClassIdentifier: Assembly-CSharp::LocalTerrainPrototype.LTSurfaceLayer
+  baseColorMap: {fileID: 2800000, guid: 256f9937d0c682e48be35bc6fe35ab4c, type: 3}
+  tint: {r: 1, g: 1, b: 1, a: 1}
+  normalMap: {fileID: 2800000, guid: 3c943c406bb16394c9dca0eeba618012, type: 3}
+  normalStrength: 1
+  maskMap: {fileID: 2800000, guid: 65ffbb98ced8c784bb4c677ea096b214, type: 3}
+  aoStrength: 1
+  heightStrength: 1
+  heightOffset: 0
+  displacement: 0
+  displacementAmplitude: 0.15
+  displacementCenter: 0
+  displacementSmoothingMip: 0
+  deformation: 0
+  deformationDepth: 0.15
+  deformationRecovery: 20
+  deformationTessellation: 32
+  metallic: 0
+  smoothness: 0
+  tileSizeMetres: {x: 4, y: 4}
+  tileOffsetMetres: {x: 0, y: 0}
+  detailDensityMask:
+    enabled: 1
+    patchSize: 3
+    patchCoverage: 0.5
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.2
+    patchSeed: 0
+  details:
+  - id: 7268df03b6914caa94602948f96bab04
+    enabled: 1
+    prefab: {fileID: 8524633874605030504, guid: 227b1165c4ba698438dadb58ad791c71, type: 3}
+    category: 1
+    density: 0.5
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.3, y: 0.5}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.5
+    deformationBoundsPadding: 0.5
+  - id: 5e5d6d0f1e294d2090a675378c5f9b20
+    enabled: 1
+    prefab: {fileID: 2653810025838252133, guid: f2fcf81b3a446b844b312059c3d53d5f, type: 3}
+    category: 1
+    density: 0.5
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.3, y: 0.6}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: f4c106bd0a8c4d08b3d5a70faa85eec7
+    enabled: 1
+    prefab: {fileID: 5032733467220894670, guid: 1f80d3359d2e8da488a866f458e69d4b, type: 3}
+    category: 1
+    density: 0.5
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.3, y: 0.6}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: ef97208d4aae4a7dae794438de8117a2
+    enabled: 1
+    prefab: {fileID: 991967144394293582, guid: 947f5e1f30e30b946b58147cc7183922, type: 3}
+    category: 1
+    density: 0.5
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.3, y: 0.6}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: ce521f654a794532a55a383c2fb99395
+    enabled: 1
+    prefab: {fileID: 8246475433031689744, guid: 3f1e04f65f5f9934f88cadbab6f6b6ab, type: 3}
+    category: 1
+    density: 0.5
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.3, y: 0.6}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: c9796e2dd3c347c19c5bf71f62b182fb
+    enabled: 1
+    prefab: {fileID: 5508888043223300516, guid: c63a0b684741d7e49bc8f9c30725278f, type: 3}
+    category: 1
+    density: 0.5
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.3, y: 0.6}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: d75c4dc308e84c5db97ecc59e963f7f2
+    enabled: 1
+    prefab: {fileID: 3355598606219473242, guid: 8bda7510465fb4346b77452f66604fec, type: 3}
+    category: 1
+    density: 0.5
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.3, y: 0.6}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 2d0254f331994cdea48d5f9451a6eecf
+    enabled: 1
+    prefab: {fileID: 7252332719626986163, guid: 892a8730bca16f9439d5cc01919d089a, type: 3}
+    category: 1
+    density: 0.5
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    scaleRange: {x: 0.2, y: 0.4}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5

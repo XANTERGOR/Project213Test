@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9f92c902ab9556e468b43981d4b3f3d5, type: 3}
+  m_Name: Dirt_6_layer
+  m_EditorClassIdentifier: Assembly-CSharp::LocalTerrainPrototype.LTSurfaceLayer
+  baseColorMap: {fileID: 2800000, guid: 11bc367b3c9a6ff4590ad7c64e82aff8, type: 3}
+  tint: {r: 1, g: 1, b: 1, a: 1}
+  normalMap: {fileID: 2800000, guid: 4f865ccf8417e794eba240425286cbcf, type: 3}
+  normalStrength: 1
+  maskMap: {fileID: 2800000, guid: a2634621acd84704ca15a5e24d7745dc, type: 3}
+  aoStrength: 1
+  heightStrength: 1
+  heightOffset: 0
+  metallic: 0
+  smoothness: 0
+  tileSizeMetres: {x: 4, y: 4}
+  tileOffsetMetres: {x: 0, y: 0}

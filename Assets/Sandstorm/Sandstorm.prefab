@@ -1,0 +1,127 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &7780770238952961457
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 3549324363737982988}
+  - component: {fileID: 1779050824316030614}
+  m_Layer: 0
+  m_Name: Sandstorm
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &3549324363737982988
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7780770238952961457}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0.70382684, y: -0.068027556, z: -0.0680276, w: 0.7038269}
+  m_LocalPosition: {x: -79, y: 26.1, z: 21.3}
+  m_LocalScale: {x: 232.95128, y: 305.65686, z: 111.58512}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: -90, y: 0, z: -11.041}
+--- !u!114 &1779050824316030614
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7780770238952961457}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 26d6499a6bd256e47b859377446493a1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.HighDefinition.Runtime::UnityEngine.Rendering.HighDefinition.CustomPassVolume
+  m_IsGlobal: 1
+  fadeRadius: 0
+  priority: 0
+  customPasses:
+  - rid: 6332397749197865028
+  injectionPoint: 1
+  m_TargetCamera: {fileID: 0}
+  useTargetCamera: 0
+  references:
+    version: 2
+    RefIds:
+    - rid: 6332397749197865028
+      type: {class: SandstormRaymarchPass, ns: , asm: Assembly-CSharp}
+      data:
+        m_Name: Custom Pass
+        enabled: 1
+        targetColorBuffer: 0
+        targetDepthBuffer: 0
+        clearFlags: 0
+        passFoldout: 0
+        m_Version: 0
+        raymarchShader: {fileID: 4800000, guid: 026476619f7a35e45aef1ff688a75c77, type: 3}
+        bounds: {fileID: 3549324363737982988}
+        densityTexture: {fileID: 11700000, guid: 49e1922219aedb74e932be5f29bf2a0c, type: 3}
+        densityFrames:
+        - {fileID: 11700000, guid: 49e1922219aedb74e932be5f29bf2a0c, type: 3}
+        - {fileID: 11700000, guid: e8d6cf2945c136347affaf811e710780, type: 3}
+        - {fileID: 11700000, guid: 48c442db9febe4246b35c6b772a6006b, type: 3}
+        - {fileID: 11700000, guid: 09b01840284cc0046b788ee892ecd704, type: 3}
+        - {fileID: 11700000, guid: 0c8a14d2ad3358c4dba1ed69c1eb35c2, type: 3}
+        - {fileID: 11700000, guid: 2794c294541584b4e839e8f225847924, type: 3}
+        - {fileID: 11700000, guid: 4b8e158020ffd234d9b1f5050b60a86f, type: 3}
+        - {fileID: 11700000, guid: a1e7dd3af8e40484aa89352a3e137770, type: 3}
+        - {fileID: 11700000, guid: 5852eb2b6e7f09c40a8a2606d10d6ae5, type: 3}
+        - {fileID: 11700000, guid: 4b23b6b98595ecc499d7fef7806e4320, type: 3}
+        - {fileID: 11700000, guid: 23715cff09d2e3a4997988d897cfe188, type: 3}
+        - {fileID: 11700000, guid: be8fe94df9e62604f8a6b964944d80e9, type: 3}
+        - {fileID: 11700000, guid: 64602f3da7db5e14b8c38abe6e14d319, type: 3}
+        - {fileID: 11700000, guid: 1de00cbf39c90c741a2c162f79810b28, type: 3}
+        - {fileID: 11700000, guid: 9f4a60d629a8fd04fbbdaf2c8801ca8b, type: 3}
+        - {fileID: 11700000, guid: a11b253b668868045aa20d832761a46c, type: 3}
+        - {fileID: 11700000, guid: f48cdc471be995a4c8e9782a0894a68a, type: 3}
+        - {fileID: 11700000, guid: 168845978b21e4b44920f45b46c4e9a9, type: 3}
+        - {fileID: 11700000, guid: 365883167dea7c24d8c080ebe67abba4, type: 3}
+        - {fileID: 11700000, guid: 792d2a9b3ff17e343ad6b8eb2640c573, type: 3}
+        - {fileID: 11700000, guid: 96642dae51ff83240983cd933dd791d2, type: 3}
+        - {fileID: 11700000, guid: 0bbbd7aee7fd8344081a90000de2aa5f, type: 3}
+        - {fileID: 11700000, guid: 0e19556a1c0bb5e4ba7fd868447beeaf, type: 3}
+        - {fileID: 11700000, guid: 74dad76ae64252d45a1afad42650bb31, type: 3}
+        - {fileID: 11700000, guid: ebb6a90e97df19e438258d1a7a320b91, type: 3}
+        - {fileID: 11700000, guid: ee574578754937d4ca984f2d278a8510, type: 3}
+        - {fileID: 11700000, guid: 7c937d58759c03646a477e22badb52f8, type: 3}
+        - {fileID: 11700000, guid: 31a0b9989f973c64ab24d00eca8c7012, type: 3}
+        - {fileID: 11700000, guid: a925e6af85f82ef498bd178d4716cb05, type: 3}
+        - {fileID: 11700000, guid: 987a01afc03b9514aaea438706e5c2d4, type: 3}
+        - {fileID: 11700000, guid: a7f1e0272ef754f4089d935e5e521698, type: 3}
+        - {fileID: 11700000, guid: fc971257fb3fade4d9a91619d8117281, type: 3}
+        animate: 1
+        framesPerSecond: 4
+        playbackSpeed: 0.5
+        loop: 1
+        interpolateFrames: 1
+        previewPosition: 0
+        sun: {fileID: 0}
+        swapYZ: 1
+        flipX: 0
+        flipY: 0
+        flipZ: 0
+        densityMultiplier: 1
+        densityThreshold: 0
+        extinction: 0.5
+        edgeFade: 0.015
+        dustColor: {r: 5.2078433, g: 4.471931, b: 3.8017256, a: 1}
+        ambientColor: {r: 0.4716981, g: 0.4716981, b: 0.4716981, a: 1}
+        ambientStrength: 4
+        sunStrength: 3
+        anisotropy: 0.25
+        viewSteps: 64
+        lightSteps: 12
+        jitter: 1
+        earlyExit: 0.01

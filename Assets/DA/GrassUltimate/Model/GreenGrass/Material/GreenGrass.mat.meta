@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 2b1db32e19c2ed84fb34428b3c36e988
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 101306
+  packageName: Photographic Grass Ultimate
+  packageVersion: 1.0
+  assetPath: Assets/DA/GrassUltimate/Model/GreenGrass/Material/GreenGrass.mat
+  uploadId: 717339

@@ -1,0 +1,59 @@
+#pragma kernel BakeNoise
+#pragma kernel BuildOccupancy
+#pragma kernel DilateOccupancy
+#pragma target 5.0
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
+#include "SandstormDensity.hlsl"
+RWTexture3D<float> _OptOutput;
+Texture3D<float> _OccInput;
+int _OptSize, _NoiseKind, _NoiseOctaves, _DilateRadius;
+float4 _SourceSize;
+[numthreads(4,4,4)]
+void BakeNoise(uint3 id:SV_DispatchThreadID)
+{
+ if(any(id >= (uint)_OptSize)) return;
+ float3 f=(id+0.5)/_OptSize;
+ float3 w=f*f*(3-2*f);
+ float v=0;
+ // Blend shifted copies once at bake time to create a periodic tile.
+ [unroll] for(int z=0;z<2;z++)
+ [unroll] for(int y=0;y<2;y++)
+ [unroll] for(int x=0;x<2;x++)
+ {
+  float3 o=float3(x,y,z);
+  float3 weight=lerp(1-w,w,o);
+  v+=StormNoise((f-o)*8,_NoiseKind,_NoiseOctaves)*weight.x*weight.y*weight.z;
+ }
+ _OptOutput[id]=saturate(v);
+}
+[numthreads(4,4,4)]
+void BuildOccupancy(uint3 id:SV_DispatchThreadID)
+{
+ if(any(id >= (uint)_OptSize)) return;
+ int3 dims=(int3)_SourceSize.xyz;
+ // Include all texels touched by linear filtering over this entire cell.
+ int3 lo=max((int3)floor((float3)id/_OptSize*dims-0.5),0);
+ int3 hi=min((int3)ceil((float3)(id+1)/_OptSize*dims-0.5),dims-1);
+ float occupied=0;
+ [loop] for(int z=lo.z;z<=hi.z;z++)
+ [loop] for(int y=lo.y;y<=hi.y;y++)
+ [loop] for(int x=lo.x;x<=hi.x;x++)
+ {
+  int4 p=int4(x,y,z,0);
+  if(_DensityTex.Load(p).r>0 || _DensityTexB.Load(p).r>0)
+  { _OptOutput[id]=1; return; }
+ }
+ _OptOutput[id]=occupied;
+}
+[numthreads(4,4,4)]
+void DilateOccupancy(uint3 id:SV_DispatchThreadID)
+{
+ if(any(id >= (uint)_OptSize)) return;
+ int3 lo=max((int3)id-_DilateRadius,0);
+ int3 hi=min((int3)id+_DilateRadius,_OptSize-1);
+ [loop] for(int z=lo.z;z<=hi.z;z++)
+ [loop] for(int y=lo.y;y<=hi.y;y++)
+ [loop] for(int x=lo.x;x<=hi.x;x++)
+  if(_OccInput.Load(int4(x,y,z,0))>0) { _OptOutput[id]=1; return; }
+ _OptOutput[id]=0;
+}

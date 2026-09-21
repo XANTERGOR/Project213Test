@@ -1,0 +1,57 @@
+// Rebuilds sun transmittance for the current interpolated density frame.
+#pragma kernel BuildLightCache
+#pragma target 5.0
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
+#include "SandstormDensity.hlsl"
+
+RWTexture3D<float> _LightCacheOutput;
+float4 _LightDirectionLocal;
+
+int _GridSize, _LightSteps;
+            bool IntersectBox(float3 o, float3 d, out float enter, out float leave)
+            {
+                enter = -1e20;
+                leave = 1e20;
+                [unroll] for (int axis = 0; axis < 3; axis++)
+                {
+                    if (abs(d[axis]) < 1e-8)
+                    {
+                        if (o[axis] < -0.5 || o[axis] > 0.5) return false;
+                    }
+                    else
+                    {
+                        float a = (-0.5 - o[axis]) / d[axis];
+                        float b = ( 0.5 - o[axis]) / d[axis];
+                        enter = max(enter, min(a, b));
+                        leave = min(leave, max(a, b));
+                    }
+                }
+                return leave > max(enter, 0.0);
+            }
+
+
+
+            float SunTransmission(float3 p, float3 lightLocal)
+            {
+                float enter, leave;
+                if (!IntersectBox(p, lightLocal, enter, leave)) return 1;
+                int count = _LightSteps;
+                float ds = leave / count;
+                float opticalDepth = 0;
+                [loop] for (int j = 0; j < count; j++)
+                {
+                    opticalDepth += Density(p + lightLocal * ((j + 0.5) * ds)) * _DensityParams.z * ds;
+                    if (opticalDepth > 10) break;
+                }
+                return exp(-opticalDepth);
+            }
+
+
+[numthreads(4,4,4)]
+void BuildLightCache(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= (uint)_GridSize)) return;
+    float3 p = (float3(id) + 0.5) / (float)_GridSize - 0.5;
+    // Compute even in empty cells: their values can be interpolated near smoke boundaries.
+    _LightCacheOutput[id] = SunTransmission(p, _LightDirectionLocal.xyz);
+}

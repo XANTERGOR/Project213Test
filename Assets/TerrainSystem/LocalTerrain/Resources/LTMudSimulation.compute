@@ -1,0 +1,44 @@
+#pragma kernel Initialize
+#pragma kernel Contact
+#pragma kernel Recover
+
+RWTexture2D<float> _Depth;
+RWTexture2D<float2> _State; // recovery metres/sec, last integration time
+struct ContactData { uint index; float dose; float limit; float recovery; float duration; };
+StructuredBuffer<ContactData> _Contacts;
+StructuredBuffer<uint> _Tiles;
+int _Width, _Height, _Count, _TileColumns;
+float _Now;
+
+[numthreads(8,8,1)]
+void Initialize(uint3 id:SV_DispatchThreadID)
+{
+    if(id.x>=_Width||id.y>=_Height)return;
+    _Depth[id.xy]=0;_State[id.xy]=float2(0,_Now);
+}
+[numthreads(64,1,1)]
+void Contact(uint3 id:SV_DispatchThreadID)
+{
+    uint index=id.x+id.y*(32768*64);
+    if(index>=_Count)return;
+    ContactData c=_Contacts[index];
+    uint2 p=uint2(c.index%_Width,c.index/_Width);
+    float2 state=_State[p];
+    float elapsed=max(0,_Now-state.y);
+    // Contacts already include swept exposure duration; never recover that interval.
+    float depth=max(0,_Depth[p]-state.x*max(0,elapsed-c.duration));
+    _Depth[p]=min(c.limit,depth+c.dose);
+    _State[p]=float2(c.recovery,_Now);
+}
+[numthreads(8,8,1)]
+void Recover(uint3 group:SV_GroupID,uint3 thread:SV_GroupThreadID)
+{
+    uint index=group.x+group.y*32768;
+    if(index>=_Count)return;
+    uint tile=_Tiles[index];
+    uint2 p=uint2(tile%_TileColumns,tile/_TileColumns)*8+thread.xy;
+    if(p.x>=_Width||p.y>=_Height)return;
+    float2 state=_State[p];
+    _Depth[p]=max(0,_Depth[p]-state.x*max(0,_Now-state.y));
+    _State[p]=float2(state.x,_Now);
+}

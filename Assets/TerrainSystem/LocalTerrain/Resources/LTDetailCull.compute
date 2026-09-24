@@ -1,0 +1,55 @@
+#pragma kernel Cull
+#pragma target 5.0
+struct LTDetailGpuData
+{
+    float4x4 objectToWorld;
+    float4x4 worldToObject;
+    float4 positionSize;
+    float4 lodPositionRandom;
+    float4 center;
+    float4 extents;
+};
+StructuredBuffer<LTDetailGpuData> _LTInstances;
+AppendStructuredBuffer<uint> _LTVisible;
+float4 _Planes[6];
+float4 _CameraPosition, _CameraForward;
+float4 _Distance; // end, fade start, far density, shadow distance (-1 = unlimited)
+float4 _Projection; // orthographic, size or tan(fov/2), bias, max quality LOD
+float4 _LodThresholds[8];
+int _Count, _LodCount, _HasLod, _TargetLod, _Thin;
+int _PrefabShadowMode, _DrawShadowMode, _LimitShadows;
+bool Visible(float3 center,float3 extents)
+{
+    for(int p=0;p<6;p++)
+        if(dot(_Planes[p].xyz,center)+_Planes[p].w+dot(abs(_Planes[p].xyz),extents)<0)return false;
+    return true;
+}
+[numthreads(64,1,1)]
+void Cull(uint3 tid:SV_DispatchThreadID)
+{
+    uint i=tid.x;
+    if(i>=_Count)return;
+    LTDetailGpuData item=_LTInstances[i];
+    float distanceSq=dot(item.positionSize.xyz-_CameraPosition.xyz,item.positionSize.xyz-_CameraPosition.xyz);
+    if(distanceSq>=_Distance.x*_Distance.x)return;
+    float range=_Distance.x-min(_Distance.y,_Distance.x);
+    float fade=range>0?saturate((sqrt(distanceSq)-min(_Distance.y,_Distance.x))/range):0;
+    if(_Thin!=0 && item.lodPositionRandom.w>=lerp(1,_Distance.z,fade))return;
+    int lod=0;
+    if(_HasLod!=0)
+    {
+        float depth=dot(item.lodPositionRandom.xyz-_CameraPosition.xyz,_CameraForward.xyz);
+        float denominator=_Projection.x!=0?max(.001,2*_Projection.y):2*max(.001,depth)*_Projection.y;
+        float height=item.positionSize.w*max(.01,_Projection.z)/denominator;
+        for(;lod<_LodCount;lod++)if(height>=_LodThresholds[lod].x)break;
+        if(lod==_LodCount)return;
+        lod=min(_LodCount-1,max(lod,(int)_Projection.w));
+    }
+    if(lod!=_TargetLod)return;
+    bool shadowsInRange=_LimitShadows==0 || distanceSq<_Distance.w*_Distance.w;
+    int mode=shadowsInRange?_PrefabShadowMode:0;
+    if(mode!=_DrawShadowMode || (_PrefabShadowMode==3 && mode==0))return;
+    // Keep offscreen casters; frustum-only culling would drop their visible shadows.
+    if(!Visible(item.center.xyz,item.extents.xyz) && mode==0)return;
+    _LTVisible.Append(i);
+}

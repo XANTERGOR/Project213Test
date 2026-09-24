@@ -9,8 +9,9 @@ namespace LocalTerrainPrototype
     {
         static readonly string[] Fields={"enabled","prefab","category","density","probability",
             "densityMaskMode","patchSize","patchCoverage","patchSoftness","patchMinimumDensity","patchSeed",
+            "patchScaleEnabled","patchScaleEdge","patchScaleInside","patchScaleSoftness",
             "scaleRange","yawRange","slopeRange","alignToNormal","heightOffsetRange",
-            "fadeStart","cullDistance","shaderFade","thinInDistance","farDensity","deformationBoundsPadding"};
+            "fadeStart","cullDistance","limitShadowDistance","shadowDistance","shaderFade","thinInDistance","farDensity","deformationBoundsPadding"};
         public override float GetPropertyHeight(SerializedProperty property,GUIContent label)
         {
             float height=EditorGUIUtility.singleLineHeight;
@@ -20,7 +21,12 @@ namespace LocalTerrainPrototype
             return height;
         }
         static bool Visible(SerializedProperty property,string name)
-            =>!name.StartsWith("patch")||property.FindPropertyRelative("densityMaskMode").enumValueIndex==(int)LTDetailMaskMode.Own;
+        {
+            if(name=="shadowDistance")return property.FindPropertyRelative("limitShadowDistance").boolValue;
+            if(!name.StartsWith("patch"))return true;
+            if(property.FindPropertyRelative("densityMaskMode").enumValueIndex!=(int)LTDetailMaskMode.Own)return false;
+            return !name.StartsWith("patchScale")||name=="patchScaleEnabled"||property.FindPropertyRelative("patchScaleEnabled").boolValue;
+        }
         public override void OnGUI(Rect position,SerializedProperty property,GUIContent label)
         {
             EditorGUI.BeginProperty(position,label,property);
@@ -44,7 +50,9 @@ namespace LocalTerrainPrototype
                         EditorGUI.PropertyField(line,child,new GUIContent("Маска плотности",child.tooltip));
                         if(EditorGUI.EndChangeCheck())property.FindPropertyRelative("maskModeConfigured").boolValue=true;
                     }
-                    else EditorGUI.PropertyField(line,child,new GUIContent(child.displayName,child.tooltip),true);
+                    else EditorGUI.PropertyField(line,child,new GUIContent(
+                        name=="limitShadowDistance"?"Ограничить дальность теней":
+                        name=="shadowDistance"?"Дальность теней, м":LTDetailInspector.ScaleLabel(name)??child.displayName,child.tooltip),true);
                 }
                 EditorGUI.indentLevel--;
             }
@@ -61,6 +69,7 @@ namespace LocalTerrainPrototype
             public string key;
             public float metres=32;
             public int worldSeed=12345;
+            public int mode;
             public double lastDraw;
         }
         // Bounded editor-only cache; textures never become project assets.
@@ -107,7 +116,8 @@ namespace LocalTerrainPrototype
                 previews.Add(id,preview);
             }
             preview.lastDraw=EditorApplication.timeSinceStartup;
-            EditorGUILayout.LabelField("Предпросмотр маски плотности",EditorStyles.miniBoldLabel);
+            EditorGUILayout.LabelField("Предпросмотр маски",EditorStyles.miniBoldLabel);
+            preview.mode=GUILayout.Toolbar(preview.mode,new[]{"Плотность","Размер"});
             preview.metres=Mathf.Clamp(EditorGUILayout.FloatField(new GUIContent("Область превью, м",
                 "Размер квадратного образца XZ от (0,0). Только масштаб предпросмотра, не меняет расстановку."),preview.metres),1,1024);
             int contextSeed;
@@ -131,12 +141,20 @@ namespace LocalTerrainPrototype
                 patchCoverage=mask.FindPropertyRelative("patchCoverage").floatValue,
                 patchSoftness=mask.FindPropertyRelative("patchSoftness").floatValue,
                 patchMinimumDensity=mask.FindPropertyRelative("patchMinimumDensity").floatValue,
-                patchSeed=mask.FindPropertyRelative("patchSeed").intValue
+                patchSeed=mask.FindPropertyRelative("patchSeed").intValue,
+                patchScaleEnabled=mask.FindPropertyRelative("patchScaleEnabled").boolValue,
+                patchScaleEdge=mask.FindPropertyRelative("patchScaleEdge").floatValue,
+                patchScaleInside=mask.FindPropertyRelative("patchScaleInside").floatValue,
+                patchScaleSoftness=mask.FindPropertyRelative("patchScaleSoftness").floatValue
             };
-            string key=JsonUtility.ToJson(entry)+"|"+contextSeed+"|"+preview.metres.ToString("R",System.Globalization.CultureInfo.InvariantCulture);
+            float maxScale=entry.patchScaleEnabled?Mathf.Max(.01f,Mathf.Max(entry.patchScaleEdge,entry.patchScaleInside)):1;
+            string key=JsonUtility.ToJson(entry)+"|"+contextSeed+"|"+preview.mode+"|"+preview.metres.ToString("R",System.Globalization.CultureInfo.InvariantCulture);
             var row=GUILayoutUtility.GetRect(0,160,GUILayout.ExpandWidth(true));
             float side=Mathf.Min(160,row.width);
             var rect=new Rect(row.x+(row.width-side)*.5f,row.y,side,side);
+            // GUI.Box reserves a control ID even though it is passive. Call it on EVERY
+            // event so subsequent text fields keep the same IDs during input/repaint.
+            GUI.Box(rect,GUIContent.none);
             if(Event.current.type==EventType.Repaint)
             {
                 if(!preview.texture)
@@ -150,17 +168,29 @@ namespace LocalTerrainPrototype
                     for(int z=0;z<128;z++)for(int x=0;x<128;x++)
                     {
                         // Same final density multiplier used by generation, including coverage/falloff/minimum.
-                        float value=LTDetailMath.DensityMask(entry,(x+.5f)/128*preview.metres,(z+.5f)/128*preview.metres,contextSeed);
+                        float value=LTDetailMath.DensityMask(entry,(x+.5f)/128*preview.metres,(z+.5f)/128*preview.metres,contextSeed,out float scale);
+                        if(preview.mode==1)value=scale/maxScale;
                         byte gray=(byte)Mathf.RoundToInt(Mathf.Clamp01(value)*255);
                         preview.pixels[z*128+x]=new Color32(gray,gray,gray,255);
                     }
                     preview.texture.SetPixels32(preview.pixels);preview.texture.Apply(false,false);preview.key=key;
                 }
-                GUI.Box(rect,GUIContent.none);
                 GUI.DrawTexture(new Rect(rect.x+1,rect.y+1,rect.width-2,rect.height-2),preview.texture,ScaleMode.ScaleToFit,false);
             }
-            EditorGUILayout.LabelField("Белое — густо · чёрное — пусто · серое — реже",EditorStyles.miniLabel);
+            EditorGUILayout.LabelField(preview.mode==0?"Белое — густо · чёрное — пусто · серое — реже":
+                "Белое — ×"+maxScale.ToString("0.##")+" · чёрное — ×0 · множитель Scale Range",EditorStyles.miniLabel);
             EditorGUILayout.LabelField("Образец XZ от (0,0), без весов слоёв и границ штампа.",EditorStyles.miniLabel);
+        }
+        public static string ScaleLabel(string name)
+        {
+            switch(name)
+            {
+                case "patchScaleEnabled":return "Размер по маске";
+                case "patchScaleEdge":return "Размер у края, ×";
+                case "patchScaleInside":return "Размер внутри, ×";
+                case "patchScaleSoftness":return "Мягкость размера";
+                default:return null;
+            }
         }
         static void DrawCommonMask(SerializedObject owner)
         {
@@ -177,6 +207,17 @@ namespace LocalTerrainPrototype
                 {
                     var field=mask.FindPropertyRelative(fields[i]);
                     EditorGUILayout.PropertyField(field,new GUIContent(labels[i],field.tooltip));
+                }
+                var scaleEnabled=mask.FindPropertyRelative("patchScaleEnabled");
+                EditorGUILayout.PropertyField(scaleEnabled,new GUIContent(ScaleLabel("patchScaleEnabled"),scaleEnabled.tooltip));
+                if(scaleEnabled.boolValue)
+                {
+                    foreach(string name in new[]{"patchScaleEdge","patchScaleInside","patchScaleSoftness"})
+                    {
+                        var field=mask.FindPropertyRelative(name);
+                        EditorGUILayout.PropertyField(field,new GUIContent(ScaleLabel(name),field.tooltip));
+                    }
+                    EditorGUILayout.HelpBox("Размер растёт от края внутрь пятна по тому же шуму. Мягкость размера не меняет плотность. Множители действуют на все объекты с общей маской, поверх их Scale Range.",MessageType.Info);
                 }
                 DrawMaskPreview(owner,mask);
             }
@@ -291,6 +332,57 @@ namespace LocalTerrainPrototype
             EditorGUILayout.LabelField("Ячейки: загружено / зона камер",renderer.CellCount+" / "+renderer.WantedCellCount);
             EditorGUILayout.LabelField("Последняя камера",renderer.LastCamera??"—");
             EditorGUILayout.LabelField("Draw calls / инстансы частей",renderer.LastDrawCalls+" / "+renderer.LastSubmittedInstances);
+            if(renderer.gpuDetails)
+            {
+                EditorGUILayout.LabelField("GPU: indirect calls / кандидаты",renderer.GpuDrawCalls+" / "+renderer.GpuCandidates);
+                EditorGUILayout.LabelField("GPU: общих проходов отсечения",renderer.GpuCullDispatches.ToString());
+                EditorGUILayout.LabelField("GPU: буферы / CPU fallback",(renderer.GpuBytes/(1024.0*1024)).ToString("F2")+" МиБ / "+renderer.GpuFallbackGroups+" групп");
+                EditorGUILayout.LabelField("GPU: резерв / пик буферов",(renderer.GpuReservedBytes/(1024.0*1024)).ToString("F2")+" / "+(renderer.GpuPeakBytes/(1024.0*1024)).ToString("F2")+" МиБ");
+                EditorGUILayout.LabelField("GPU: буферы / группы / камеры-группы",renderer.GpuBufferCount+" / "+renderer.GpuGroupCount+" / "+renderer.GpuViewCount);
+                EditorGUILayout.LabelField("GPU: материалы / освобождено",renderer.GpuMaterialCount+" / "+(renderer.GpuReleasedBytes/(1024.0*1024)).ToString("F2")+" МиБ суммарно");
+                EditorGUILayout.LabelField("GPU: ждут загрузки (эта камера)",renderer.GpuPendingGroups.ToString());
+                EditorGUILayout.LabelField("GPU upload: МиБ / CPU мс / пик",(renderer.GpuUploadBytes/(1024.0*1024)).ToString("F2")+" / "+renderer.GpuUploadMilliseconds.ToString("F2")+" / "+renderer.GpuPeakUploadMilliseconds.ToString("F2"));
+                EditorGUILayout.HelpBox("Upload-бюджет общий для камер этого мира: игровой кадр или обновление редактора. Пока группа не готова целиком, рисуется CPU. Резерв включает ещё не выделенные буферы; пик и освобождённые байты — с создания GPU backend. Это не полная VRAM. Одна операция драйвера может превысить мягкий бюджет.",MessageType.Info);
+                if(GUILayout.Button("Проверить учёт GPU-памяти"))renderer.CheckGpuMemory();
+                EditorGUILayout.HelpBox("GPU-режим: счётчики CPU ниже не включают GPU-экземпляры. Число кандидатов — до GPU-отсечения, не число видимых. Нет синхронного readback. Поддержаны DA_Grass_WIND, BaseShaderProps и HDRP/Lit; прочие шейдеры остаются на CPU. Индивидуальные классические Light Probes не передаются — проверьте освещение. Подготовка матриц и загрузка порций выполняются на CPU.",MessageType.Info);
+                if(GUILayout.Button("Почему объекты остались на CPU? → Console"))renderer.ReportGpuFallback();
+                if(!string.IsNullOrEmpty(renderer.GpuStatus))EditorGUILayout.HelpBox(renderer.GpuStatus,MessageType.Warning);
+                if(GUILayout.Button("Проверить GPU-шейдер и отсечение…"))LTDetailGpuCheck.Run();
+            }
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Диагностика детализации — CPU",EditorStyles.boldLabel);
+            void Metric(string label,string tooltip,string value)
+                =>EditorGUILayout.LabelField(new GUIContent(label,tooltip),new GUIContent(value));
+            string Ms(double value)=>value.ToString("F2")+" мс";
+            string Pair(double last,double peak)=>Ms(last)+" / "+Ms(peak);
+            Metric("Партии: без объединения / факт","Число вызовов RenderMeshInstanced для того же отбора: расчёт без объединения и фактически отправлено. Не включает дополнительные GPU-проходы HDRP. Это не сравнение FPS.",
+                renderer.LastUnmergedDrawCalls+" / "+renderer.LastDrawCalls);
+            Metric("CPU-кэш матриц, МиБ","Матрицы загруженных ячеек. Предел — Matrix Cache MiB; это RAM, не VRAM. При перестройке временно существует ещё строящаяся ячейка.",
+                (renderer.CachedMatrixBytes/(1024.0*1024)).ToString("F2"));
+            Metric("Буферы партий: число / МиБ","Переиспользуемые CPU-массивы по 511 матриц, максимум 128 буферов (около 4 МиБ). Это дополнительная память, не входит в лимит кэша матриц; служебные объекты не учтены.",
+                renderer.BatchBufferCount+" / "+(renderer.BatchBufferCount*511*64/(1024.0*1024)).ToString("F2"));
+            Metric("Обновление: сейчас / пик","Весь последний Tick: подгрузка, подготовка и порция генерации. Пик с момента сброса, не весь кадр Unity.",
+                Pair(renderer.LastTickMilliseconds,renderer.PeakTickMilliseconds));
+            Metric("Планирование: сейчас","Часть Tick: план ячеек, приоритет, выгрузка. Не каждый Tick выполняет полный пересчёт.",Ms(renderer.LastStreamingMilliseconds));
+            Metric("Подготовка: последняя / пик","Последняя подготовка карт, мешей и источников, включая UpdatePainting. Значение сохраняется до следующей подготовки; это не расход каждого кадра. Вне бюджета генерации.",
+                Pair(renderer.LastPreparationMilliseconds,renderer.PeakPreparationMilliseconds));
+            Metric("Генерация: сейчас / пик","Порция генерации в последнем Tick. 0 — генерация не выполнялась. Пик с момента сброса.",
+                Pair(renderer.LastGenerationMilliseconds,renderer.PeakGenerationMilliseconds));
+            Metric("Отрисовка CPU: сейчас / пик","Последний проход последней камеры: отсечение, LOD, формирование и отправка партий. НЕ время GPU; пик может относиться к другой камере.",
+                Pair(renderer.LastRenderMilliseconds,renderer.PeakRenderMilliseconds));
+            Metric("Отбор / отправка CPU","Части времени отрисовки: отбор экземпляров и формирование/отправка партий. Уже включены в строку выше, не складывать повторно.",
+                Pair(System.Math.Max(0,renderer.LastRenderMilliseconds-renderer.LastSubmissionMilliseconds),renderer.LastSubmissionMilliseconds));
+            Metric("Ячейки: проверено / отсечено","В последнем проходе камеры; отсечённые ячейки не перебирают экземпляры.",renderer.LastTestedCells+" / "+renderer.LastCulledCells);
+            Metric("Экземпляры: проверено / выбрано","Проверено поштучно; выбрано уникальных экземпляров для хотя бы одной части меша или тени. Не количество submesh.",
+                renderer.LastTestedInstances+" / "+renderer.LastSelectedInstances);
+            Metric("Отсечено / из них заранее","Всего экземпляров не отправлено. Из них заранее — целыми ячейками/группами без поштучной проверки. Проверено + заранее = загружено.",
+                renderer.LastCulledInstances+" / "+renderer.LastEarlySkippedInstances);
+            Metric("Частей с обычными тенями","Отправленные экземпляры частей с Cast Shadows; не число проходов/каскадов теней и не GPU-время. Контактные тени не учитываются.",
+                renderer.LastShadowSubmittedInstances.ToString());
+            EditorGUILayout.HelpBox("Показатели отрисовки — для последней камеры, не сумма Scene + Game. CPU не показывает стоимость GPU: её смотрите в Unity Profiler. Пики включают прогрев и перестройку; после загрузки сбросьте статистику. Маркеры Profiler: LT.Details.*.",MessageType.Info);
+            if(GUILayout.Button("Сбросить статистику CPU"))renderer.ResetStatistics();
+            if(GUILayout.Button("Записать профиль CPU/GPU…"))LTDetailProfileCapture.OpenFor(renderer);
+            if(GUILayout.Button("Проверить Motion Vectors…"))LTDetailMotionDebug.Open();
             EditorGUILayout.HelpBox("Поверхность — исходная геометрия без GPU displacement и следов грязи. Нет физических объектов и реакции на игрока. LOD/fade дискретные; HDRP-освещение и тени проверьте в сцене.",MessageType.Info);
             if(GUILayout.Button("Перестроить детализацию"))renderer.Rebuild();
         }

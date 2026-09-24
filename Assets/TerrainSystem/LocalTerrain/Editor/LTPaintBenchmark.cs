@@ -43,12 +43,15 @@ namespace LocalTerrainPrototype
             public Bounds bounds;
         }
         LTWorld world;
+        LTLayerTextureArrays benchmarkArrays;
         Camera cameraToMeasure;
         bool tessellation;
         bool displacementComparison=true;
         readonly List<LTSurfaceLayer> layers=new List<LTSurfaceLayer>();
         readonly List<SavedRenderer> renderers=new List<SavedRenderer>();
-        readonly int[] layerSchedule={1,4,8,8,4,1,4,1,8};
+        static readonly int[] layerCases={1,4,8,LTPaintRuntime.LayerCapacity};
+        readonly int[] layerSchedule={1,4,8,LTPaintRuntime.LayerCapacity,LTPaintRuntime.LayerCapacity,8,4,1,4,LTPaintRuntime.LayerCapacity,1,8};
+        const int WeightMapCount=(LTPaintRuntime.LayerCapacity+3)/4;
         readonly int[] displacementSchedule={1,4,4,1,1,4};
         int[] schedule=>displacementComparison?displacementSchedule:layerSchedule;
         readonly List<Texture2D> weights=new List<Texture2D>();
@@ -112,15 +115,15 @@ namespace LocalTerrainPrototype
                     if(world)
                     {
                         if(world.baseLayer)layers.Add(world.baseLayer);
-                        foreach(var stamp in world.CollectPaintStamps())if(stamp.layer&&!layers.Contains(stamp.layer)&&layers.Count<8)layers.Add(stamp.layer);
+                        foreach(var stamp in world.CollectPaintStamps())if(stamp.EffectiveLayer&&!layers.Contains(stamp.EffectiveLayer)&&layers.Count<LTPaintRuntime.LayerCapacity)layers.Add(stamp.EffectiveLayer);
                     }
                 }
                 if(!displacementComparison)
                 {
-                while(layers.Count<8)layers.Add(null);
-                for(int i=0;i<8;i++)layers[i]=(LTSurfaceLayer)EditorGUILayout.ObjectField("Слой "+(i+1),layers[i],typeof(LTSurfaceLayer),false);
+                while(layers.Count<LTPaintRuntime.LayerCapacity)layers.Add(null);
+                for(int i=0;i<LTPaintRuntime.LayerCapacity;i++)layers[i]=(LTSurfaceLayer)EditorGUILayout.ObjectField("Слой "+(i+1),layers[i],typeof(LTSurfaceLayer),false);
                 if(layers.Any(l=>l&&(!l.baseColorMap||!l.normalMap||!l.maskMap)))
-                    EditorGUILayout.HelpBox("У некоторых слоёв не назначены все три карты. Такой тест не измеряет максимальную нагрузку от 24 текстур.",MessageType.Warning);
+                    EditorGUILayout.HelpBox($"У некоторых слоёв не назначены все три карты. Такой тест не измеряет максимальную нагрузку от {LTPaintRuntime.LayerCapacity*3} текстур слоёв.",MessageType.Warning);
                 }
                 EditorGUILayout.LabelField($"3 раунда; прогрев {Warmup}, замеры {Samples} кадров на этап.");
                 if(GUILayout.Button("Начать GPU Benchmark"))StartTest();
@@ -139,8 +142,8 @@ namespace LocalTerrainPrototype
             {message="Нужен активный LTWorld с готовыми чанками, без другого запущенного теста.";return;}
             if(!cameraToMeasure||!cameraToMeasure.isActiveAndEnabled||cameraToMeasure.cameraType!=CameraType.Game)
             {message="Назначь активную Game Camera.";return;}
-            if(!displacementComparison&&(layers.Count!=8||layers.Any(l=>!l)||layers.Distinct().Count()!=8))
-            {message="Назначь 8 разных Surface Layer. Тест 1/4/8 использует первые N слоёв списка.";return;}
+            if(!displacementComparison&&(layers.Count!=LTPaintRuntime.LayerCapacity||layers.Any(l=>!l)||layers.Distinct().Count()!=LTPaintRuntime.LayerCapacity))
+            {message=$"Назначь {LTPaintRuntime.LayerCapacity} разных Surface Layer. Тест {string.Join("/",layerCases)} использует первые N слоёв списка.";return;}
             if((tessellation||displacementComparison)&&!SystemInfo.supportsTessellationShaders){message="GPU не поддерживает тесселяцию.";return;}
             if(displacementComparison&&(world.showDisplacementCoverage||world.forceHullOneDiagnostic||world.uniformHullDiagnostic))
             {message="Выключи диагностику маски и тест Hull=1 перед замером.";return;}
@@ -169,6 +172,11 @@ namespace LocalTerrainPrototype
             reportPath=null;phase=0;lastFrame=-1;running=true;world.paintBenchmarkRunning=true;
             try
             {
+                if(!displacementComparison)
+                {
+                    benchmarkArrays=new LTLayerTextureArrays();
+                    if(!benchmarkArrays.Ensure(world,layers))throw new InvalidOperationException(benchmarkArrays.Status);
+                }
                 foreach(var chunk in world.generatedRoot.GetComponentsInChildren<LTChunk>())
                 {
                     var r=chunk.GetComponent<MeshRenderer>();var filter=chunk.GetComponent<MeshFilter>();
@@ -190,7 +198,8 @@ namespace LocalTerrainPrototype
                     material.SetVector("_LTRect",new Vector4(chunk.x*w,chunk.z*d,w,d));
                     material.SetVector("_LTWorldSize",new Vector4(world.source.size.x,world.source.size.z,0,0));
                     material.SetFloat("_LTHeightBlend",world.layerHeightBlend);
-                    for(int i=0;i<8;i++)BindLayer(material,layers[i],i);
+                    for(int i=0;i<LTPaintRuntime.LayerCapacity;i++)BindLayer(material,layers[i],i,benchmarkArrays.mask);
+                    benchmarkArrays.Bind(material,layers);
                     if(tessellation)
                     {
                         float end=Mathf.Max(.02f,world.displacementFadeEnd),start=Mathf.Clamp(world.displacementFadeStart,0,end-.01f);
@@ -216,7 +225,7 @@ namespace LocalTerrainPrototype
                     (cameraToMeasure.cullingMask&(1<<r.renderer.gameObject.layer))!=0&&GeometryUtility.TestPlanesAABB(planes,r.renderer.bounds)))
                     throw new InvalidOperationException("Камера не видит чанков с активным tessellation-материалом. Подойди к displacement-слою и дождись обновления.");
                 // Keep all cases alive until the run ends; no texture allocation during measurement.
-                if(!displacementComparison)foreach(int count in new[]{1,4,8})for(int group=0;group<2;group++)
+                if(!displacementComparison)foreach(int count in layerCases)for(int group=0;group<WeightMapCount;group++)
                 {
                     var texture=new Texture2D(1,1,TextureFormat.RGBAFloat,false,true){name="Benchmark weights",hideFlags=HideFlags.HideAndDontSave,wrapMode=TextureWrapMode.Clamp};
                     var color=Color.clear;for(int c=0;c<4;c++)if(group*4+c<count)color[c]=1f/count;
@@ -232,21 +241,21 @@ namespace LocalTerrainPrototype
             }
             catch(Exception e){Finish("Ошибка подготовки: "+e.Message);Debug.LogException(e);}
         }
-        static void BindLayer(Material m,LTSurfaceLayer l,int i)
+        static void BindLayer(Material m,LTSurfaceLayer l,int i,Texture2DArray maskArray)
         {
-            m.SetTexture("_LTColor"+i,l.baseColorMap?l.baseColorMap:Texture2D.whiteTexture);
-            m.SetTexture("_LTNormal"+i,l.normalMap);m.SetTexture("_LTMask"+i,l.maskMap);
             m.SetVector("_LTTiling"+i,new Vector4(l.tileSizeMetres.x,l.tileSizeMetres.y,
                 l.tileOffsetMetres.x/Mathf.Max(.001f,l.tileSizeMetres.x),l.tileOffsetMetres.y/Mathf.Max(.001f,l.tileSizeMetres.y)));
             m.SetVector("_LTTint"+i,l.tint.linear);
             m.SetVector("_LTSettings"+i,new Vector4(l.normalStrength,l.metallic,l.smoothness,l.maskMap?1:0));
             m.SetVector("_LTFlags"+i,new Vector4(l.normalMap?1:0,l.aoStrength,l.heightStrength,l.heightOffset));
-            m.SetVector("_LTDisplacement"+i,new Vector4(l.displacement&&l.maskMap?Mathf.Clamp(l.displacementAmplitude,0,2):0,Mathf.Clamp01(l.displacementCenter),
-                l.maskMap?Mathf.Clamp(l.displacementSmoothingMip,0,Mathf.Min(10,l.maskMap.mipmapCount-1)):0,0));
+            float smoothing=l.maskMap?Mathf.Clamp(l.displacementSmoothingMip,0,Mathf.Min(10,l.maskMap.mipmapCount-1)):0;
+            if(l.maskMap&&smoothing>0)
+                smoothing=Mathf.Clamp(smoothing+Mathf.Log((float)maskArray.width/Mathf.Max(l.maskMap.width,l.maskMap.height),2),0,maskArray.mipmapCount-1);
+            m.SetVector("_LTDisplacement"+i,new Vector4(l.displacement&&l.maskMap?Mathf.Clamp(l.displacementAmplitude,0,2):0,Mathf.Clamp01(l.displacementCenter),smoothing,0));
         }
         void SetPhase()
         {
-            frames=0;missing=0;int count=schedule[phase];int pair=count==1?0:count==4?2:4;
+            frames=0;missing=0;int count=schedule[phase];
             if(displacementComparison)
             {
                 foreach(var r in renderers)
@@ -257,8 +266,13 @@ namespace LocalTerrainPrototype
                     if(count==1)r.test.shader=Resources.Load<Shader>("LTEightLayers");
                 }
             }
-            else foreach(var r in renderers){r.test.SetTexture("_LTWeights0",weights[pair]);r.test.SetTexture("_LTWeights1",weights[pair+1]);}
-            report.results.Add(new Result{layers=displacementComparison?0:count,mode=PhaseLabel(count),round=phase/(displacementComparison?2:3)+1});
+            else
+            {
+                int firstMap=Array.IndexOf(layerCases,count)*WeightMapCount;
+                foreach(var r in renderers)for(int group=0;group<WeightMapCount;group++)
+                    r.test.SetTexture("_LTWeights"+group,weights[firstMap+group]);
+            }
+            report.results.Add(new Result{layers=displacementComparison?0:count,mode=PhaseLabel(count),round=phase/(displacementComparison?2:layerCases.Length)+1});
         }
         string PhaseLabel(int count)=>!displacementComparison?count+" слоёв":count==1?"Без displacement":"Displacement, нормали террейна";
         bool Stable()
@@ -327,12 +341,13 @@ namespace LocalTerrainPrototype
                 if(r.snapshot)DestroyImmediate(r.snapshot);
             }
             renderers.Clear();foreach(var t in weights)if(t)DestroyImmediate(t);weights.Clear();
+            benchmarkArrays?.Dispose();benchmarkArrays=null;
             if(world)world.paintBenchmarkRunning=false;
             message=status;
             if(report!=null)
             {
                 report.status=status;
-                foreach(int count in displacementComparison?new[]{1,4}:new[]{1,4,8})
+                foreach(int count in displacementComparison?new[]{1,4}:layerCases)
                 {
                     var complete=report.results.Where(r=>r.mode==PhaseLabel(count)&&r.samples.Count==Samples).ToArray();
                     if(complete.Length==0)continue;
@@ -341,7 +356,7 @@ namespace LocalTerrainPrototype
                 message+="\nЭто время всей камеры, не только террейна.";
                 try
                 {
-                    string folder=Path.GetFullPath(Path.Combine(Application.dataPath,"../Temp/LocalTerrainGpuBenchmarks"));Directory.CreateDirectory(folder);
+                    string folder=Path.GetFullPath(Path.Combine(Application.dataPath,"../Logs/LocalTerrainGpuBenchmarks"));Directory.CreateDirectory(folder);
                     reportPath=Path.Combine(folder,DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff")+"-"+Guid.NewGuid().ToString("N")+".json");
                     File.WriteAllText(reportPath,JsonUtility.ToJson(report,true));message+="\nОтчёт: "+reportPath;
                 }

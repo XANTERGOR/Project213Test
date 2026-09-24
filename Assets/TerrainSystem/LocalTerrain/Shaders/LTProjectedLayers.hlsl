@@ -18,10 +18,10 @@ void LTSampleProjectedLayers(float3 p,float3 normalWS,bool triplanar,
         float2 uv=axis==0?p.zy:axis==1?p.xz:p.xy;
         float2 ux=axis==0?dx.zy:axis==1?dx.xz:dx.xy;
         float2 uy=axis==0?dy.zy:axis==1?dy.xz:dy.xy;
-        float3 c,tn;float a,s,m;
-        LTSampleLayersMapped(p.xz,uv,ux,uy,c,tn,a,s,m);
-        float2 slope=-tn.xy/max(tn.z,.0001);
-        float3 g=axis==0?float3(0,slope.y,slope.x):axis==1?float3(slope.x,0,slope.y):float3(slope.x,slope.y,0);
+        float3 c,tn,g;float a,s,m;
+        // Roads always sample their XZ spline frame, including on side projections.
+        // Rotate each road normal before blending it with the other layer gradients.
+        LTSampleLayersMappedFrame(p.xz,dx.xz,dy.xz,uv,ux,uy,axis,c,tn,a,s,m,g);
         color+=weights[axis]*c;gradient+=weights[axis]*g;
         ao+=weights[axis]*a;smoothness+=weights[axis]*s;metallic+=weights[axis]*m;
     }

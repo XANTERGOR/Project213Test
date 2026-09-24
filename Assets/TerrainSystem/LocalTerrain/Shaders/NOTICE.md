@@ -15,6 +15,19 @@ Unless expressly provided otherwise, the Software under this license is made
 available strictly on an “AS IS” BASIS WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED. Please review the license for details on these and other terms and conditions.
 
-Local modifications: independent texture bindings for eight layers, two coverage
-maps, RGB AO/height/smoothness mapping, height-weighted blending, normal blending.
+Local modifications: three world-shared Texture2DArray bindings for color, normal
+and RGB AO/height/smoothness, twelve local layer slots mapped to palette slices,
+three coverage maps, height-weighted blending and normal blending. Color arrays
+are sRGB; normal/mask arrays are linear. Imported normals are decoded when packed
+and stored as canonical RGB normals. Spline projection and displacement sample
+the same arrays. Source assets and installed HDRP packages are not modified.
+The terrain variants omit eight inherited Lit texture maps (tangent TS/OS,
+anisotropy, iridescence thickness/mask, specular color, transmittance color and
+coat mask) and their sampling variants. These are not LTSurfaceLayer inputs;
+removing them alone did NOT resolve Unity's reported 70/64 texture-parameter
+overflow. The array migration replaces 36 per-layer texture bindings with three,
+without dropping terrain layers or deformation maps. Inherited scalar CBUFFER
+layout is preserved; three LT palette-mapping vectors are added consistently.
+Device limits must still be checked in Unity, including native warnings/asserts;
+standalone HLSL compilation and atlas readback alone do not validate HDRP terrain.
 Recheck these copies when upgrading HDRP. The installed package is not modified.

@@ -88,6 +88,7 @@ namespace LocalTerrainPrototype
         }
         sealed class Stamp
         {
+            public LTRoadMath.Snapshot road;
             public int id;
             public string signature;
             public Rect bounds;
@@ -192,6 +193,19 @@ namespace LocalTerrainPrototype
             {
                 if (!child.gameObject.activeInHierarchy || child == w.generatedRoot) continue;
                 if (child.GetComponent<LTWorld>()) continue;
+                if(child.GetComponent<LTRoadGenerated>())continue;
+                var road=child.GetComponent<LTRoad>();
+                if(road&&road.enabled)
+                {
+                    // Invalid paths are displayed by the road inspector; never reuse stale geometry.
+                    try
+                    {
+                        var snapshot=road.Capture(w);
+                        result.Add(new Stamp{id=road.GetInstanceID(),signature="road:"+snapshot.geometryHash,
+                            bounds=snapshot.bounds,affectHeight=true,road=snapshot});
+                    }
+                    catch(ArgumentException) { }
+                }
                 var s = child.GetComponent<LTHeightStamp>();
                 if (s && s.enabled)
                 {
@@ -296,6 +310,14 @@ namespace LocalTerrainPrototype
             float baseCell=Mathf.Max(.000001f,Mathf.Max(w.source.size.x/w.chunksX,w.source.size.z/w.chunksZ)/Mathf.Max(1,w.cellsPerChunk));
             foreach(var stamp in state.previous)
             {
+                if(stamp.road!=null)
+                {
+                    var road=stamp.road;float cell=road.terrainCellSize;
+                    var roadZones=new List<LTStampMesh.Zone>{new LTStampMesh.Zone{bounds=road.bounds,
+                        cellSize=cell,edgeCellSize=cell,customCellSize=(x,z)=>cell,coverageIntersects=road.Intersects}};
+                    result.Add(new Density{id=stamp.id,bounds=road.bounds,cellSize=cell,zones=roadZones,signature=stamp.signature});
+                    continue;
+                }
                 if(stamp.meshStamp)
                 {
                     if(stamp.meshBlendDistance<=0&&!stamp.meshCutTerrain)continue;
@@ -486,13 +508,14 @@ namespace LocalTerrainPrototype
                 catch (Exception e) { w.autoUpdate = false; Debug.LogException(e,w); }
             }
         }
-        public static void Refresh(LTWorld w, bool all)
+        public static void Refresh(LTWorld w, bool all, bool saveAssets = true)
         {
             if (!w.source || !w.generatedRoot || !ValidTransform(w)) return;
             var s = GetState(w); var detectionTimer=Stopwatch.StartNew(); Detect(w,s,Capture(w));
             w.lastDetectionMilliseconds=(float)detectionTimer.Elapsed.TotalMilliseconds;
             if (all) for (int i=0;i<w.chunksX*w.chunksZ;i++) s.dirty.Add(i);
-            Rebuild(w,s); UpdateColliders(w,s); AssetDatabase.SaveAssets();
+            Rebuild(w,s); UpdateColliders(w,s);
+            if(saveAssets)AssetDatabase.SaveAssets();
         }
         static void FlushAll()
         {
@@ -590,6 +613,14 @@ namespace LocalTerrainPrototype
             }
             return false;
         }
+        public static float SampleHeightForRoad(LTWorld world,float x,float z)
+            =>CreateHeightSamplerForRoad(world)(x,z);
+        public static Func<float,float,float> CreateHeightSamplerForRoad(LTWorld world)
+        {
+            if(!world||!world.source)return (x,z)=>0;
+            var stamps=Capture(world);stamps.RemoveAll(s=>s.road!=null);
+            return (x,z)=>Evaluate(world,stamps,x,z);
+        }
         static float Evaluate(LTWorld w, List<Stamp> stamps, float x, float z,bool includeMeshStamps=true)
         {
             float value = w.source.Sample(x,z);
@@ -597,6 +628,7 @@ namespace LocalTerrainPrototype
             {
                 if(!s.affectHeight)continue;
                 if (x < s.bounds.xMin || x > s.bounds.xMax || z < s.bounds.yMin || z > s.bounds.yMax) continue;
+                if(s.road!=null){value=s.road.ApplyHeight(x,z,value);continue;}
                 if(s.meshStamp)
                 {
                     if(!includeMeshStamps)continue;
@@ -1975,7 +2007,9 @@ namespace LocalTerrainPrototype
                             var local=state.previous.Where(s=>Overlap(s.bounds,Expanded(r,r.width/w.cellsPerChunk,r.height/w.cellsPerChunk))).ToList();
                             var bridgeRegions=local.Where(s=>s.meshStamp&&s.meshCutTerrain&&s.meshTrimRock)
                                 .Select(s=>Expanded(s.bounds,2*MeshContactCell(s.meshGridDensityMultiplier),2*MeshContactCell(s.meshGridDensityMultiplier))).ToList();
-                            lodPlans[id]=LTLODMesh.Coarsen(data.balanced,r,w.lods[level].simplificationSteps,w.lods[level].maxHeightError,(x,z)=>Evaluate(w,local,x,z),bridgeRegions);
+                            var roads=local.Where(s=>s.road!=null).Select(s=>s.road).ToArray();
+                            lodPlans[id]=LTLODMesh.Coarsen(data.balanced,r,w.lods[level].simplificationSteps,w.lods[level].maxHeightError,(x,z)=>Evaluate(w,local,x,z),bridgeRegions,
+                                roads.Length==0?(Func<Rect,bool>)null:area=>roads.Any(road=>road.Intersects(area)));
                         }
                         else lodPlans[id]=c.lodPlans[level].leaves;
                     }
@@ -2180,6 +2214,8 @@ namespace LocalTerrainPrototype
             var probe=RenderTexture.GetTemporary(1,1,0,RenderTextureFormat.ARGB32,RenderTextureReadWrite.Linear);
             var readback=new Texture2D(1,1,TextureFormat.RGBA32,false,true);
             var weights=new Texture2D(1,1,TextureFormat.RGBA32,false,true);
+            var array=new Texture2DArray(1,1,1,TextureFormat.RGBA32,false,true);
+            array.SetPixels(new[]{Color.white},0);array.Apply();
             var previous=RenderTexture.active;
             try
             {
@@ -2189,14 +2225,14 @@ namespace LocalTerrainPrototype
                 var empty=new Color(0,0,0,0);
                 material.SetVector("_LTWorldSize",Vector4.one);
                 material.SetVector("_LTRect",new Vector4(0,0,1,1));
-                material.SetTexture("_LTColor0",Texture2D.whiteTexture);
+                material.SetTexture("_LTColorArray",array);material.SetTexture("_LTNormalArray",array);material.SetTexture("_LTMaskArray",array);
                 material.SetVector("_LTTiling0",new Vector4(1,1,0,0));
                 material.SetVector("_LTFlags0",new Vector4(0,1,1,0));
                 // Reuse the weights red channel as layer 0 and set the unused half to a transparent texture.
                 var zero=new Texture2D(1,1,TextureFormat.RGBA32,false,true);
                 try
                 {
-                    zero.SetPixel(0,0,empty);zero.Apply();material.SetTexture("_LTWeights1",zero);
+                    zero.SetPixel(0,0,empty);zero.Apply();material.SetTexture("_LTWeights1",zero);material.SetTexture("_LTWeights2",zero);
                     Color[] colors={Color.red,Color.green,Color.blue,Color.white};
                     for(int i=0;i<4;i++)
                     {
@@ -2229,7 +2265,7 @@ namespace LocalTerrainPrototype
             finally
             {
                 RenderTexture.active=previous;RenderTexture.ReleaseTemporary(atlas);RenderTexture.ReleaseTemporary(probe);
-                UnityEngine.Object.DestroyImmediate(weights);UnityEngine.Object.DestroyImmediate(readback);UnityEngine.Object.DestroyImmediate(material);
+                UnityEngine.Object.DestroyImmediate(array);UnityEngine.Object.DestroyImmediate(weights);UnityEngine.Object.DestroyImmediate(readback);UnityEngine.Object.DestroyImmediate(material);
             }
         }
         [MenuItem("Tools/Local Terrain/Validate Eight Layer Shader")]
@@ -2437,7 +2473,7 @@ namespace LocalTerrainPrototype
             var layers=new List<LTSurfaceLayer>();
             if(world.baseLayer)layers.Add(world.baseLayer);
             foreach(var stamp in world.CollectPaintStamps())
-                if(stamp.layer&&!layers.Contains(stamp.layer))layers.Add(stamp.layer);
+                if(stamp.EffectiveLayer&&!layers.Contains(stamp.EffectiveLayer))layers.Add(stamp.EffectiveLayer);
             EditorGUILayout.Space(8);
             EditorGUILayout.LabelField("Displacement используемых слоёв",EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(serializedObject.FindProperty("gpuMudSimulation"),new GUIContent("Грязь: GPU-симуляция"));
@@ -2461,7 +2497,7 @@ namespace LocalTerrainPrototype
         }
         void DrawTextures(LTWorld world)
         {
-            EditorGUILayout.HelpBox("До 8 слоёв на чанк или область скалы, включая базовый. Скалы с Use Terrain Material получают слои по их положению над террейном; фильтры оцениваются по террейну.",MessageType.Info);
+            EditorGUILayout.HelpBox("До 12 слоёв на чанк или область скалы, включая базовый. Скалы с Use Terrain Material получают слои по их положению над террейном; фильтры оцениваются по террейну.",MessageType.Info);
             serializedObject.Update();
             EditorGUILayout.PropertyField(serializedObject.FindProperty("enableLayerPainting"),new GUIContent("Включить покраску"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("baseLayer"),new GUIContent("Фоновый слой"));
@@ -2512,13 +2548,13 @@ namespace LocalTerrainPrototype
             var stamps=world.CollectPaintStamps();
             var layers=new List<LTSurfaceLayer>();
             if(world.baseLayer)layers.Add(world.baseLayer);
-            foreach(var stamp in stamps)if(stamp.layer&&!layers.Contains(stamp.layer))layers.Add(stamp.layer);
+            foreach(var stamp in stamps)if(stamp.EffectiveLayer&&!layers.Contains(stamp.EffectiveLayer))layers.Add(stamp.EffectiveLayer);
             EditorGUILayout.LabelField("Используемые слои",layers.Count.ToString());
-            int missing=stamps.Count(s=>!s.layer);
+            int missing=stamps.Count(s=>!s.EffectiveLayer);
             if(missing>0)EditorGUILayout.HelpBox($"Штампов без слоя: {missing}",MessageType.Warning);
             foreach(var layer in layers)
             {
-                var users=stamps.Where(s=>s.layer==layer).ToArray();
+                var users=stamps.Where(s=>s.EffectiveLayer==layer).ToArray();
                 using(new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
                 {
                     using(new EditorGUILayout.HorizontalScope())
@@ -2545,13 +2581,54 @@ namespace LocalTerrainPrototype
             }
             EditorGUILayout.HelpBox("Порядок покраски задаётся порядком штампов в иерархии. Это список ссылок, не каналы маски. Удаление штампа не удаляет assets или текстуры.",MessageType.None);
         }
+        void DrawArrays(LTWorld world)
+        {
+            EditorGUILayout.HelpBox("Три общих массива на LT World вместо 36 отдельных привязок. До 12 слоёв на чанк. Актуальный сохранённый комплект загружается без упаковки; иначе редактор создаёт временный предпросмотр. Исходные assets не изменяются.",MessageType.Info);
+            serializedObject.Update();
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayColorResolution"),new GUIContent("Цвет — разрешение"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayNormalResolution"),new GUIContent("Нормали — разрешение"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayMaskResolution"),new GUIContent("Маски — разрешение"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayTrilinear"),new GUIContent("Трилинейная фильтрация"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayAnisotropy"),new GUIContent("Анизотропия"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayMemoryBudgetMiB"),new GUIContent("Бюджет упаковки GPU, МиБ"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("savedLayerArrays"),new GUIContent("Сохранённый комплект"));
+            serializedObject.ApplyModifiedProperties();
+            var palette=new HashSet<LTSurfaceLayer>();if(world.baseLayer)palette.Add(world.baseLayer);
+            foreach(var stamp in world.CollectPaintStamps())if(stamp.EffectiveLayer)palette.Add(stamp.EffectiveLayer);
+            long bytes=LTLayerTextureArrays.EstimateBytes(palette.Count,(int)world.arrayColorResolution,(int)world.arrayNormalResolution,(int)world.arrayMaskResolution);
+            EditorGUILayout.LabelField("Слоёв в палитре",palette.Count.ToString());
+            EditorGUILayout.LabelField("Объём новых массивов GPU",$"{bytes/1048576f:F1} МиБ");
+            EditorGUILayout.HelpBox("RGBA32, полная цепочка mipmaps. Цвет: sRGB; нормали: RGB linear; маски: linear. Упаковка выполняется GPU без Read/Write исходников. При обновлении одновременно живут старые и новые массивы плюс временная карта — бюджет учитывает этот пик, но не исходные текстуры и остальной рендер. Изменение разрешения может изменить детализацию смешивания/высоты; CPU-фильтры растительности читают оригиналы.",MessageType.Info);
+            EditorGUILayout.HelpBox(world.arrayPackStatus??"Ещё не упаковано.",MessageType.Info);
+            if(world.savedLayerArrays)
+            {
+                bool current=false;string state;
+                try{current=world.savedLayerArrays.Matches(world,LTLayerArrayBakeAsset.Palette(world),out state);}
+                catch(System.Exception error){state=error.Message;}
+                EditorGUILayout.HelpBox(state,current?MessageType.Info:MessageType.Warning);
+            }
+            else EditorGUILayout.HelpBox("Нет сохранённого комплекта. Перед сборкой игры нажмите «Запечь и сохранить».",MessageType.Warning);
+            EditorGUILayout.HelpBox("Сохранение создаёт новую папку в Assets/LocalTerrainGenerated/LayerArrays. Предыдущие версии остаются. Сохраняемые RGBA32-массивы содержат также CPU-копию данных (примерно такой же объём, как GPU). После назначения комплекта сохраните сцену. Изменение фильтрации сохранённого комплекта требует нового запекания.",MessageType.None);
+            using(new EditorGUI.DisabledScope(true))
+            {
+                EditorGUILayout.ObjectField("Color array",world.arrayColorPreview,typeof(Texture2DArray),false);
+                EditorGUILayout.ObjectField("Normal array",world.arrayNormalPreview,typeof(Texture2DArray),false);
+                EditorGUILayout.ObjectField("Mask array",world.arrayMaskPreview,typeof(Texture2DArray),false);
+            }
+            using(new EditorGUI.DisabledScope(!world.enableLayerPainting||world.paintBenchmarkRunning))
+                if(GUILayout.Button("Перепаковать массивы"))world.RepackLayerArrays();
+            using(new EditorGUI.DisabledScope(LTLayerArraySaving.IsSaving||Application.isPlaying||EditorApplication.isCompiling||!world.enableLayerPainting||world.paintBenchmarkRunning))
+                if(GUILayout.Button("Запечь и сохранить"))LTLayerArraySaving.BakeAndSave(world);
+            if(LTLayerArraySaving.IsSaving&&GUILayout.Button("Отменить сохранение"))LTLayerArraySaving.Cancel();
+        }
         public override void OnInspectorGUI()
         {
             var w=(LTWorld)target;
-            tab=GUILayout.Toolbar(tab,new[]{"Геометрия","Текстуры","Тесселяция","Диагностика"});
+            tab=GUILayout.Toolbar(tab,new[]{"Геометрия","Текстуры","Тесселяция","Диагностика","Массивы"});
             if(tab==1){DrawTextures(w);return;}
             if(tab==2){DrawTessellation(w);return;}
             if(tab==3){DrawDiagnostics(w);return;}
+            if(tab==4){DrawArrays(w);return;}
             EditorGUILayout.HelpBox("v0.7: smooth density falloff + baked chunk LODs. LOD boundaries match LOD0; collider uses LOD0.",MessageType.Info);
             using(new EditorGUI.DisabledScope(true))
             {
@@ -2788,6 +2865,12 @@ namespace LocalTerrainPrototype
         {
             EditorGUILayout.HelpBox("Layer Stamp: покраска по XZ, порядок в иерархии задаёт наложение. Маска использует R. Включённые фильтры перемножаются.",MessageType.Info);
             var stamp=(LTPaintStamp)target;
+            if(stamp.Road)
+            {
+                EditorGUILayout.HelpBox("Этот Layer Stamp управляется компонентом Road. Слой, проекция и плавность краёв настраиваются в Road.",MessageType.Info);
+                LTSurfaceLayerInspector.DrawLayerPreview(stamp.EffectiveLayer,ref layerPreview,160);
+                return;
+            }
             serializedObject.Update();
             using(new EditorGUI.DisabledScope(true))
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("m_Script"));

@@ -15,7 +15,7 @@ namespace LocalTerrainPrototype
         }
         // Collapse complete sibling groups. Boundary leaves are immutable across every LOD.
         // Error is a conservative plane bound over LOD0's vertices (corners/midpoints/centres).
-        public static List<Vector3Int> Coarsen(List<Vector3Int> fine,Rect rect,int steps,float tolerance,Func<float,float,float> evaluate,List<Rect> protectedRegions=null)
+        public static List<Vector3Int> Coarsen(List<Vector3Int> fine,Rect rect,int steps,float tolerance,Func<float,float,float> evaluate,List<Rect> protectedRegions=null,Func<Rect,bool> protectedArea=null)
         {
             if(steps<0||steps>12||float.IsNaN(tolerance)||float.IsInfinity(tolerance)||tolerance<0)
                 throw new InvalidOperationException("LOD: use 0..12 simplification steps and a finite non-negative height error.");
@@ -59,6 +59,7 @@ namespace LocalTerrainPrototype
                     var area=new Rect(rect.xMin+p.x/(float)N*rect.width,rect.yMin+p.y/(float)N*rect.height,p.z/(float)N*rect.width,p.z/(float)N*rect.height);
                     // Preserve the contact cells: the same rock bridge is used by all LODs.
                     if(protectedRegions!=null&&protectedRegions.Any(region=>LTStampMesh.Overlap(region,area)))continue;
+                    if(protectedArea!=null&&protectedArea(area))continue;
                     int h=p.z/2;
                     var keys=new[]{new Vector3Int(p.x,p.y,h),new Vector3Int(p.x+h,p.y,h),new Vector3Int(p.x,p.y+h,h),new Vector3Int(p.x+h,p.y+h,h)};
                     if(keys.Any(k=>!nodes.ContainsKey(k)))continue;

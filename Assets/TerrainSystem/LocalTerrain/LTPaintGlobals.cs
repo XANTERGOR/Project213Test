@@ -66,6 +66,7 @@ namespace LocalTerrainPrototype
             if(!world.enableGlobalLayerMaps||!globalColor||!globalNormal||!globalBakeShader||!globalBakeShader.isSupported||state.globallyBaked)return;
             if(!state.bakeMaterial)state.bakeMaterial=new Material(globalBakeShader){hideFlags=HideFlags.HideAndDontSave};
             state.bakeMaterial.CopyPropertiesFromMaterial(state.material);
+            BindRoadProjection(state.bakeMaterial,state);
             state.bakeMaterial.shaderKeywords=System.Array.Empty<string>();
             int size=globalColor.width;
             var xr=LTPaintMath.AtlasRange(chunk.x,world.chunksX,size);var yr=LTPaintMath.AtlasRange(chunk.z,world.chunksZ,size);
@@ -176,11 +177,13 @@ namespace LocalTerrainPrototype
                         {
                             if(!state.farMaterial)state.farMaterial=new Material(Resources.Load<Shader>("LTEightLayers")){name=state.material.name+" Far",hideFlags=HideFlags.HideAndDontSave};
                             state.farMaterial.CopyPropertiesFromMaterial(state.material);state.farMaterial.EnableKeyword("_LT_FAR_ONLY");
+                            BindRoadProjection(state.farMaterial,state);
                         }
                         if(state.displacementActive)
                         {
                             if(!state.flatMaterial)state.flatMaterial=new Material(Resources.Load<Shader>("LTEightLayers")){name=state.material.name+" No displacement",hideFlags=HideFlags.HideAndDontSave};
                             state.flatMaterial.CopyPropertiesFromMaterial(state.material);
+                            BindRoadProjection(state.flatMaterial,state);
                         }
                         state.farMaterialDirty=false;
                         state.boundGlobalParams=globalParams;state.boundFarSurface=farSurface;
@@ -198,11 +201,11 @@ namespace LocalTerrainPrototype
             else if(colorMap&&!projectionMatches)world.globalLayerStatus="Режим проекции изменён. Запеките и сохраните карты заново; до этого используются детальные слои.";
             else if(globalsReady)world.globalLayerStatus=$"{(useSaved?"Сохранённые карты":"Запекание в памяти (не сохранено)")}: {colorMap.width}×{colorMap.height}. "+(stale?"Карты устарели. Вдали используется предыдущий результат — запеките и сохраните новые карты.":"Карты актуальны.");
             else world.globalLayerStatus="Запеките и сохраните глобальные карты. Пока используются детальные слои; также проверьте соответствие размеров мира сохранённому запеканию.";
-            if(failed)world.globalLayerStatus="Запекание не выполнено: проверьте готовность всех чанков, лимит 8 слоёв и шейдер запекания. "+world.globalLayerStatus;
+            if(failed)world.globalLayerStatus=$"Запекание не выполнено: проверьте готовность всех чанков, лимит {LayerCapacity} слоёв и шейдер запекания. "+world.globalLayerStatus;
         }
         void SelectGlobalMaterials(ScriptableRenderContext context,Camera camera)
         {
-            if(!globalWorld||globalWorld.paintBenchmarkRunning)return;
+            if(!globalWorld||globalWorld.paintBenchmarkRunning||!arraysAvailable)return;
             using var cameraTimer=globalWorld.paintCpu.CameraScope();
             float end=Mathf.Max(Mathf.Max(0,globalWorld.globalLayerStart)+1,globalWorld.globalLayerEnd);
             foreach(var state in chunks.Values)

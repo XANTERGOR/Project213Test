@@ -1,6 +1,14 @@
 <Project>
   <!-- Unity may not regenerate its csproj until the Editor next gains focus. -->
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'Assembly-CSharp'">
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\LTLayerArrayBakeAsset.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTLayerArrayBakeAsset.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\LTLayerTextureArrays.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTLayerTextureArrays.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\LTRoad*.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTRoad*.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\LTPaintRoadProjection.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTPaintRoadProjection.cs" Condition="Exists('$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTPaintRoadProjection.cs')" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\LTDetail*.cs" />
     <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTDetail*.cs" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\LTVehicleTerrainDeformer.cs" />
@@ -27,6 +35,20 @@
     <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTGlobalBakeAsset.cs" />
   </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'Assembly-CSharp-Editor'">
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTLayerArraySaving.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTLayerArraySaving.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTRoad*.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTRoad*.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTDetailGpuLifetimeCheck.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTDetailGpuLifetimeCheck.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTDetailGpuCheck.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTDetailGpuCheck.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTDetailGpuShaderImporter.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTDetailGpuShaderImporter.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTDetailMotionDebug.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTDetailMotionDebug.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTDetailProfileCapture.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTDetailProfileCapture.cs" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTDetailInspector.cs" />
     <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTDetailInspector.cs" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTMudGpuCheck.cs" />

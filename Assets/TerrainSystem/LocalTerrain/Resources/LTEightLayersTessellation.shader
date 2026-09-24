@@ -4,6 +4,13 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
     Properties
     {
         [HideInInspector] _LTTriplanar("Triplanar", Float) = 0
+        [HideInInspector] _LTRoadProjectionEnabled("Spline projection", Float) = 0
+        [HideInInspector] _LTRoadProjectionSlots0("Spline slots 0-3", Vector) = (0,0,0,0)
+        [HideInInspector] _LTRoadProjectionSlots1("Spline slots 4-7", Vector) = (0,0,0,0)
+        [HideInInspector] _LTRoadProjectionSlots2("Spline slots 8-11", Vector) = (0,0,0,0)
+        [HideInInspector] _LTRoadProjectionMap("Spline coordinates", 2DArray) = "" {}
+        [HideInInspector] _LTRoadSuppressionEnabled("Asphalt suppression", Float) = 0
+        [HideInInspector] _LTRoadSuppressionMap("Asphalt coverage", 2D) = "black" {}
         [HideInInspector] _LTDeformationEnabled("Visual deformation", Float) = 0
         [HideInInspector] _LTDeformationRegionCount("Area depth maps", Float) = 0
         [HideInInspector] _LTDeformationRegion0("Area depth 0", 2D) = "black" {}
@@ -52,6 +59,10 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         [HideInInspector] _LTDisplacement5("Displacement 5", Vector) = (0,.5,0,0)
         [HideInInspector] _LTDisplacement6("Displacement 6", Vector) = (0,.5,0,0)
         [HideInInspector] _LTDisplacement7("Displacement 7", Vector) = (0,.5,0,0)
+        [HideInInspector] _LTDisplacement8("Displacement 8", Vector) = (0,.5,0,0)
+        [HideInInspector] _LTDisplacement9("Displacement 9", Vector) = (0,.5,0,0)
+        [HideInInspector] _LTDisplacement10("Displacement 10", Vector) = (0,.5,0,0)
+        [HideInInspector] _LTDisplacement11("Displacement 11", Vector) = (0,.5,0,0)
         [HideInInspector] _LTTiling0("Tiling 0", Vector) = (0,0,0,0)
         [HideInInspector] _LTTiling1("Tiling 1", Vector) = (0,0,0,0)
         [HideInInspector] _LTTiling2("Tiling 2", Vector) = (0,0,0,0)
@@ -60,6 +71,10 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         [HideInInspector] _LTTiling5("Tiling 5", Vector) = (0,0,0,0)
         [HideInInspector] _LTTiling6("Tiling 6", Vector) = (0,0,0,0)
         [HideInInspector] _LTTiling7("Tiling 7", Vector) = (0,0,0,0)
+        [HideInInspector] _LTTiling8("Tiling 8", Vector) = (0,0,0,0)
+        [HideInInspector] _LTTiling9("Tiling 9", Vector) = (0,0,0,0)
+        [HideInInspector] _LTTiling10("Tiling 10", Vector) = (0,0,0,0)
+        [HideInInspector] _LTTiling11("Tiling 11", Vector) = (0,0,0,0)
         [HideInInspector] _LTTint0("Tint 0", Vector) = (0,0,0,0)
         [HideInInspector] _LTTint1("Tint 1", Vector) = (0,0,0,0)
         [HideInInspector] _LTTint2("Tint 2", Vector) = (0,0,0,0)
@@ -68,6 +83,10 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         [HideInInspector] _LTTint5("Tint 5", Vector) = (0,0,0,0)
         [HideInInspector] _LTTint6("Tint 6", Vector) = (0,0,0,0)
         [HideInInspector] _LTTint7("Tint 7", Vector) = (0,0,0,0)
+        [HideInInspector] _LTTint8("Tint 8", Vector) = (0,0,0,0)
+        [HideInInspector] _LTTint9("Tint 9", Vector) = (0,0,0,0)
+        [HideInInspector] _LTTint10("Tint 10", Vector) = (0,0,0,0)
+        [HideInInspector] _LTTint11("Tint 11", Vector) = (0,0,0,0)
         [HideInInspector] _LTSettings0("Settings 0", Vector) = (0,0,0,0)
         [HideInInspector] _LTSettings1("Settings 1", Vector) = (0,0,0,0)
         [HideInInspector] _LTSettings2("Settings 2", Vector) = (0,0,0,0)
@@ -76,6 +95,10 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         [HideInInspector] _LTSettings5("Settings 5", Vector) = (0,0,0,0)
         [HideInInspector] _LTSettings6("Settings 6", Vector) = (0,0,0,0)
         [HideInInspector] _LTSettings7("Settings 7", Vector) = (0,0,0,0)
+        [HideInInspector] _LTSettings8("Settings 8", Vector) = (0,0,0,0)
+        [HideInInspector] _LTSettings9("Settings 9", Vector) = (0,0,0,0)
+        [HideInInspector] _LTSettings10("Settings 10", Vector) = (0,0,0,0)
+        [HideInInspector] _LTSettings11("Settings 11", Vector) = (0,0,0,0)
         [HideInInspector] _LTFlags0("Flags 0", Vector) = (0,0,0,0)
         [HideInInspector] _LTFlags1("Flags 1", Vector) = (0,0,0,0)
         [HideInInspector] _LTFlags2("Flags 2", Vector) = (0,0,0,0)
@@ -84,33 +107,20 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         [HideInInspector] _LTFlags5("Flags 5", Vector) = (0,0,0,0)
         [HideInInspector] _LTFlags6("Flags 6", Vector) = (0,0,0,0)
         [HideInInspector] _LTFlags7("Flags 7", Vector) = (0,0,0,0)
+        [HideInInspector] _LTFlags8("Flags 8", Vector) = (0,0,0,0)
+        [HideInInspector] _LTFlags9("Flags 9", Vector) = (0,0,0,0)
+        [HideInInspector] _LTFlags10("Flags 10", Vector) = (0,0,0,0)
+        [HideInInspector] _LTFlags11("Flags 11", Vector) = (0,0,0,0)
 
-        _LTColor0("Layer 0 Color", 2D) = "white" {}
-        _LTNormal0("Layer 0 Normal", 2D) = "bump" {}
-        _LTMask0("Layer 0 RGB Mask", 2D) = "white" {}
-        _LTColor1("Layer 1 Color", 2D) = "white" {}
-        _LTNormal1("Layer 1 Normal", 2D) = "bump" {}
-        _LTMask1("Layer 1 RGB Mask", 2D) = "white" {}
-        _LTColor2("Layer 2 Color", 2D) = "white" {}
-        _LTNormal2("Layer 2 Normal", 2D) = "bump" {}
-        _LTMask2("Layer 2 RGB Mask", 2D) = "white" {}
-        _LTColor3("Layer 3 Color", 2D) = "white" {}
-        _LTNormal3("Layer 3 Normal", 2D) = "bump" {}
-        _LTMask3("Layer 3 RGB Mask", 2D) = "white" {}
-        _LTColor4("Layer 4 Color", 2D) = "white" {}
-        _LTNormal4("Layer 4 Normal", 2D) = "bump" {}
-        _LTMask4("Layer 4 RGB Mask", 2D) = "white" {}
-        _LTColor5("Layer 5 Color", 2D) = "white" {}
-        _LTNormal5("Layer 5 Normal", 2D) = "bump" {}
-        _LTMask5("Layer 5 RGB Mask", 2D) = "white" {}
-        _LTColor6("Layer 6 Color", 2D) = "white" {}
-        _LTNormal6("Layer 6 Normal", 2D) = "bump" {}
-        _LTMask6("Layer 6 RGB Mask", 2D) = "white" {}
-        _LTColor7("Layer 7 Color", 2D) = "white" {}
-        _LTNormal7("Layer 7 Normal", 2D) = "bump" {}
-        _LTMask7("Layer 7 RGB Mask", 2D) = "white" {}
+        _LTColorArray("Layer colors", 2DArray) = "" {}
+        _LTNormalArray("Layer normals RGB", 2DArray) = "" {}
+        _LTMaskArray("Layer masks", 2DArray) = "" {}
+        _LTLayerSlices0("Slices 0-3", Vector) = (0,0,0,0)
+        _LTLayerSlices1("Slices 4-7", Vector) = (0,0,0,0)
+        _LTLayerSlices2("Slices 8-11", Vector) = (0,0,0,0)
         _LTWeights0("Weights 0-3", 2D) = "black" {}
         _LTWeights1("Weights 4-7", 2D) = "black" {}
+        _LTWeights2("Weights 8-11", 2D) = "black" {}
         [HideInInspector] _LTDisplacementOccupancy("Displacement coverage", 2D) = "white" {}
         [HideInInspector] _LTDisplacementRect("Displacement coverage bounds", Vector) = (0,0,0,0)
         [HideInInspector] _LTDisplacementCells("Displacement coverage cells", Float) = 256
@@ -174,10 +184,7 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         _DetailNormalScale("_DetailNormalScale", Range(0.0, 2.0)) = 1
         _DetailSmoothnessScale("_DetailSmoothnessScale", Range(0.0, 2.0)) = 1
 
-        _TangentMap("TangentMap", 2D) = "bump" {}
-        _TangentMapOS("TangentMapOS", 2D) = "white" {}
         _Anisotropy("Anisotropy", Range(-1.0, 1.0)) = 0
-        _AnisotropyMap("AnisotropyMap", 2D) = "white" {}
 
         _SubsurfaceMask("Subsurface Radius", Range(0.0, 1.0)) = 1.0
         _SubsurfaceMaskMap("Subsurface Radius Map", 2D) = "white" {}
@@ -188,17 +195,13 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         _ThicknessRemap("Thickness Remap", Vector) = (0, 1, 0, 0)
 
         _IridescenceThickness("Iridescence Thickness", Range(0.0, 1.0)) = 1.0
-        _IridescenceThicknessMap("Iridescence Thickness Map", 2D) = "white" {}
         _IridescenceThicknessRemap("Iridescence Thickness Remap", Vector) = (0, 1, 0, 0)
         _IridescenceMask("Iridescence Mask", Range(0.0, 1.0)) = 1.0
-        _IridescenceMaskMap("Iridescence Mask Map", 2D) = "white" {}
 
         _CoatMask("Coat Mask", Range(0.0, 1.0)) = 0.0
-        _CoatMaskMap("CoatMaskMap", 2D) = "white" {}
 
         [ToggleUI] _EnergyConservingSpecularColor("_EnergyConservingSpecularColor", Float) = 1.0
         _SpecularColor("SpecularColor", Color) = (1, 1, 1, 1)
-        _SpecularColorMap("SpecularColorMap", 2D) = "white" {}
 
         // Following options are for the GUI inspector and different from the input parameters above
         // These option below will cause different compilation flag.
@@ -230,7 +233,6 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         [Enum(None, 0, Planar, 1, Sphere, 2, Thin, 3)]_RefractionModel("Refraction Model", Int) = 0
         _Ior("Index Of Refraction", Range(1.0, 2.5)) = 1.5
         _TransmittanceColor("Transmittance Color", Color) = (1.0, 1.0, 1.0)
-        _TransmittanceColorMap("TransmittanceColorMap", 2D) = "white" {}
         _ATDistance("Transmittance Absorption Distance", Float) = 1.0
         [ToggleUI] _TransparentWritingMotionVec("_TransparentWritingMotionVec", Float) = 0.0
         [ToggleUI] _PerPixelSorting("_PerPixelSorting", Float) = 0.0
@@ -397,14 +399,9 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
     #endif
 
     #pragma shader_feature_local _HEIGHTMAP
-    #pragma shader_feature_local_raytracing _TANGENTMAP
-    #pragma shader_feature_local_raytracing _ANISOTROPYMAP
     #pragma shader_feature_local_raytracing _DETAIL_MAP
     #pragma shader_feature_local_raytracing _SUBSURFACE_MASK_MAP
     #pragma shader_feature_local_raytracing _THICKNESSMAP
-    #pragma shader_feature_local_raytracing _IRIDESCENCE_THICKNESSMAP
-    #pragma shader_feature_local_raytracing _SPECULARCOLORMAP
-    #pragma shader_feature_local_raytracing _TRANSMITTANCECOLORMAP
 
     #pragma shader_feature_local_raytracing _DISABLE_SSR
 
@@ -412,8 +409,6 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
     #pragma shader_feature_local_raytracing _MATERIAL_FEATURE_SUBSURFACE_SCATTERING
     #pragma shader_feature_local_raytracing _MATERIAL_FEATURE_TRANSMISSION
     #pragma shader_feature_local_raytracing _MATERIAL_FEATURE_ANISOTROPY
-    #pragma shader_feature_local_raytracing _MATERIAL_FEATURE_CLEAR_COAT
-    #pragma shader_feature_local_raytracing _MATERIAL_FEATURE_IRIDESCENCE
     #pragma shader_feature_local_raytracing _MATERIAL_FEATURE_SPECULAR_COLOR
 
     //-------------------------------------------------------------------------------------
@@ -625,29 +620,22 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
             #pragma multi_compile_fragment _ DECAL_SURFACE_GRADIENT
             #pragma multi_compile_fragment _ RENDERING_LAYERS
 
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_CLEAR_COAT
             #pragma shader_feature_local _DISABLE_DECALS
             #pragma shader_feature_local_fragment _DISABLE_SSR
 
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_SUBSURFACE_SCATTERING
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_TRANSMISSION
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_ANISOTROPY
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_IRIDESCENCE
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_SPECULAR_COLOR
 
             #pragma shader_feature_local_fragment _ENABLE_GEOMETRIC_SPECULAR_AA
 
             #pragma shader_feature_local_fragment _BENTNORMALMAP
             #pragma shader_feature_local_fragment _EMISSIVE_COLOR_MAP
-            #pragma shader_feature_local_fragment _TANGENTMAP
-            #pragma shader_feature_local_fragment _ANISOTROPYMAP
             #pragma shader_feature_local_fragment _DETAIL_MAP
             #pragma shader_feature_local_fragment _SUBSURFACE_MASK_MAP
             #pragma shader_feature_local_fragment _TRANSMISSION_MASK_MAP
             #pragma shader_feature_local_fragment _THICKNESSMAP
-            #pragma shader_feature_local_fragment _IRIDESCENCE_THICKNESSMAP
-            #pragma shader_feature_local_fragment _SPECULARCOLORMAP
-            #pragma shader_feature_local_fragment _TRANSMITTANCECOLORMAP
             #pragma shader_feature_local_fragment _MASKMAP
             #pragma shader_feature_local _NORMALMAP
             #pragma shader_feature_local_fragment _NORMALMAP_TANGENT_SPACE
@@ -697,29 +685,22 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
             // enable dithering LOD crossfade
             #pragma multi_compile _ LOD_FADE_CROSSFADE
 
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_CLEAR_COAT
             #pragma shader_feature_local _DISABLE_DECALS
             #pragma shader_feature_local_fragment _DISABLE_SSR
 
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_SUBSURFACE_SCATTERING
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_TRANSMISSION
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_ANISOTROPY
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_IRIDESCENCE
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_SPECULAR_COLOR
 
             #pragma shader_feature_local_fragment _ENABLE_GEOMETRIC_SPECULAR_AA
 
             #pragma shader_feature_local_fragment _BENTNORMALMAP
             #pragma shader_feature_local_fragment _EMISSIVE_COLOR_MAP
-            #pragma shader_feature_local_fragment _TANGENTMAP
-            #pragma shader_feature_local_fragment _ANISOTROPYMAP
             #pragma shader_feature_local_fragment _DETAIL_MAP
             #pragma shader_feature_local_fragment _SUBSURFACE_MASK_MAP
             #pragma shader_feature_local_fragment _TRANSMISSION_MASK_MAP
             #pragma shader_feature_local_fragment _THICKNESSMAP
-            #pragma shader_feature_local_fragment _IRIDESCENCE_THICKNESSMAP
-            #pragma shader_feature_local_fragment _SPECULARCOLORMAP
-            #pragma shader_feature_local_fragment _TRANSMITTANCECOLORMAP
             #pragma shader_feature_local_fragment _MASKMAP
             #pragma shader_feature_local _NORMALMAP
             #pragma shader_feature_local_fragment _NORMALMAP_TANGENT_SPACE
@@ -828,7 +809,6 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
             #pragma multi_compile_fragment _ WRITE_MSAA_DEPTH
             #pragma multi_compile _ WRITE_DECAL_BUFFER WRITE_RENDERING_LAYER
 
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_CLEAR_COAT
             #pragma shader_feature_local _DISABLE_DECALS
 
             #pragma shader_feature_local_fragment _ENABLE_GEOMETRIC_SPECULAR_AA
@@ -898,7 +878,6 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
             #pragma shader_feature_local_fragment _DISABLE_SSR
 
             #pragma shader_feature_local_fragment _BENTNORMALMAP
-            #pragma shader_feature_local_fragment _TANGENTMAP
             #pragma shader_feature_local_fragment _DETAIL_MAP
             #pragma shader_feature_local_fragment _MASKMAP
 
@@ -962,7 +941,6 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
             // enable dithering LOD crossfade
             #pragma multi_compile _ LOD_FADE_CROSSFADE
 
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_CLEAR_COAT
 
             #pragma shader_feature_local_fragment _MASKMAP
             #pragma shader_feature_local _NORMALMAP
@@ -1044,29 +1022,22 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
 	        #pragma multi_compile_fragment DIRECTIONAL_SHADOW_LOW DIRECTIONAL_SHADOW_MEDIUM DIRECTIONAL_SHADOW_HIGH
             #pragma multi_compile_fragment AREA_SHADOW_MEDIUM AREA_SHADOW_HIGH
 
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_CLEAR_COAT
             #pragma shader_feature_local _DISABLE_DECALS
             #pragma shader_feature_local_fragment _DISABLE_SSR
 
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_SUBSURFACE_SCATTERING
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_TRANSMISSION
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_ANISOTROPY
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_IRIDESCENCE
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_SPECULAR_COLOR
 
             #pragma shader_feature_local_fragment _ENABLE_GEOMETRIC_SPECULAR_AA
 
             #pragma shader_feature_local_fragment _BENTNORMALMAP
             #pragma shader_feature_local_fragment _EMISSIVE_COLOR_MAP
-            #pragma shader_feature_local_fragment _TANGENTMAP
-            #pragma shader_feature_local_fragment _ANISOTROPYMAP
             #pragma shader_feature_local_fragment _DETAIL_MAP
             #pragma shader_feature_local_fragment _SUBSURFACE_MASK_MAP
             #pragma shader_feature_local_fragment _TRANSMISSION_MASK_MAP
             #pragma shader_feature_local_fragment _THICKNESSMAP
-            #pragma shader_feature_local_fragment _IRIDESCENCE_THICKNESSMAP
-            #pragma shader_feature_local_fragment _SPECULARCOLORMAP
-            #pragma shader_feature_local_fragment _TRANSMITTANCECOLORMAP
             #pragma shader_feature_local_fragment _MASKMAP
             #pragma shader_feature_local _NORMALMAP
             #pragma shader_feature_local_fragment _NORMALMAP_TANGENT_SPACE
@@ -1175,29 +1146,22 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
 
             #pragma multi_compile_fragment USE_FPTL_LIGHTLIST USE_CLUSTERED_LIGHTLIST
 
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_CLEAR_COAT
             #pragma shader_feature_local _DISABLE_DECALS
             #pragma shader_feature_local_fragment _DISABLE_SSR
 
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_SUBSURFACE_SCATTERING
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_TRANSMISSION
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_ANISOTROPY
-            #pragma shader_feature_local_fragment _MATERIAL_FEATURE_IRIDESCENCE
             #pragma shader_feature_local_fragment _MATERIAL_FEATURE_SPECULAR_COLOR
 
             #pragma shader_feature_local_fragment _ENABLE_GEOMETRIC_SPECULAR_AA
 
             #pragma shader_feature_local_fragment _BENTNORMALMAP
             #pragma shader_feature_local_fragment _EMISSIVE_COLOR_MAP
-            #pragma shader_feature_local_fragment _TANGENTMAP
-            #pragma shader_feature_local_fragment _ANISOTROPYMAP
             #pragma shader_feature_local_fragment _DETAIL_MAP
             #pragma shader_feature_local_fragment _SUBSURFACE_MASK_MAP
             #pragma shader_feature_local_fragment _TRANSMISSION_MASK_MAP
             #pragma shader_feature_local_fragment _THICKNESSMAP
-            #pragma shader_feature_local_fragment _IRIDESCENCE_THICKNESSMAP
-            #pragma shader_feature_local_fragment _SPECULARCOLORMAP
-            #pragma shader_feature_local_fragment _TRANSMITTANCECOLORMAP
             #pragma shader_feature_local_fragment _MASKMAP
             #pragma shader_feature_local _NORMALMAP
             #pragma shader_feature_local_fragment _NORMALMAP_TANGENT_SPACE

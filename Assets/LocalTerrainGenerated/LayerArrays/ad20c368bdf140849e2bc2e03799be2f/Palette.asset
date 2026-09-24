@@ -1,0 +1,63 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 23057676b8a741e7806c06a76d437f33, type: 3}
+  m_Name: Palette
+  m_EditorClassIdentifier: Assembly-CSharp::LocalTerrainPrototype.LTLayerArrayBakeAsset
+  version: 1
+  color: {fileID: 18700000, guid: 4a77e491ee1a58745b2eb4c8f0603ba3, type: 2}
+  normal: {fileID: 18700000, guid: e480922b4bf168543abd5c0b707917bd, type: 2}
+  mask: {fileID: 18700000, guid: 5776bc4f174a95d4e88017eaecf3b9bd, type: 2}
+  layers:
+  - {fileID: 11400000, guid: f1d939d5e2a41e34aa374146107d6dcc, type: 2}
+  - {fileID: 11400000, guid: 24af22b01d176714d98af5c7647ec6e2, type: 2}
+  - {fileID: 11400000, guid: 912cad489a30ae34f86f1babfd6dc003, type: 2}
+  - {fileID: 11400000, guid: f6e23da86cfa8d14684b3d88a5049537, type: 2}
+  - {fileID: 11400000, guid: e6e6f77ebfadf1044a7410f1cde4bb63, type: 2}
+  - {fileID: 11400000, guid: e5a51d829a6760849806f2c8f8b57014, type: 2}
+  - {fileID: 11400000, guid: 4fbd2a07a415f75428bed6bf27eeadbb, type: 2}
+  - {fileID: 11400000, guid: 72566ab61d9a9074c9ce65f0889f60c9, type: 2}
+  - {fileID: 11400000, guid: 10cf3cc4ec8102c4bb92f7686124627d, type: 2}
+  sourceColors:
+  - {fileID: 2800000, guid: a1b5a675089a234488bb572124e365db, type: 3}
+  - {fileID: 2800000, guid: 2a3ca8ebc2486a740bb9cf86f4fe9e07, type: 3}
+  - {fileID: 2800000, guid: 3d8a4ec5373ef3248993765f050b0d81, type: 3}
+  - {fileID: 2800000, guid: 11bc367b3c9a6ff4590ad7c64e82aff8, type: 3}
+  - {fileID: 2800000, guid: 256f9937d0c682e48be35bc6fe35ab4c, type: 3}
+  - {fileID: 2800000, guid: 3970ddb356316ff4ba27a0de2ef9908a, type: 3}
+  - {fileID: 2800000, guid: f50deb7d216f7ac49a0548db314af5fd, type: 3}
+  - {fileID: 2800000, guid: 718fe6f1bed52a544b2c583017325015, type: 3}
+  - {fileID: 2800000, guid: 10eceba0f5b755f4597e98d9ccd26618, type: 3}
+  sourceNormals:
+  - {fileID: 0}
+  - {fileID: 2800000, guid: ce35407b2dd614c47a2fab03de0cf204, type: 3}
+  - {fileID: 2800000, guid: 21daf7ef8e11be9419b0a31ac99e1570, type: 3}
+  - {fileID: 2800000, guid: 4f865ccf8417e794eba240425286cbcf, type: 3}
+  - {fileID: 2800000, guid: 3c943c406bb16394c9dca0eeba618012, type: 3}
+  - {fileID: 2800000, guid: 1fb8835b64c86ab4694f640def1358d1, type: 3}
+  - {fileID: 2800000, guid: 028ba1d3e88d60247a19243f9eedbeef, type: 3}
+  - {fileID: 2800000, guid: 5aa8f87da8c64934a893c6682cc75b89, type: 3}
+  - {fileID: 2800000, guid: 71741445c59ae5747b0d98d1c92a6131, type: 3}
+  sourceMasks:
+  - {fileID: 0}
+  - {fileID: 2800000, guid: d70308488aa30dc42b39080df0834129, type: 3}
+  - {fileID: 2800000, guid: ce960f9582e4bd34b861e8bda235698b, type: 3}
+  - {fileID: 2800000, guid: a2634621acd84704ca15a5e24d7745dc, type: 3}
+  - {fileID: 2800000, guid: 65ffbb98ced8c784bb4c677ea096b214, type: 3}
+  - {fileID: 2800000, guid: 3d45b3d8ca4fbfe46b125487e061a0aa, type: 3}
+  - {fileID: 2800000, guid: 02a3dbb5499266242826440d91ac161b, type: 3}
+  - {fileID: 2800000, guid: 8c3782dd3925cd649b3b3a65c6586bd9, type: 3}
+  - {fileID: 2800000, guid: 0a30ea0cf767aab4e88eab11fa4434e7, type: 3}
+  colorSpace: 1
+  sourceSignature: 708ffb053aa4894d74d9e8a336ade99b
+  colorDataHash: dd9859aa78593f51acbb344388a1b090
+  normalDataHash: a30869cfb6b9a3c85b74e84475cc9464
+  maskDataHash: 3bfd38856756a43739f68b82a0190774

@@ -9,15 +9,15 @@ partial class Checks
     {
         MudHullChecks();
         DeformationOptimizationChecks();
-        var weights=new float[8];weights[0]=1;
+        var weights=new float[12];weights[0]=1;
         Require(LTDeformationMath.Resolution(10,2,1024)==501,"10m area at 2cm needs 501 endpoint samples");
         Require(LTDeformationMath.Resolution(100,2,1024)==1024,"area depth map must respect maximum resolution");
         Require(LTDeformationMath.Resolution(5,2,1024)==251,"rectangular areas must size axes independently");
         Require(LTDeformationMath.Contact(.02f,0,.01f,.08f)==0,"vertical tolerance must not expand the horizontal footprint");
         Require(LTDeformationMath.Contact(0,.09f,.01f,.08f)==0,"floating object must not press");
         Require(LTDeformationMath.Contact(0,0,.01f,.08f)==1,"interior contact must retain full pressure");
-        var heights=new float[8];Array.Fill(heights,.5f);
-        var settings=new Vector4[8];
+        var heights=new float[12];Array.Fill(heights,.5f);
+        var settings=new Vector4[12];
         Require(LTDeformationMath.Controls(weights,heights,settings,0).x==0,"opt-out layer must not deform");
         settings[0]=new Vector4(.2f,10,24,0);
         var controls=LTDeformationMath.Controls(weights,heights,settings,0);

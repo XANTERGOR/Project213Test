@@ -35,10 +35,14 @@ MonoBehaviour:
   detailDensityMask:
     enabled: 1
     patchSize: 3
-    patchCoverage: 0.5
-    patchSoftness: 0.2
-    patchMinimumDensity: 0.2
+    patchCoverage: 0.8
+    patchSoftness: 0.5
+    patchMinimumDensity: 0
     patchSeed: 0
+    patchScaleEnabled: 1
+    patchScaleEdge: 0.3
+    patchScaleInside: 1.2
+    patchScaleSoftness: 0.4
   details:
   - id: 7268df03b6914caa94602948f96bab04
     enabled: 1
@@ -54,15 +58,21 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.3, y: 0.5}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
-    fadeStart: 35
-    cullDistance: 50
+    fadeStart: 175
+    cullDistance: 180
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
-    thinInDistance: 0
+    thinInDistance: 1
     farDensity: 0.5
     deformationBoundsPadding: 0.5
   - id: 5e5d6d0f1e294d2090a675378c5f9b20
@@ -79,16 +89,22 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.3, y: 0.6}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
-    fadeStart: 35
-    cullDistance: 50
+    fadeStart: 175
+    cullDistance: 180
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
-    thinInDistance: 0
-    farDensity: 0.25
+    thinInDistance: 1
+    farDensity: 0.5
     deformationBoundsPadding: 0.5
   - id: f4c106bd0a8c4d08b3d5a70faa85eec7
     enabled: 1
@@ -104,16 +120,22 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.3, y: 0.6}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
-    fadeStart: 35
-    cullDistance: 50
+    fadeStart: 175
+    cullDistance: 180
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
-    thinInDistance: 0
-    farDensity: 0.25
+    thinInDistance: 1
+    farDensity: 0.5
     deformationBoundsPadding: 0.5
   - id: ef97208d4aae4a7dae794438de8117a2
     enabled: 1
@@ -129,22 +151,28 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.3, y: 0.6}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
-    fadeStart: 35
-    cullDistance: 50
+    fadeStart: 175
+    cullDistance: 180
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
-    thinInDistance: 0
-    farDensity: 0.25
+    thinInDistance: 1
+    farDensity: 0.5
     deformationBoundsPadding: 0.5
   - id: ce521f654a794532a55a383c2fb99395
     enabled: 1
     prefab: {fileID: 8246475433031689744, guid: 3f1e04f65f5f9934f88cadbab6f6b6ab, type: 3}
     category: 1
-    density: 0.5
+    density: 0.1
     probability: 1
     densityMaskMode: 0
     maskModeConfigured: 1
@@ -154,16 +182,22 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.3, y: 0.6}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
-    fadeStart: 35
-    cullDistance: 50
+    fadeStart: 175
+    cullDistance: 180
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
-    thinInDistance: 0
-    farDensity: 0.25
+    thinInDistance: 1
+    farDensity: 0.5
     deformationBoundsPadding: 0.5
   - id: c9796e2dd3c347c19c5bf71f62b182fb
     enabled: 1
@@ -179,16 +213,22 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.3, y: 0.6}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
-    fadeStart: 35
-    cullDistance: 50
+    fadeStart: 175
+    cullDistance: 180
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
-    thinInDistance: 0
-    farDensity: 0.25
+    thinInDistance: 1
+    farDensity: 0.5
     deformationBoundsPadding: 0.5
   - id: d75c4dc308e84c5db97ecc59e963f7f2
     enabled: 1
@@ -204,22 +244,28 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.3, y: 0.6}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
-    fadeStart: 35
-    cullDistance: 50
+    fadeStart: 175
+    cullDistance: 180
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
-    thinInDistance: 0
-    farDensity: 0.25
+    thinInDistance: 1
+    farDensity: 0.5
     deformationBoundsPadding: 0.5
-  - id: 2d0254f331994cdea48d5f9451a6eecf
+  - id: 7672ab2f3ba94012a29fb6bca87c56ee
     enabled: 1
-    prefab: {fileID: 7252332719626986163, guid: 892a8730bca16f9439d5cc01919d089a, type: 3}
+    prefab: {fileID: 2653810025838252133, guid: 2fb2ed0effc11dc4ca0c7a58f5742180, type: 3}
     category: 1
-    density: 0.5
+    density: 1
     probability: 1
     densityMaskMode: 0
     maskModeConfigured: 1
@@ -229,13 +275,391 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.2, y: 0.4}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 135
+    cullDistance: 140
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 1
+    farDensity: 0.5
+    deformationBoundsPadding: 0.5
+  - id: 2d0254f331994cdea48d5f9451a6eecf
+    enabled: 1
+    prefab: {fileID: 7252332719626986163, guid: 892a8730bca16f9439d5cc01919d089a, type: 3}
+    category: 1
+    density: 1
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.2, y: 0.4}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 175
+    cullDistance: 180
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 1
+    farDensity: 0.5
+    deformationBoundsPadding: 0.5
+  - id: 6f2256b9b06d4896b20baa20ea2838d5
+    enabled: 1
+    prefab: {fileID: 4697047626839586244, guid: ca46384717a100943b0723a7641d0aeb, type: 3}
+    category: 2
+    density: 0.1
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: e7b98daf49e04c419488c4875426c142
+    enabled: 1
+    prefab: {fileID: 8610392185217078294, guid: 1cceea0fcbf515547b4572ae3fa1bd0b, type: 3}
+    category: 2
+    density: 0.1
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 52d0b3997b884c64a0d6360a45d6a13b
+    enabled: 1
+    prefab: {fileID: 3849192596600764344, guid: f4d7a4bffa3677a4d923a05279c97c17, type: 3}
+    category: 2
+    density: 0.1
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 2bd009e6151a41829eee2a95579f1608
+    enabled: 1
+    prefab: {fileID: 2560732552008188974, guid: fd3c837481830b54aac801e47c6f7eac, type: 3}
+    category: 2
+    density: 0.1
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 38fa135fa8474aa7951629589afb830d
+    enabled: 1
+    prefab: {fileID: 387600614627108884, guid: 1a7916edcb295c044b37a0193fae4f8d, type: 3}
+    category: 2
+    density: 0.1
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 7f0a4d972a7a4c0783ba2f8de26ab172
+    enabled: 1
+    prefab: {fileID: 7662293791551543163, guid: bb85bf5b9cfe33345a79a82f12ac6259, type: 3}
+    category: 4
+    density: 0.1
+    probability: 0.2
+    densityMaskMode: 2
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.4, y: 0.8}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 31330a450eba43679991a05964f1a3c8
+    enabled: 1
+    prefab: {fileID: 8555447573263848434, guid: 8086d942ea1dd744cb0285ef3bc4a015, type: 3}
+    category: 4
+    density: 0.1
+    probability: 0.2
+    densityMaskMode: 2
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 6396833e345b4b81a7ea3f0226355aad
+    enabled: 1
+    prefab: {fileID: 490987262352627133, guid: 4dad34a2c706b574fae647f1bb33c82d, type: 3}
+    category: 4
+    density: 0.1
+    probability: 0.2
+    densityMaskMode: 2
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 7c92e96444ed442094ac946d831900dc
+    enabled: 1
+    prefab: {fileID: 6124824282365229677, guid: 5cb88c8b4e405d542bc17879e45c239b, type: 3}
+    category: 4
+    density: 0.1
+    probability: 0.2
+    densityMaskMode: 2
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: c693e4b8a4c945519892b4459298f56c
+    enabled: 1
+    prefab: {fileID: 5993887705621619118, guid: 6f637b461c97651428eeebf1c28032fe, type: 3}
+    category: 4
+    density: 0.1
+    probability: 0.2
+    densityMaskMode: 2
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 0
+    farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 6e3c460893b94b80b4b3ccf9c612c1fc
+    enabled: 1
+    prefab: {fileID: 2174646799958720331, guid: 3f051be8e4d48364c9479664f30f4b71, type: 3}
+    category: 4
+    density: 0.1
+    probability: 0.2
+    densityMaskMode: 2
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 35
+    cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.25

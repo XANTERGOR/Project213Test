@@ -12,7 +12,8 @@ partial class Checks
         Require(!fragment.Contains("LTDisplacementProbe")&&!domain.Contains("LTDisplacementProbe"),"displacement normal probes must be removed");
         Require(!fragment.Contains("_LTDisplacementNormalStep")&&!fragment.Contains("cross(ddy("),"fragment must not reconstruct displaced face normals");
         Require(!domain.Contains("input.normalWS=")&&!domain.Contains("input.tangentWS.xyz="),"domain must preserve source terrain normals/tangents");
-        Require(domain.Contains("input.positionRWS+=n*LTLayerDisplacement(position)*envelope;"),"position displacement must remain");
+        Require(domain.Contains("input.positionRWS+=n*LTLayerDisplacement(position)*envelope*roadDisplacement;"),"position displacement must remain");
+        Require(domain.Contains("float roadDisplacement=LTRoadDisplacementMultiplier(position);"),"asphalt suppression must use shared road coordinates");
         Require(fragment.Contains("LTSampleLayers(position,dx,dy,color,n,ao,smoothness,metallic)")&&fragment.Contains("normalTS=n;"),"material normal map must remain");
         var data=System.IO.File.ReadAllText(root+"LTEightLayerData.hlsl");
         Require(fragment.Contains("out float3 sampledNormalTS")&&fragment.Contains("sampledNormalTS=n;"),"normal probe must reuse blended texture sample");

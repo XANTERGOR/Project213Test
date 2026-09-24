@@ -36,13 +36,17 @@ SAMPLER(sampler_DetailMap);
 TEXTURE2D(_HeightMap);
 SAMPLER(sampler_HeightMap);
 
-TEXTURE2D(_TangentMap);
-SAMPLER(sampler_TangentMap);
-TEXTURE2D(_TangentMapOS);
-SAMPLER(sampler_TangentMapOS);
-
-TEXTURE2D(_AnisotropyMap);
-SAMPLER(sampler_AnisotropyMap);
+// LT layers provide their own color/normal/RGB mask. These inherited Lit maps
+// are not part of LTSurfaceLayer and would exceed Unity's 64-texture budget.
+// Strip their variants/properties in BOTH terrain ShaderLab resources as well.
+// Keep scalar CBUFFER fields below unchanged for a consistent HDRP layout.
+#undef _TANGENTMAP
+#undef _ANISOTROPYMAP
+#undef _IRIDESCENCE_THICKNESSMAP
+#undef _SPECULARCOLORMAP
+#undef _TRANSMITTANCECOLORMAP
+#undef _MATERIAL_FEATURE_IRIDESCENCE
+#undef _MATERIAL_FEATURE_CLEAR_COAT
 
 TEXTURE2D(_SubsurfaceMaskMap);
 SAMPLER(sampler_SubsurfaceMaskMap);
@@ -50,21 +54,6 @@ TEXTURE2D(_TransmissionMaskMap);
 SAMPLER(sampler_TransmissionMaskMap);
 TEXTURE2D(_ThicknessMap);
 SAMPLER(sampler_ThicknessMap);
-
-TEXTURE2D(_IridescenceThicknessMap);
-SAMPLER(sampler_IridescenceThicknessMap);
-
-TEXTURE2D(_IridescenceMaskMap);
-SAMPLER(sampler_IridescenceMaskMap);
-
-TEXTURE2D(_SpecularColorMap);
-SAMPLER(sampler_SpecularColorMap);
-
-TEXTURE2D(_TransmittanceColorMap);
-SAMPLER(sampler_TransmittanceColorMap);
-
-TEXTURE2D(_CoatMaskMap);
-SAMPLER(sampler_CoatMaskMap);
 
 #else
 
@@ -104,6 +93,7 @@ SAMPLER(sampler_LayerInfluenceMaskMap);
 #endif
 
 CBUFFER_START(UnityPerMaterial)
+float4 _LTLayerSlices0, _LTLayerSlices1, _LTLayerSlices2;
 float4 _LTGlobalParams; // enabled, transition start, transition end
 float4 _LTFarSurface; // smoothness, metallic
 // Identical per-material layout in every pass; never use global per-chunk uniforms.
@@ -136,9 +126,13 @@ float4 _LTTessellationMaskPadding; // Local XZ reach of the world-metre transiti
 float4x4 _LTCoverageWorldToLocal;
 float _LTCoverageUseWorldPosition;
 float _LTBaseOnly;
+float _LTRoadProjectionEnabled;
+float4 _LTRoadProjectionSlots0, _LTRoadProjectionSlots1, _LTRoadProjectionSlots2;
+float _LTRoadSuppressionEnabled;
 float4 _LTDisplacementParams; // fade start/end, seam width, conservative amplitude
 float4 _LTDisplacement0, _LTDisplacement1, _LTDisplacement2, _LTDisplacement3;
 float4 _LTDisplacement4, _LTDisplacement5, _LTDisplacement6, _LTDisplacement7;
+float4 _LTDisplacement8, _LTDisplacement9, _LTDisplacement10, _LTDisplacement11;
 float4 _LTTiling0;
 float4 _LTTiling1;
 float4 _LTTiling2;
@@ -147,6 +141,10 @@ float4 _LTTiling4;
 float4 _LTTiling5;
 float4 _LTTiling6;
 float4 _LTTiling7;
+float4 _LTTiling8;
+float4 _LTTiling9;
+float4 _LTTiling10;
+float4 _LTTiling11;
 float4 _LTTint0;
 float4 _LTTint1;
 float4 _LTTint2;
@@ -155,6 +153,10 @@ float4 _LTTint4;
 float4 _LTTint5;
 float4 _LTTint6;
 float4 _LTTint7;
+float4 _LTTint8;
+float4 _LTTint9;
+float4 _LTTint10;
+float4 _LTTint11;
 float4 _LTSettings0;
 float4 _LTSettings1;
 float4 _LTSettings2;
@@ -163,6 +165,10 @@ float4 _LTSettings4;
 float4 _LTSettings5;
 float4 _LTSettings6;
 float4 _LTSettings7;
+float4 _LTSettings8;
+float4 _LTSettings9;
+float4 _LTSettings10;
+float4 _LTSettings11;
 float4 _LTFlags0;
 float4 _LTFlags1;
 float4 _LTFlags2;
@@ -171,6 +177,10 @@ float4 _LTFlags4;
 float4 _LTFlags5;
 float4 _LTFlags6;
 float4 _LTFlags7;
+float4 _LTFlags8;
+float4 _LTFlags9;
+float4 _LTFlags10;
+float4 _LTFlags11;
 
 
 // shared constant between lit and layered lit

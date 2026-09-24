@@ -1,0 +1,131 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace LocalTerrainPrototype
+{
+    [ExecuteAlways, DisallowMultipleComponent, RequireComponent(typeof(LTPaintStamp))]
+    [AddComponentMenu("Local Terrain/Road")]
+    public sealed class LTRoad : MonoBehaviour
+    {
+        public List<LTRoadPoint> points = new List<LTRoadPoint>
+        {
+            new LTRoadPoint(new Vector3(0, 0, -10)),
+            new LTRoadPoint(Vector3.zero),
+            new LTRoadPoint(new Vector3(0, 0, 10))
+        };
+        public LTRoadMode mode;
+        public LTRoadPattern pattern;
+        public LTRoadProjection projection = LTRoadProjection.World;
+        public Vector2 textureOffset;
+        [Min(.01f)] public float width = 6;
+        [Min(0)] public float shoulderWidth = 1;
+        [Min(0)] public float blendWidth = 3;
+        [Range(0, 1)] public float flatten = 1;
+        [Min(.01f)] public float rutWidth = .55f;
+        [Min(0)] public float rutSeparation = 1.8f;
+        [Min(0)] public float rutDepth = .08f;
+        [Range(0, 1)] public float edgeNoise = .2f;
+        [Min(.01f)] public float noiseSize = 3;
+        public int seed = 12345;
+        public LTSurfaceLayer groundLayer;
+        public Material asphaltMaterial;
+        [Min(.01f)] public float sampleSpacing = 1;
+        [Min(.01f)] public float terrainCellSize = .5f;
+        [Min(.01f)] public float meshChunkLength = 32;
+        [Min(.01f)] public float textureRepeatMetres = 4;
+        [Min(0)] public float surfaceOffset = .06f;
+        public bool clearVegetation = true;
+        public bool clearStones;
+        [Range(0, 1), Tooltip("Vegetation removal strength within the paint mask. Does not widen tracks.")]
+        public float vegetationFade = 1;
+        [HideInInspector] public string bakeId;
+        [HideInInspector] public Transform generatedRoot;
+        [HideInInspector] public string bakeSignature;
+        [HideInInspector] public int bakedGeometryHash;
+
+        public LTWorld World => GetComponentInParent<LTWorld>();
+
+        [NonSerialized] LTRoadMath.Snapshot cached;
+        [NonSerialized] LTRoadPoint[] cachedPoints;
+        [NonSerialized] LTRoadMath.Settings cachedSettings;
+        [NonSerialized] Matrix4x4 cachedRoadMatrix, cachedWorldMatrix;
+
+        /// <summary>Immutable terrain-local snapshot. Throws ArgumentException for unsupported transforms or invalid paths.</summary>
+        public LTRoadMath.Snapshot Capture(LTWorld world)
+        {
+            if (world == null) throw new ArgumentNullException(nameof(world), "LTRoad.Capture requires its terrain world.");
+            Matrix4x4 roadMatrix = transform.localToWorldMatrix, worldMatrix = world.transform.localToWorldMatrix;
+            LTRoadMath.ValidateTransform(worldMatrix, true, "Terrain world transform");
+            LTRoadMath.ValidateTransform(roadMatrix, false, "Road transform");
+            var settings = new LTRoadMath.Settings
+            {
+                mode = mode, pattern = pattern, width = width, shoulderWidth = shoulderWidth,
+                projection = projection, textureOffset = textureOffset,
+                blendWidth = blendWidth, flatten = flatten, rutWidth = rutWidth,
+                rutSeparation = rutSeparation, rutDepth = rutDepth, edgeNoise = edgeNoise,
+                noiseSize = noiseSize, seed = seed, sampleSpacing = sampleSpacing,
+                terrainCellSize = terrainCellSize, meshChunkLength = meshChunkLength,
+                textureRepeatMetres = textureRepeatMetres, surfaceOffset = surfaceOffset,
+                clearVegetation = clearVegetation, clearStones = clearStones, vegetationFade = vegetationFade,
+                groundLayerId = groundLayer != null ? groundLayer.GetInstanceID() : 0,
+                sourceTransformHash = unchecked(LTRoadMath.TransformHash(worldMatrix) * 397 ^ LTRoadMath.TransformHash(roadMatrix))
+            };
+            if (cached != null && cachedSettings.Equals(settings) && cachedRoadMatrix.Equals(roadMatrix) &&
+                cachedWorldMatrix.Equals(worldMatrix) && SamePoints()) return cached;
+            // Build first: an invalid edit never returns the previous, stale snapshot as if it were valid.
+            var snapshot = LTRoadMath.Build(points, world.transform.worldToLocalMatrix * roadMatrix, settings);
+            cachedPoints = points.ToArray();
+            cachedSettings = settings; cachedRoadMatrix = roadMatrix; cachedWorldMatrix = worldMatrix;
+            cached = snapshot;
+            return snapshot;
+        }
+
+        bool SamePoints()
+        {
+            if (points == null || cachedPoints == null || points.Count != cachedPoints.Length) return false;
+            for (int i = 0; i < points.Count; i++)
+                if (!points[i].position.Equals(cachedPoints[i].position) || !points[i].bank.Equals(cachedPoints[i].bank)) return false;
+            return true;
+        }
+
+        void OnEnable() { SetOutputActive(mode == LTRoadMode.Asphalt); }
+        void OnDisable() { SetOutputActive(false); }
+
+        void SetOutputActive(bool active)
+        {
+            if (generatedRoot == null) return;
+            var marker = generatedRoot.GetComponent<LTRoadGenerated>();
+            if (marker != null && marker.owner == this) generatedRoot.gameObject.SetActive(active);
+        }
+
+        void OnValidate()
+        {
+            width = Clamp(width, .01f, 10000, 6);
+            shoulderWidth = Clamp(shoulderWidth, 0, 10000, 1);
+            blendWidth = Clamp(blendWidth, 0, 10000, 3);
+            flatten = Clamp(flatten, 0, 1, 1);
+            rutWidth = Clamp(rutWidth, .01f, 10000, .55f);
+            rutSeparation = Clamp(rutSeparation, 0, 10000, 1.8f);
+            rutDepth = Clamp(rutDepth, 0, 1000, .08f);
+            edgeNoise = Clamp(edgeNoise, 0, 1, .2f);
+            noiseSize = Clamp(noiseSize, .01f, 10000, 3);
+            sampleSpacing = Clamp(sampleSpacing, .01f, 10000, 1);
+            terrainCellSize = Clamp(terrainCellSize, .01f, 10000, .5f);
+            meshChunkLength = Clamp(meshChunkLength, .01f, 100000, 32);
+            textureRepeatMetres = Clamp(textureRepeatMetres, .01f, 100000, 4);
+            surfaceOffset = Clamp(surfaceOffset, 0, 1000, .06f);
+            vegetationFade = Clamp(vegetationFade, 0, 1, 1);
+            textureOffset.x = Clamp(textureOffset.x, -1e6f, 1e6f, 0);
+            textureOffset.y = Clamp(textureOffset.y, -1e6f, 1e6f, 0);
+            if (points != null) for (int i = 0; i < points.Count; i++)
+            {
+                var point = points[i]; point.bank = Clamp(point.bank, -80, 80, 0); points[i] = point;
+            }
+            cached = null;
+        }
+
+        static float Clamp(float value, float min, float max, float fallback)
+            => float.IsNaN(value) || float.IsInfinity(value) ? fallback : Math.Max(min, Math.Min(max, value));
+    }
+}

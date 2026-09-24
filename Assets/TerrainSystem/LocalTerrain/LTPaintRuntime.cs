@@ -100,7 +100,7 @@ namespace LocalTerrainPrototype
         }
     }
     // Separate from mesh generation. All generated materials/weight maps are transient.
-    // Eight slots include the base layer; texture assets are never modified.
+    // Twelve slots include the base layer; texture assets are never modified.
     public sealed partial class LTPaintRuntime : IDisposable
     {
         public void SetHullOneDiagnostic(bool enabled)
@@ -218,7 +218,7 @@ namespace LocalTerrainPrototype
             public Bounds originalLocalBounds;
             public Bounds sourceBounds;
             public bool boundsExpanded;
-            public Texture2D weights0, weights1;
+            public Texture2D weights0, weights1, weights2;
             public Texture2D displacementOccupancy;
             public Texture2D displacementEdgeDistance;
             public Texture2D coveragePreview;
@@ -248,7 +248,12 @@ namespace LocalTerrainPrototype
         readonly Dictionary<LTChunk,ChunkState> chunks=new Dictionary<LTChunk,ChunkState>();
         readonly Dictionary<Texture2D,MaskCopy> masks=new Dictionary<Texture2D,MaskCopy>();
         readonly LTPaintTerrain terrain=new LTPaintTerrain();
+        readonly LTLayerTextureArrays layerArrays=new LTLayerTextureArrays();
+        LTWorld arrayWorld;
+        bool arraysAvailable;
+        public void BindLayerArrays(Material material,IList<LTSurfaceLayer> layers)=>layerArrays.Bind(material,layers);
         double nextUpdate;
+        public const int LayerCapacity=12;
         const int Resolution=257;
         static int Mix(int hash,int value)=>unchecked(hash*397^value);
         static int Id(UnityEngine.Object obj)=>obj?obj.GetInstanceID():0;
@@ -259,6 +264,7 @@ namespace LocalTerrainPrototype
         }
         static void Release(ChunkState state)
         {
+            ReleaseRoadProjection(state);
             ReleaseDeformation(state);
             if(state.renderer&&(state.renderer.sharedMaterial==state.material||state.renderer.sharedMaterial==state.farMaterial||state.renderer.sharedMaterial==state.flatMaterial))state.renderer.sharedMaterial=state.original;
             if(state.renderer&&state.boundsExpanded)state.renderer.localBounds=state.originalLocalBounds;
@@ -266,7 +272,7 @@ namespace LocalTerrainPrototype
             DestroyOwned(state.displacementOccupancy);
             DestroyOwned(state.displacementEdgeDistance);
             DestroyOwned(state.coveragePreview);
-            DestroyOwned(state.material);DestroyOwned(state.farMaterial);DestroyOwned(state.bakeMaterial);DestroyOwned(state.weights0);DestroyOwned(state.weights1);
+            DestroyOwned(state.material);DestroyOwned(state.farMaterial);DestroyOwned(state.bakeMaterial);DestroyOwned(state.weights0);DestroyOwned(state.weights1);DestroyOwned(state.weights2);
         }
         public void RestoreMaterialsForSave()
         {
@@ -279,10 +285,14 @@ namespace LocalTerrainPrototype
         }
         public void Dispose()
         {
+            arraysAvailable=false;
+            if(arrayWorld){arrayWorld.arrayColorPreview=arrayWorld.arrayNormalPreview=arrayWorld.arrayMaskPreview=null;arrayWorld.arrayPackStatus="Массивы освобождены. Включите покраску для упаковки.";}
+            arrayWorld=null;
             ReleaseDeformationRegions();
             ReleaseRockMaterials();
             ReleaseGlobals();
             foreach(var state in chunks.Values)Release(state);
+            layerArrays.Dispose();
             chunks.Clear();
             foreach(var mask in masks.Values)DestroyOwned(mask.copy);
             masks.Clear();
@@ -291,6 +301,7 @@ namespace LocalTerrainPrototype
         }
         public static Rect StampBounds(LTWorld world,LTPaintStamp stamp)
         {
+            var road=stamp.Road;if(road)return road.Capture(world).bounds;
             var matrix=world.transform.worldToLocalMatrix*stamp.transform.localToWorldMatrix;
             Vector2 min=new Vector2(float.PositiveInfinity,float.PositiveInfinity),max=-min;
             for(int z=-1;z<=1;z+=2)for(int x=-1;x<=1;x+=2)
@@ -336,22 +347,29 @@ namespace LocalTerrainPrototype
             {name=name,hideFlags=HideFlags.HideAndDontSave,wrapMode=TextureWrapMode.Clamp,filterMode=FilterMode.Bilinear};
         void Bake(LTWorld world,Rect rect,List<LTPaintStamp> stamps,List<LTSurfaceLayer> layers,ChunkState state)
         {
+            BakeRoadProjection(world,rect,stamps,layers,state);
             var inverse=new Matrix4x4[stamps.Count];var copies=new Texture2D[stamps.Count];var slots=new int[stamps.Count];
+            var roads=new LTRoadMath.Snapshot[stamps.Count];
+            var terrainFilters=new bool[stamps.Count];
             for(int i=0;i<stamps.Count;i++)
             {
+                var road=stamps[i].Road;if(road)roads[i]=road.Capture(world);
+                terrainFilters[i]=stamps[i].HasTerrainFilters;
                 Projection(world,stamps[i],out inverse[i]);
-                copies[i]=ReadMask(stamps[i].mask);slots[i]=layers.IndexOf(stamps[i].layer);
+                copies[i]=ReadMask(stamps[i].mask);slots[i]=layers.IndexOf(stamps[i].EffectiveLayer);
             }
-            var first=new Color32[Resolution*Resolution];var second=new Color32[first.Length];var weights=new float[8];
+            var first=new Color32[Resolution*Resolution];var second=new Color32[first.Length];var third=new Color32[first.Length];var weights=new float[LayerCapacity];
             bool filtered=stamps.Exists(s=>s.HasTerrainFilters);
             for(int y=0;y<Resolution;y++)for(int x=0;x<Resolution;x++)
             {
-                Array.Clear(weights,0,8);weights[0]=1;
+                Array.Clear(weights,0,weights.Length);weights[0]=1;
                 var point=new Vector3(rect.xMin+rect.width*x/(Resolution-1),0,rect.yMin+rect.height*y/(Resolution-1));
                 float height=0,slope=0;
                 bool sampled=filtered&&terrain.Sample(point.x,point.z,out height,out slope);
                 for(int i=0;i<stamps.Count;i++)
                 {
+                    if(roads[i]!=null)
+                    {LTPaintMath.Composite(weights,slots[i],roads[i].PaintWeight(point.x,point.z));continue;}
                     var stamp=stamps[i];var local=inverse[i].MultiplyPoint3x4(point);
                     var p=new Vector2(local.x/Mathf.Max(.01f,stamp.size.x)*2,local.z/Mathf.Max(.01f,stamp.size.y)*2);
                     float alpha=LTPaintMath.Coverage(p,stamp.shape==LTStampShape.Rectangle,stamp.edgeFalloff,stamp.strength);
@@ -361,7 +379,7 @@ namespace LocalTerrainPrototype
                         alpha*=LTPaintMath.NoiseCoverage(new Vector2(local.x,local.z),stamp.noise.size,stamp.noise.seed,
                             stamp.noise.strength,stamp.noise.threshold,stamp.noise.softness);
                     if(alpha<=0)continue;
-                    if(stamp.HasTerrainFilters)
+                    if(terrainFilters[i])
                     {
                         if(!sampled)continue;
                         alpha*=stamp.heightFilter.Evaluate(height)*stamp.slopeFilter.Evaluate(slope);
@@ -387,11 +405,14 @@ namespace LocalTerrainPrototype
                 int index=y*Resolution+x;
                 first[index]=new Color(weights[0],weights[1],weights[2],weights[3]);
                 second[index]=new Color(weights[4],weights[5],weights[6],weights[7]);
+                third[index]=new Color(weights[8],weights[9],weights[10],weights[11]);
             }
             if(!state.weights0)state.weights0=NewWeights("Layer weights 0–3");
             if(!state.weights1)state.weights1=NewWeights("Layer weights 4–7");
+            if(!state.weights2)state.weights2=NewWeights("Layer weights 8–11");
             state.weights0.SetPixels32(first);state.weights0.Apply(false,false);
             state.weights1.SetPixels32(second);state.weights1.Apply(false,false);
+            state.weights2.SetPixels32(third);state.weights2.Apply(false,false);
         }
         List<Color32[]> BakeDisplacementCoverage(LTWorld world,Rect rect,List<LTPaintStamp> stamps,List<LTSurfaceLayer> layers,ChunkState state,int active)
         {
@@ -401,7 +422,7 @@ namespace LocalTerrainPrototype
             if((active&1)==0)
             {
                 float x0=rect.xMax,y0=rect.yMax,x1=rect.xMin,y1=rect.yMin;
-                foreach(var stamp in stamps)if((active&(1<<layers.IndexOf(stamp.layer)))!=0)
+                foreach(var stamp in stamps)if((active&(1<<layers.IndexOf(stamp.EffectiveLayer)))!=0)
                 {
                     var b=StampBounds(world,stamp);x0=Mathf.Min(x0,b.xMin);y0=Mathf.Min(y0,b.yMin);x1=Mathf.Max(x1,b.xMax);y1=Mathf.Max(y1,b.yMax);
                 }
@@ -412,13 +433,13 @@ namespace LocalTerrainPrototype
             int cells=Mathf.Clamp(Mathf.NextPowerOfTwo(Mathf.CeilToInt(Mathf.Max(area.width,area.height)/.125f)),32,1024),res=cells+1;
             BeginDeformationControls(state,area,cells,layers);
             var mudSettings=DeformationSettings(layers);
-            var maps=new Texture2D[8];
+            var maps=new Texture2D[LayerCapacity];
             for(int i=0;i<layers.Count;i++)if(!(i==0&&world.lightweightBackground))maps[i]=ReadMask(layers[i].maskMap);
             // Read once per bake, never per sample. Use the GPU's texel-centre
             // convention for both clamped weights and repeated height textures.
-            var weightPixels0=state.weights0.GetPixels32();var weightPixels1=state.weights1.GetPixels32();
-            var maskPixels=new Color32[8][];
-            var maskSizes=new Vector2Int[8];
+            var weightPixels0=state.weights0.GetPixels32();var weightPixels1=state.weights1.GetPixels32();var weightPixels2=state.weights2.GetPixels32();
+            var maskPixels=new Color32[LayerCapacity][];
+            var maskSizes=new Vector2Int[LayerCapacity];
             for(int i=0;i<layers.Count;i++)if(maps[i])
             {maskPixels[i]=maps[i].GetPixels32();maskSizes[i]=new Vector2Int(maps[i].width,maps[i].height);}
             var first=new Color32[res*res];var second=new Color32[first.Length];
@@ -427,29 +448,33 @@ namespace LocalTerrainPrototype
             for(int i=0;i<layers.Count;i++)
                 if(world.enableLayerDisplacement&&!(i==0&&world.lightweightBackground)&&layers[i].displacement&&layers[i].maskMap&&layers[i].displacementAmplitude>0)
                     ordinaryLayers|=1<<i;
-            var weights=new float[8];var heights=new float[8];
+            var weights=new float[LayerCapacity];var heights=new float[LayerCapacity];
             for(int y=0;y<res;y++)for(int x=0;x<res;x++)
             {
                 float px=area.xMin+area.width*x/cells,pz=area.yMin+area.height*y/cells;
                 float u=((px-rect.xMin)/rect.width*(Resolution-1)+.5f)/Resolution,v=((pz-rect.yMin)/rect.height*(Resolution-1)+.5f)/Resolution;
                 Color a=LTPaintMath.SampleGpuBilinear(weightPixels0,Resolution,Resolution,u,v,false);
                 Color b=LTPaintMath.SampleGpuBilinear(weightPixels1,Resolution,Resolution,u,v,false);
-                for(int i=0;i<8;i++)
+                Color c=LTPaintMath.SampleGpuBilinear(weightPixels2,Resolution,Resolution,u,v,false);
+                for(int i=0;i<LayerCapacity;i++)
                 {
-                    weights[i]=i<4?a[i]:b[i-4];heights[i]=.5f;
+                    weights[i]=i<4?a[i]:i<8?b[i-4]:c[i-8];heights[i]=.5f;
                     if(i>=layers.Count)continue;
                     var layer=layers[i];float h=.5f;
+                    var textureUV=new Vector2((px+layer.tileOffsetMetres.x)/Mathf.Max(.001f,layer.tileSizeMetres.x),
+                        (pz+layer.tileOffsetMetres.y)/Mathf.Max(.001f,layer.tileSizeMetres.y));
+                    if(TryRoadProjectionUV(state,i,px,pz,out var roadUV))textureUV=roadUV;
                     if(maps[i]&&weights[i]>.00001f)
                         h=LTPaintMath.SampleGpuBilinear(maskPixels[i],maskSizes[i].x,maskSizes[i].y,
-                            (px+layer.tileOffsetMetres.x)/Mathf.Max(.001f,layer.tileSizeMetres.x),
-                            (pz+layer.tileOffsetMetres.y)/Mathf.Max(.001f,layer.tileSizeMetres.y),true).g;
+                            textureUV.x,textureUV.y,true).g;
                     if(!(i==0&&world.lightweightBackground))heights[i]=Mathf.Clamp01((h-.5f)*layer.heightStrength+.5f+layer.heightOffset);
                 }
-                bool occupied=LTPaintMath.DisplacementVisibility(weights,heights,world.layerHeightBlend,active)>LTPaintMath.DisplacementVisibilityStart;
+                float roadDisplacement=RoadDisplacementMultiplier(state,px,pz);
+                bool occupied=roadDisplacement>0&&LTPaintMath.DisplacementVisibility(weights,heights,world.layerHeightBlend,active)>LTPaintMath.DisplacementVisibilityStart;
                 first[y*res+x]=new Color32((byte)(occupied?255:0),0,0,255);
                 if(ordinaryFirst!=null)
                 {
-                    bool ordinary=LTPaintMath.DisplacementVisibility(weights,heights,world.layerHeightBlend,ordinaryLayers)>LTPaintMath.DisplacementVisibilityStart;
+                    bool ordinary=roadDisplacement>0&&LTPaintMath.DisplacementVisibility(weights,heights,world.layerHeightBlend,ordinaryLayers)>LTPaintMath.DisplacementVisibilityStart;
                     ordinaryFirst[y*res+x]=new Color32((byte)(ordinary?255:0),0,0,255);
                 }
                 if(state.deformation!=null)
@@ -515,16 +540,14 @@ namespace LocalTerrainPrototype
                 Set(state.material);Set(state.flatMaterial);Set(state.farMaterial);
             }
         }
-        static void Bind(Material material,LTWorld world,Rect rect,List<LTSurfaceLayer> layers,ChunkState state)
+        void Bind(Material material,LTWorld world,Rect rect,List<LTSurfaceLayer> layers,ChunkState state)
         {
+            layerArrays.Bind(material,layers);
             float maxDisplacement=0,maxDepression=0;
-            var tiling=new Vector4[8];var tint=new Vector4[8];var settings=new Vector4[8];var flags=new Vector4[8];
-            for(int i=0;i<8;i++)
+            var tiling=new Vector4[LayerCapacity];var tint=new Vector4[LayerCapacity];var settings=new Vector4[LayerCapacity];var flags=new Vector4[LayerCapacity];
+            for(int i=0;i<LayerCapacity;i++)
             {
                 var layer=i<layers.Count?layers[i]:null;
-                material.SetTexture("_LTColor"+i,layer&&layer.baseColorMap?layer.baseColorMap:Texture2D.whiteTexture);
-                material.SetTexture("_LTNormal"+i,layer?layer.normalMap:null);
-                material.SetTexture("_LTMask"+i,layer?layer.maskMap:null);
                 material.SetVector("_LTDisplacement"+i,Vector4.zero);
                 if(!layer){tiling[i]=Vector4.one;continue;}
                 tiling[i]=new Vector4(layer.tileSizeMetres.x,layer.tileSizeMetres.y,
@@ -534,24 +557,25 @@ namespace LocalTerrainPrototype
                 flags[i]=new Vector4(layer.normalMap?1:0,layer.aoStrength,layer.heightStrength,layer.heightOffset);
                 if(i==0&&world.lightweightBackground)
                 {
-                    material.SetTexture("_LTMask0",null);
                     settings[i].w=0;
                     flags[i]=new Vector4(layer.normalMap&&layer.normalStrength>0?1:0,0,0,0);
                 }
                 float amplitude=world.enableLayerDisplacement&&layer.displacement&&layer.maskMap&&!(i==0&&world.lightweightBackground)?Mathf.Clamp(layer.displacementAmplitude,0,2):0;
                 float center=Mathf.Clamp01(layer.displacementCenter);
-                int smoothing=layer.maskMap?Mathf.Clamp(layer.displacementSmoothingMip,0,Mathf.Min(10,layer.maskMap.mipmapCount-1)):0;
+                float smoothing=layer.maskMap?Mathf.Clamp(layer.displacementSmoothingMip,0,Mathf.Min(10,layer.maskMap.mipmapCount-1)):0;
+                if(layer.maskMap&&smoothing>0)
+                    smoothing=Mathf.Clamp(smoothing+Mathf.Log((float)layerArrays.mask.width/Mathf.Max(layer.maskMap.width,layer.maskMap.height),2),0,layerArrays.mask.mipmapCount-1);
                 material.SetVector("_LTDisplacement"+i,new Vector4(amplitude,center,smoothing,0));
                 maxDisplacement=Mathf.Max(maxDisplacement,LTPaintMath.DisplacementBound(amplitude,center));
                 if(layer.deformation)maxDepression=Mathf.Max(maxDepression,Mathf.Clamp(layer.deformationDepth,0,2));
             }
             maxDisplacement+=maxDepression;
-            for(int i=0;i<8;i++)
+            for(int i=0;i<LayerCapacity;i++)
             {
                 material.SetVector("_LTTiling"+i,tiling[i]);material.SetVector("_LTTint"+i,tint[i]);
                 material.SetVector("_LTSettings"+i,settings[i]);material.SetVector("_LTFlags"+i,flags[i]);
             }
-            material.SetTexture("_LTWeights0",state.weights0);material.SetTexture("_LTWeights1",state.weights1);
+            material.SetTexture("_LTWeights0",state.weights0);material.SetTexture("_LTWeights1",state.weights1);material.SetTexture("_LTWeights2",state.weights2);
             material.SetVector("_LTRect",new Vector4(rect.x,rect.y,rect.width,rect.height));
             material.SetVector("_LTWorldSize",new Vector4(world.source.size.x,world.source.size.z,0,0));
             material.SetFloat("_LTTriplanar",world.triplanarTexturing?1:0);
@@ -567,6 +591,7 @@ namespace LocalTerrainPrototype
                 transition/Mathf.Max(.00001f,world.transform.TransformVector(Vector3.forward).magnitude),0,0));
             state.coverageWorldToLocal=world.transform.worldToLocalMatrix;
             BindCoverage(material,state);
+            BindRoadProjection(material,state);
             BindDeformation(material,state);
             float end=DisplacementEnd(world),start=Mathf.Clamp(world.displacementFadeStart,0,end-.01f);
             material.SetVector("_LTDisplacementParams",new Vector4(start,end,Mathf.Max(.1f,world.displacementSeamFade),maxDisplacement));
@@ -608,8 +633,32 @@ namespace LocalTerrainPrototype
             PrepareGlobals(world);
             var tessShader=SystemInfo.supportsTessellationShaders?Resources.Load<Shader>("LTEightLayersTessellation"):null;
             var all=world.CollectPaintStamps();var active=new List<LTPaintStamp>();var bounds=new List<Rect>();
-            foreach(var stamp in all)if(stamp.isActiveAndEnabled&&stamp.layer&&stamp.strength>0&&Projection(world,stamp,out _))
-            {active.Add(stamp);bounds.Add(StampBounds(world,stamp));}
+            // A shared, deterministic palette includes disabled stamps too: toggling
+            // visibility or painting weights does not repack textures or shuffle slices.
+            var palette=new List<LTSurfaceLayer>{world.baseLayer};
+            foreach(var stamp in all)if(stamp.EffectiveLayer&&!palette.Contains(stamp.EffectiveLayer))palette.Add(stamp.EffectiveLayer);
+            int arrayRevision=layerArrays.Revision;
+            bool arraysReady=layerArrays.Ensure(world,palette);arrayWorld=world;arraysAvailable=arraysReady;
+            world.arrayPackStatus=layerArrays.Status;
+            world.arrayColorPreview=layerArrays.color;world.arrayNormalPreview=layerArrays.normal;world.arrayMaskPreview=layerArrays.mask;
+            if(!arraysReady){RestoreMaterialsForSave();world.paintStatus=layerArrays.Status;return;}
+            if(arrayRevision!=layerArrays.Revision)
+            {
+                foreach(var state in chunks.Values){state.ready=false;state.globalBindingReady=false;state.farMaterialDirty=true;}
+                foreach(var rock in rocks.Values)rock.paint.ready=false;
+            }
+            var roadErrors=new List<string>();var asphaltInputs=new List<LTRoadMath.Snapshot>();
+            foreach(var road in world.GetComponentsInChildren<LTRoad>())
+            {
+                if(!road.isActiveAndEnabled||road.World!=world||road.mode!=LTRoadMode.Asphalt)continue;
+                try {asphaltInputs.Add(road.Capture(world));}
+                catch(ArgumentException error){roadErrors.Add(road.name+": "+error.Message);}
+            }
+            foreach(var stamp in all)if(stamp.ActiveForPaint&&stamp.EffectiveLayer&&(stamp.Road||stamp.strength>0)&&Projection(world,stamp,out _))
+            {
+                try {var box=StampBounds(world,stamp);active.Add(stamp);bounds.Add(box);}
+                catch(ArgumentException) { /* Invalid road is reported by its inspector. */ }
+            }
             var current=world.generatedRoot.GetComponentsInChildren<LTChunk>();var live=new HashSet<LTChunk>(current);
             bool filtered=active.Exists(s=>s.HasTerrainFilters);
             using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.TerrainCache))
@@ -619,7 +668,7 @@ namespace LocalTerrainPrototype
             }
             foreach(var key in new List<LTChunk>(chunks.Keys))if(!key||!live.Contains(key)){Release(chunks[key]);chunks.Remove(key);}
             // Drop CPU mask copies no longer referenced by an active stamp.
-            var usedMasks=new HashSet<Texture2D>();foreach(var stamp in active){if(stamp.mask)usedMasks.Add(stamp.mask);if(stamp.layer.maskMap)usedMasks.Add(stamp.layer.maskMap);}
+            var usedMasks=new HashSet<Texture2D>();foreach(var stamp in active){if(stamp.mask)usedMasks.Add(stamp.mask);if(stamp.EffectiveLayer.maskMap)usedMasks.Add(stamp.EffectiveLayer.maskMap);}
             if(world.baseLayer.maskMap)usedMasks.Add(world.baseLayer.maskMap);
             foreach(var key in new List<Texture2D>(masks.Keys))if(!key||!usedMasks.Contains(key)){DestroyOwned(masks[key].copy);masks.Remove(key);}
             int painted=0,maxLayers=0,displacedChunks=0,unsupportedDisplacement=0;var overflow=new List<string>();
@@ -631,9 +680,9 @@ namespace LocalTerrainPrototype
                 var rect=new Rect(chunk.x*width,chunk.z*depth,width,depth);
                 var local=new List<LTPaintStamp>();var layers=new List<LTSurfaceLayer>{world.baseLayer};
                 for(int i=0;i<active.Count;i++)if(Touches(rect,bounds[i]))
-                {local.Add(active[i]);if(!layers.Contains(active[i].layer))layers.Add(active[i].layer);}
+                {local.Add(active[i]);if(!layers.Contains(active[i].EffectiveLayer))layers.Add(active[i].EffectiveLayer);}
                 maxLayers=Mathf.Max(maxLayers,layers.Count);
-                if(layers.Count>8)
+                if(layers.Count>LayerCapacity)
                 {
                     overflow.Add($"({chunk.x},{chunk.z}): {layers.Count}");
                     if(chunks.TryGetValue(chunk,out var excess)){Release(excess);chunks.Remove(chunk);}continue;
@@ -665,9 +714,12 @@ namespace LocalTerrainPrototype
                 using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.ChangeChecks))
                 {
                 coverage=Mix(rect.GetHashCode(),world.transform.localToWorldMatrix.GetHashCode());coverage=Mix(coverage,Id(world.baseLayer));
+                // Asphalt suppresses visual displacement even without a paint layer.
+                foreach(var road in asphaltInputs)if(road.Intersects(rect))coverage=Mix(coverage,road.geometryHash);
                 foreach(var stamp in local)
                 {
-                    coverage=Mix(coverage,Id(stamp));coverage=Mix(coverage,Id(stamp.layer));
+                    coverage=Mix(coverage,Id(stamp));coverage=Mix(coverage,Id(stamp.EffectiveLayer));
+                    var road=stamp.Road;if(road){coverage=Mix(coverage,road.Capture(world).paintHash);continue;}
                     coverage=Mix(coverage,stamp.transform.localToWorldMatrix.GetHashCode());coverage=Mix(coverage,stamp.size.GetHashCode());
                     coverage=Mix(coverage,(int)stamp.shape);coverage=Mix(coverage,stamp.strength.GetHashCode());coverage=Mix(coverage,stamp.edgeFalloff.GetHashCode());
                     coverage=Mix(coverage,Id(stamp.mask));if(stamp.mask)coverage=Mix(coverage,stamp.mask.imageContentsHash.GetHashCode());
@@ -694,7 +746,7 @@ namespace LocalTerrainPrototype
                 surface=Mix(surface,state.sourceBounds.GetHashCode());
                 foreach(var layer in layers)
                 {
-                    surface=Mix(surface,JsonUtility.ToJson(layer).GetHashCode());
+                    surface=Mix(surface,layer.SurfaceHash());
                     if(layer.baseColorMap)surface=Mix(surface,layer.baseColorMap.imageContentsHash.GetHashCode());
                     if(layer.normalMap)surface=Mix(surface,layer.normalMap.imageContentsHash.GetHashCode());
                     if(layer.maskMap)surface=Mix(surface,layer.maskMap.imageContentsHash.GetHashCode());
@@ -702,7 +754,15 @@ namespace LocalTerrainPrototype
                 }
                 if(!state.ready||state.coverageHash!=coverage)
                 {
-                    using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.WeightBake))Bake(world,rect,local,layers,state);
+                    try
+                    {
+                        using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.WeightBake))Bake(world,rect,local,layers,state);
+                    }
+                    catch(InvalidOperationException error)
+                    {
+                        roadErrors.Add($"({chunk.x},{chunk.z}): "+error.Message);
+                        Release(state);chunks.Remove(chunk);continue;
+                    }
                     world.paintCpu.WeightBaked();
                 }
                 int occupancyLayers=0;
@@ -716,7 +776,7 @@ namespace LocalTerrainPrototype
                 densityInput=Mix(densityInput,world.layerHeightBlend.GetHashCode());
                 foreach(var layer in layers)
                 {
-                    densityInput=Mix(densityInput,JsonUtility.ToJson(layer).GetHashCode());
+                    densityInput=Mix(densityInput,layer.SurfaceHash());
                     if(layer.maskMap)densityInput=Mix(densityInput,layer.maskMap.imageContentsHash.GetHashCode());
                 }
                 bool coverageRebuilt=false;
@@ -750,15 +810,16 @@ namespace LocalTerrainPrototype
                 {state.original=renderer.sharedMaterial;renderer.sharedMaterial=state.material;}
                 painted++;
             }
-            world.paintStatus=$"Покрашено чанков: {painted}; максимум слоёв: {maxLayers}/8 (включая базовый). Маски: {Resolution}×{Resolution}.";
+            world.paintStatus=$"Покрашено чанков: {painted}; максимум слоёв: {maxLayers}/{LayerCapacity} (включая базовый). Маски: {Resolution}×{Resolution}.";
             if(world.RegularMaskGridActive)world.paintStatus+=$"\nCPU-сетка по маске: чанк {world.regularMaskGridChunk}, запрошенный шаг {world.regularMaskGridStep:0.###} м. "+
                 (world.regularMaskGridDisplacement?"Запрошен displacement существующих вершин, Hull=1 (без дополнительного дробления).":"Displacement выбранного чанка отключён.");
             if(displacedChunks>0)world.paintStatus+=$"\nDisplacement: {displacedChunks} чанков; затухание до {DisplacementEnd(world):F1} м. Коллайдеры исходные.";
             if(unsupportedDisplacement>0)world.paintStatus+="\nDisplacement недоступен: проверьте поддержку тесселяции GPU и компиляцию LTEightLayersTessellation.";
             if(overflow.Count>0)world.paintStatus+="\nЛимит превышен, исходный материал сохранён: "+string.Join(", ",overflow);
+            if(roadErrors.Count>0)world.paintStatus+="\nДороги: "+string.Join("\n",roadErrors);
             AppendDeformationStatus(world);
             PrepareDeformationRegions(world,active);
-            FinishGlobals(world,painted==world.chunksX*world.chunksZ&&overflow.Count==0);
+            FinishGlobals(world,painted==world.chunksX*world.chunksZ&&overflow.Count==0&&roadErrors.Count==0);
             PrepareDeformationTerrain(world,current);
             TickRockMaterials(world,shader,active,bounds);
             SetHullOneDiagnostic(world.forceHullOneDiagnostic);

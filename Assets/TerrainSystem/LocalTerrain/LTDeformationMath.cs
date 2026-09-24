@@ -51,8 +51,8 @@ namespace LocalTerrainPrototype
         public static Vector4 Controls(float[] weights,float[] heights,Vector4[] settings,float blend)
         {
             float highest=-1,total=0,visible=0,depth=0,recovery=0,factor=1;
-            for(int i=0;i<8;i++)if(weights[i]>.00001f)highest=Mathf.Max(highest,heights[i]+weights[i]);
-            for(int i=0;i<8;i++)
+            for(int i=0;i<weights.Length;i++)if(weights[i]>.00001f)highest=Mathf.Max(highest,heights[i]+weights[i]);
+            for(int i=0;i<weights.Length;i++)
             {
                 float w=weights[i];
                 if(blend>.0001f)w*=Mathf.Lerp(1,Mathf.Clamp01((heights[i]+w-highest+.2f)/.2f),blend);

@@ -16,7 +16,8 @@ partial class Checks
         SurfaceProjectionChecks();
         DeformationChecks();
         DetailChecks();
-        var dw=new float[8];var dh=new float[8];
+        TwelveLayerChecks();
+        var dw=new float[12];var dh=new float[12];
         dw[0]=.8f;dw[1]=.2f;dh[0]=.8f;dh[1]=.1f;
         Require(Math.Abs(LTPaintMath.DisplacementVisibility(dw,dh,0,2)-.2f)<1e-6,"visibility uses normalized layer weight");
         Require(LTPaintMath.DisplacementVisibility(dw,dh,1,2)==0,"height-hidden layer needs no tessellation");
@@ -109,17 +110,17 @@ partial class Checks
         Require(LTPaintMath.Coverage(new Vector2(1,0),false,.5f,1)==0,"paint boundary");
         Require(LTPaintMath.Coverage(new Vector2(2,0),true,.5f,1)==0,"paint outside");
         Require(Math.Abs(LTPaintMath.Coverage(new Vector2(.75f,0),false,.5f,1)-.5f)<1e-6,"paint smooth edge");
-        var weights=new float[8];weights[0]=1;
-        for(int i=1;i<8;i++)LTPaintMath.Composite(weights,i,1f/(i+1));
-        Require(weights.All(w=>Math.Abs(w-.125f)<1e-6),"eight equal weights including base");
+        var weights=new float[12];weights[0]=1;
+        for(int i=1;i<12;i++)LTPaintMath.Composite(weights,i,1f/(i+1));
+        Require(weights.All(w=>Math.Abs(w-1f/12)<1e-6),"twelve equal weights including base");
         var random=new System.Random(83);
         for(int i=0;i<10000;i++)
         {
-            LTPaintMath.Composite(weights,random.Next(8),(float)random.NextDouble());
-            Require(Math.Abs(weights.Sum()-1)<1e-5&&weights.All(w=>w>=0&&w<=1),"normalized eight-layer compositing");
+            LTPaintMath.Composite(weights,random.Next(12),(float)random.NextDouble());
+            Require(Math.Abs(weights.Sum()-1)<1e-5&&weights.All(w=>w>=0&&w<=1),"normalized twelve-layer compositing");
         }
-        LTPaintMath.Composite(weights,7,1);Require(weights[7]==1&&weights.Take(7).All(w=>w==0),"last stamp overrides");
-        LTPaintMath.Composite(weights,7,.5f);Require(weights[7]==1,"duplicate layer preserves full coverage");
-        Console.WriteLine("PASS paint: 8 layers, smooth bounds, 10000 normalized blends, hierarchy order and duplicate layer.");
+        LTPaintMath.Composite(weights,11,1);Require(weights[11]==1&&weights.Take(11).All(w=>w==0),"last stamp overrides");
+        LTPaintMath.Composite(weights,11,.5f);Require(weights[11]==1,"duplicate layer preserves full coverage");
+        Console.WriteLine("PASS paint: 12 layers, smooth bounds, 10000 normalized blends, hierarchy order and duplicate layer.");
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -6,6 +7,56 @@ namespace LocalTerrainPrototype
     // Enumerates only camera neighbourhoods, never the complete world grid.
     public static class LTDetailStreaming
     {
+        public struct View
+        {
+            public Vector2 position;
+            public Plane[] planes; // World-space frustum, including orthographic cameras.
+        }
+        struct Priority
+        {
+            public bool resident;
+            public int tier;
+            public float distance;
+        }
+        // Pure plane/AABB test so the queue policy can be exercised outside the Unity player.
+        public static bool InView(Plane[] planes,Bounds bounds)
+        {
+            if(planes==null||planes.Length==0)return true;
+            foreach(var plane in planes)
+            {
+                var n=plane.normal;var e=bounds.extents;
+                float radius=Mathf.Abs(n.x)*e.x+Mathf.Abs(n.y)*e.y+Mathf.Abs(n.z)*e.z;
+                if(Vector3.Dot(n,bounds.center)+plane.distance+radius<0)return false;
+            }
+            return true;
+        }
+        // Reorders only: residency radius, candidate identities and the render culling are unchanged.
+        public static void Prioritize(List<Vector2Int> plan,List<View> views,Vector2 worldSize,int size,
+            float drawDistance,Func<Vector2Int,Bounds> boundsForCell,Func<Vector2Int,bool> isResident)
+        {
+            var priorities=new Dictionary<Vector2Int,Priority>(plan.Count);
+            foreach(var key in plan)
+            {
+                var rect=CellRect(key,size,worldSize);var bounds=boundsForCell(key);
+                var priority=new Priority{resident=isResident(key),tier=2,distance=float.PositiveInfinity};
+                foreach(var view in views)
+                {
+                    float distance=DistanceSquared(view.position,rect);
+                    int tier=distance>drawDistance*drawDistance?2:InView(view.planes,bounds)?0:1;
+                    // Distance belongs to the camera that supplied the winning tier.
+                    if(tier<priority.tier||(tier==priority.tier&&distance<priority.distance))
+                    {priority.tier=tier;priority.distance=distance;}
+                }
+                priorities.Add(key,priority);
+            }
+            plan.Sort((a,b)=>{
+                var pa=priorities[a];var pb=priorities[b];
+                int order=pa.resident.CompareTo(pb.resident); // Fill missing cells before refreshing cached cells.
+                if(order==0)order=pa.tier.CompareTo(pb.tier);
+                if(order==0)order=pa.distance.CompareTo(pb.distance);
+                return order!=0?order:a.y!=b.y?a.y.CompareTo(b.y):a.x.CompareTo(b.x);
+            });
+        }
         public static float DistanceSquared(Vector2 point,Rect rect)
         {
             float x=Mathf.Max(rect.xMin-point.x,Mathf.Max(0,point.x-rect.xMax));

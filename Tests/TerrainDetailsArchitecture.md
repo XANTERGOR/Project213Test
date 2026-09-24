@@ -1,10 +1,103 @@
 # Детализация террейна: согласованная архитектура
 
-Статус на 21 сентября 2026: CPU-генератор, instanced backend и подгрузка вокруг камер.
+Статус на 23 сентября 2026: CPU-генератор, instanced backend, подгрузка вокруг камер,
+ограниченный кэш матриц и объединение совместимых партий соседних ячеек.
 Существующие материалы, геометрия, грязь и сцены автоматически не изменяются.
 Проверки C# и CPU не заменяют проверку отрисовки в Unity/HDRP.
 
+### Оптимизация под GTX 1660 — первый этап
+
+Целевое оборудование выбрано пользователем: GTX 1660. Конкретные разрешение,
+FPS и CPU пока не зафиксированы. Превосходство над Unity Terrain не измерено
+и не гарантируется: нужен одинаковый визуальный результат и парный замер.
+
+- LTWorld → Detail Renderer → Combine Draw Batches (по умолчанию включено):
+  объединяет совместимые непрозрачные/alpha-test партии в пределах 2×2 ячеек.
+  Лимит одной отправки — 511 матриц; не предполагает assumeuniformscaling.
+  Ключ включает Mesh, Material, submesh, layer, renderingLayerMask,
+  Cast/Receive Shadows, light/reflection probe usage и motion-vector mode.
+  Прозрачные материалы (renderQueue >= 3000) остаются на прежнем пути.
+- Отбор экземпляров, LOD, дистанции, плотность, маски, позиции и режимы
+  теней не изменены. Объединяются уже отобранные части, включая нужные
+  внекадровые кастеры. Bounds партии покрывают все её экземпляры с padding.
+  HDRP probe/lighting и ветер всё равно требуют визуального A/B в Unity.
+- Matrix Cache MiB (по умолчанию 16, 0 отключает): ограниченный CPU-кэш
+  итоговых матриц частей. Одинаковые localMatrix внутри группы используют
+  один массив. Заполняется в бюджете генерации; при нехватке памяти матрицы
+  считаются прежним способом. Очистка/выгрузка возвращает бюджет, замена
+  ячейки учитывается атомарно. Старые и строящиеся данные временно сосуществуют.
+  Изменение лимита применяется при регенерации, не меняет позиции растений.
+- Дополнительные CPU-буферы отправки переиспользуются: максимум 128×511
+  матриц, примерно 4 МиБ плюс служебные структуры. При переполнении числа
+  ключей накопленные партии отправляются, экземпляры не отбрасываются.
+  Буферы очищаются между камерами, ссылки на старые recipes не удерживаются.
+- Это всё ещё Graphics.RenderMeshInstanced с CPU-отбором и отправкой матриц.
+  Постоянных GPU-буферов, indirect, GPU culling и occlusion culling пока нет.
+  Следующий архитектурный этап — отдельный GPU backend для совместимых
+  материалов с сохранением текущего пути для остальных. Нужна проверка
+  HDRP depth/shadow/motion-vector проходов, probe-освещения и ветра.
+
+Проверка первого этапа:
+
+1. Дождаться окончания генерации, зафиксировать камеру и сбросить статистику.
+   Записать «Партии: без объединения / факт», число инстансов, CPU render,
+   отбор/отправку, GPU-время и полное время кадра. Первая цифра партий —
+   расчёт для того же отбора, а не запуск прежнего рендерера и не GPU passes.
+2. Выключить только Combine Draw Batches: число выбранных/отправленных частей
+   и теневых частей должно совпасть, внешний вид — сохраниться. Сравнивать
+   несколько кадров после прогрева, не одиночный пик. Меньше вызовов не
+   гарантирует меньший GPU/frame time: это обязательно измерять.
+3. Для полного старого CPU-пути дополнительно выставить Matrix Cache MiB=0,
+   перестроить, дождаться готовности и повторить замер. Вернуть 16 для кэша.
+4. Проверить LOD, Off/On/TwoSided/ShadowsOnly, порог дальности теней,
+   Scene/Game/Reflection камеры, ветер, прозрачный материал, движение через
+   границы ячеек и повторные rebuild/disable без накопления памяти.
+5. Финальное сравнение на GTX 1660 делать в standalone с одной Game-камерой,
+   одинаковыми resolution, HDRP quality, VSync/FPS cap, mesh/material, LOD,
+   плотностью, дальностями и тенями. Для сравнения с Unity Terrain также
+   выровнять фактически видимую нагрузку. Записывать CPU/GPU и frame-time
+   распределение; сами счётчики draw calls не доказывают превосходство.
+
+CPU-тесты очереди проверяют сохранение всех экземпляров и bounds, независимость
+всех полей ключа, предел памяти, переполнение и смену камер. Синтетический
+пример объединяет 80 небольших партий в 16 с теми же 8000 экземпляров —
+это проверка алгоритма, не результат на сцене пользователя или GTX 1660.
+
 ### Запуск и текущие ограничения
+
+Короткий профиль CPU/GPU (23 сентября 2026):
+
+- В Detail Renderer есть кнопка «Записать профиль CPU/GPU…»; альтернативно
+  Tools → Local Terrain → Detail Profile Capture. Нужен Play Mode, активная
+  Game-камера и полностью загруженная детализация. Для исходного замера
+  Combine Draw Batches выключить вручную. Инструмент его не переключает.
+- Остановить текущую запись Profiler, выключить Deep Profile, выбрать
+  текущий Editor / Play Mode в Target. Назначить renderer и камеру, нажать
+  «Записать профиль — 10 секунд». Через 2 секунды подготовки включаются
+  запись и CPU/GPU-модули; через 10 секунд запись останавливается.
+- Выход из Play Mode, пауза, закрытие окна или перекомпиляция
+  останавливают запись. Свои настройки логирования и модулей восстанавливаются;
+  после переключения Target настройки нового удалённого Player не меняются.
+  Вход в Play Mode, настройки материалов, света, VSync, FPS cap и Scene View
+  инструмент не изменяет. История Profiler не очищается.
+  Фоновый проход Auto Refresh не обрывает запись: он проверяет и неизменённые
+  ячейки. Его активность отмечается в описании и видна в LT.Details.Generate.
+- Уникальные .raw и .txt сохраняются в Logs/DetailProfiles. В .txt — аппаратная
+  конфигурация, настройки рендерера, причина остановки, число игровых кадров
+  и предупреждения об изменении камеры/числа экземпляров. Это не CSV замеров.
+  GPU-модуль запрашивается, но отсутствие GPU-данных не выдаётся за 0 мс.
+  Запись включает другие активные камеры; это ещё не standalone benchmark.
+- В Profiler загрузить .raw через Load. В CPU Timeline искать LT.Details.Submit
+  и вложенный LT.Details.GraphicsSubmit. Второй охватывает только вызов
+  Graphics.RenderMeshInstanced, включая возможные внутренние ожидания,
+  а не работу GPU. Остальная часть Submit включает подготовку, очередь,
+  bounds и вспомогательные операции. В GPU Usage смотреть доступные проходы
+  отдельно. Эти CPU-времена не складывать с GPU-временем как последовательные.
+- Официальные API/ограничения: [binary logging](https://docs.unity.com/en-us/engine/6000.7/script-reference/unityengine/profiling/profiler/enablebinarylog),
+  [GPU Usage](https://docs.unity3d.com/6000.0/Documentation/Manual/ProfilerGPU.html).
+  Сборка проверяет API установленного Unity 6000.3; native-запись и визуальный
+  разбор реальной сцены требуют запуска пользователем. Автотесты здесь проверяют
+  только source contracts защит/очистки и наличие маркера.
 
 Общая маска плотности слоя/Detail Stamp:
 
@@ -77,9 +170,26 @@
 - Ячейки планируются только в XZ-окрестностях активных Game-камер и открытых
   Scene View (если включён Scene View). Reflection/Preview не инициируют подгрузку;
   отражения рисуют уже загруженные объекты. Радиус — Max Distance + Preload Distance.
-- План обновляется раз в 0.25 с, ближайшие ячейки первыми. При смене области
-  приоритет обновляется без сброса нужной незавершённой ячейки. Работа над
-  больше не нужной ячейкой отменяется на очередной проверке бюджета.
+- План обновляется раз в 0.25 с, включая поворот камеры без перемещения.
+  Сначала незагруженные ячейки: видимые в пределах Max Distance, затем
+  остальные в этой дистанции, затем запас предзагрузки. Внутри группы —
+  ближайшие по XZ. Уже загруженные ячейки проверяются после незагруженных.
+  Для нескольких камер выбирается лучший приоритет с расстоянием именно
+  до соответствующей камеры; равенство разрешается координатами ячейки.
+- Видимость для очереди оценивается по frustum и консервативным bounds:
+  у готовых ячеек — bounds объектов, у новых — XZ ячейки и общий диапазон
+  высот мешей террейна. Это приближение только для очереди, не occlusion
+  culling и не новый запрет отрисовки. Perspective/Orthographic поддержаны.
+- Следующая ячейка выбирается по актуальному плану. При смене области
+  приоритет обновляется без сброса нужной незавершённой ячейки: текущая
+  достраивается целиком, поэтому большой Cell Size всё ещё может задержать
+  появление следующей. Работа над больше не нужной ячейкой отменяется на
+  очередной проверке бюджета. Новые территории вне снимка подготовки
+  переходят в следующий проход со свежими картами, а не становятся пустыми
+  ячейками по старому снимку. Бюджет генерации и стабильные позиции не меняются.
+- CPU-тесты очереди: видимое/за кадром/предзагрузка, пропуски перед кэшем,
+  поворот, несколько камер, стабильные равенства, высота и перенос bounds,
+  граница frustum. Сборка и тесты не заменяют проверку задержек в Unity.
 - Unload Delay (по умолчанию 5 с) удерживает дальний кэш; при нехватке Max Cells
   или Max Instances этот кэш освобождается раньше. Нужные камерам ячейки ради
   бюджета скрыто не выбрасываются: превышение показывается как ошибка.
@@ -111,6 +221,52 @@
   Статистика «инстансы частей» считает draw-части, а не уникальные растения.
 - При выключении компонента CPU-экземпляры и его снимки карт освобождаются.
   В Player после программного изменения структуры префаба вызовите Rebuild().
+
+### CPU-диагностика и раннее отсечение детализации
+
+- В Detail Renderer блок «Диагностика детализации — CPU»: последний Tick
+  и его пик, планирование, последняя подготовка карт/мешей (включает
+  UpdatePainting), порция генерации и CPU-отрисовка последней камеры.
+  Подготовка сохраняет последнее измерение до следующего запуска; генерация
+  показывает 0 в Tick без генерации. Пики сбрасываются отдельной кнопкой,
+  не требующей перестройки. После прогрева/генерации сбросить пики для замера.
+- Время отрисовки включает отбор и отправку партий. Строка «Отбор / отправка»
+  разделяет эту же величину, а не добавляет ещё время. Это elapsed-время
+  CPU-вызовов с возможными ожиданиями, НЕ GPU frame time, не весь кадр Unity
+  и не сумма всех камер. Последняя камера подписана; пик может быть от другой.
+- Счётчики одного прохода: ячейки проверено/отсечено; экземпляры проверено
+  поштучно/выбрано; всего отсечено/из них заранее ячейками и группами.
+  Для одного снимка resident-состояния: проверено + заранее = загружено;
+  выбрано + всего отсечено = загружено. Отправленные части считаются отдельно:
+  один куст с несколькими submesh увеличивает этот счётчик несколько раз.
+  «Частей с обычными тенями» — отправленные кастеры, не каскады/теневые draw
+  calls HDRP. GPU и контактные тени этими счётчиками не измеряются.
+- Unity Profiler: LT.Details.Tick, Streaming, Prepare, Generate, RenderCPU,
+  Submit. Области вложены, их длительности нельзя суммировать повторно.
+  Таймеры используют GetTimestamp без создания Stopwatch на каждый Tick.
+- При генерации сохраняются bounds мешей и отдельные bounds позиций
+  оснований для ячейки/группы, а также максимальная дальность её кастеров
+  с учётом Cull Distance и ограничения обычных теней. Это разные bounds:
+  mesh в префабе может быть смещён относительно pivot. Закадровая ячейка
+  пропускается до перебора экземпляров только если ни один её кастер не
+  может пройти дистанционный тест. То же отсечение применяется к группам.
+  Близкие закадровые кастеры сохраняются; это не occlusion culling.
+- Расстояние, видимость и разрешение теней вычисляются один раз на экземпляр
+  и камеру. Затем части мешей используют сохранённые флаги, без повторных
+  тестов frustum/дистанции. ScreenHeight считается только при LODGroup;
+  sqrt нужен только для включённого Thin In Distance. Сохраняются camera
+  layer masks и режимы Off/On/TwoSided/ShadowsOnly, LOD и параметры префаба.
+  Submit использует bounds группы вместо всей ячейки, всё ещё с запасом
+  на деформацию и со всеми LOD. Материалы и плотности не изменяются.
+- Проверки: таблица всех shadow modes × видимость × дистанция, границы
+  дистанций, смещённые меши, 2000 смешанных наборов групп/камер с сравнением
+  раннего отсечения с прежним поштучным решением. CPU/source проверки не
+  заменяют проверку HDRP на GPU и замер FPS в проекте.
+- Ручной тест: дождаться «Готово», сбросить статистику, сравнить взгляд вдаль,
+  вниз и от травы без изменения плотности/дальностей. Проверить тени от
+  ближайших растений за краем кадра, порог Shadow Distance, несколько камер
+  и LOD. Для общей производительности сравнивать также Player/Profiler;
+  открытый инспектор Scene View сам добавляет редакторскую нагрузку.
 
 ### Что можно настроить сейчас
 
@@ -317,3 +473,268 @@ Cast Shadows Off/TwoSided/ShadowsOnly; тень объекта вне кадра
 границе ячейки; две камеры; отключение/удаление мира без утечки буферов;
 многократное редактирование штампа без роста памяти. Замеры CPU и GPU
 проводить отдельно, в фиксированной сцене и на целевом оборудовании.
+
+## Дальность обычных теней детализации
+
+- Слой/Detail Stamp → Объекты детализации → запись: «Ограничить дальность
+  теней», затем «Дальность теней, м» (25 м по умолчанию). Ограничение изначально
+  выключено, поэтому старые записи наследуют поведение префаба без изменений.
+- Отсечение отбрасываемых обычных теней дискретное, по расстоянию от текущей
+  камеры до основания экземпляра, отдельно от Cull Distance. 0 выключает
+  обычные тени на любой дистанции. Receive Shadows не меняется.
+- На каждой камере/LOD/части меша инстансы разделяются на две партии: исходный
+  ShadowCastingMode и Off. Одна ячейка может содержать обе партии. Off из
+  префаба никогда не включается; TwoSided сохраняется вблизи; ShadowsOnly
+  после отсечения не превращается в видимую геометрию. Вне кадра сохраняются
+  только действующие кастеры. Пересечение порога может добавить draw call,
+  но дальняя трава больше не рисуется в обычные карты теней.
+- Контактные тени не включаются этим параметром: нужны Use Contact Shadows
+  в HDRP Asset, Contact Shadows во Frame Settings, включённый override
+  Contact Shadows в Volume и Contact Shadows у источника света. Материал
+  травы должен писать глубину. Это экранный эффект с дистанциями из Volume,
+  поэтому он не гарантирует замену обычных теней для травы вне кадра/вдали.
+- Проверено по документации установленного HDRP: Cast Shadows Off не
+  исключает видимую геометрию из экранных контактных теней. Материалы, свет
+  и Volume код не изменяет. Нужна визуальная проверка в Unity: трава по обе
+  стороны порога в одной ячейке, LOD, Scene/Game камеры, Off/TwoSided/
+  ShadowsOnly, контактные тени включены и выключены. CPU-тесты покрывают
+  порог, нулевую дистанцию, старые значения и разбиение партий; не GPU.
+
+## Static instance motion history (2026-09-24)
+
+- User A/B in Play Mode confirmed that explicit previous matrices remove the
+  observed stationary-foliage flicker. Both merged and unmerged submissions now
+  always use `LTDetailMotionData`: `prevObjectToWorld = objectToWorld`.
+- The temporary nonserialized diagnostic toggle and matrix-only fallback were
+  removed. No scene migration, material changes or manual enabling is needed.
+- One reusable 511-element CPU scratch array holds two matrices per instance
+  (65,408 bytes of payload), allocated on first submission and released by Clear.
+  Counts, ordering, bounds, LOD, shadow partitions and inherited motion mode stay
+  unchanged. The additional matrix data has not been performance-profiled.
+- This models static root transforms. Camera motion is still handled by HDRP;
+  vertex deformation history is still the shader's responsibility. Future moving
+  instances need actual previous transforms keyed by stable identity, not batch
+  slot. Rebuilt/new instances currently start with zero transform motion.
+- This does not enable `_ADD_PRECOMPUTED_VELOCITY` or change material motion
+  passes. General wind/deformation correctness is not established by this test.
+- CPU checks cover layout, full/partial/reordered batches and mandatory use of
+  the shared submission path; they do not substitute for GPU validation.
+
+## Opt-in GPU details (2026-09-24)
+
+- LTWorld → Detail Renderer → **Gpu Details**. Default off, no scene migration.
+  **Gpu Memory MiB** defaults to 128 and caps this world's instance, per-camera
+  visible-ID and indirect-argument buffers. Unsupported groups remain on CPU.
+- CPU generation/streaming and coarse cell/group rejection remain. Static root
+  transforms/bounds are uploaded once per group. Compute selects distance,
+  frustum, deterministic thinning and LOD, retaining offscreen shadow casters;
+  append counters drive RenderMeshIndirect without CPU readback. This is not
+  Hi-Z/occlusion culling, and does not reduce material/alpha-test shading cost.
+- Per-camera output buffers prevent Scene/Game from overwriting deferred draw
+  inputs. They expire after five seconds of non-use; group replacement, unload,
+  rebuild, disable and CPU-mode switch release their resources. Upload preparation
+  is now incremental (see below); generation is not GPU-based or asynchronous.
+- Source graph/material assets are never rewritten. GrassWind.ltdetailshader
+  imports an indirect shader copy of DA_Grass_WIND with its graph dependencies
+  and texture defaults. BaseProps and HdrpLit now adapt the two audited raw
+  shaders used by stones and driftwood (see expansion below). Runtime uses material clones. Other shader families,
+  transparent materials, more than eight LODs, XR and Custom/LPPV probes fall
+  back to the established CPU path. Initial backend supports Windows D3D11/12.
+- The adapter retains hidden material subassets for keyword combinations found
+  in project .mat assets, refreshed before player builds. This prevents relying
+  solely on runtime clones for shader_feature preservation. New keyword sets
+  created only at runtime (without a matching project material) are not covered.
+  A packaged player build still requires separate validation.
+- Individual classic Light Probe SH data is not uploaded (LightProbeUsage.Off).
+  Compare illumination before adopting this mode. APV/other HDRP lighting must
+  be checked in the real scene; equivalent lighting is not yet guaranteed.
+- Root motion history uses the same source transform for current/previous,
+  independently of append order; camera motion remains HDRP's responsibility.
+  Wind history still belongs to the source graph. Add Precomputed Velocity must
+  remain off; enabling it makes that group use CPU fallback, not a mesh fix.
+- Inspector GPU calls/candidates are separate from CPU counters. Candidates
+  are not visible counts; CPU selection counters exclude GPU-handled groups.
+  Total CPU rendering time includes GPU dispatch/submission, NOT GPU time.
+- Tools → Local Terrain → Check GPU Details compiles indirect raster passes
+  and runs small compute tests (65 instances, frustum, offscreen shadows,
+  shadow-distance partitions, ShadowsOnly, LOD and range). Its synchronous
+  readback is validation-only; report: Logs/DetailProfiles/gpu-details-check.txt.
+- Acceptance still requires fixed-camera CPU/GPU A/B after streaming settles:
+  motion vectors while stationary/moving, near/far LOD, shadows outside frame,
+  two cameras, material lighting and repeated streaming/toggling. Measure CPU
+  and GPU separately in a player on GTX 1660. No FPS superiority over Unity
+  Terrain is implied by this implementation or by a lower draw-call count.
+
+### Verification performed for this GPU iteration
+
+- C# editor/runtime compilation: zero errors. TerrainBridgeChecks: passed,
+  including 192-byte GPU ABI, source contracts and the static motion tests.
+- Isolated Unity 6000.3.23f1, HDRP 17.3, RTX 5070: nine procedural raster
+  passes compiled on D3D11 and D3D12. A deliberate error inside the test copy's
+  UNITY_PROCEDURAL_INSTANCING_ENABLED branch was detected, then removed; this
+  verifies the check is not merely compiling the fallback variant.
+- Native compute tests passed: frustum, 65-thread boundary, offscreen casters,
+  shadow partitions, ShadowsOnly, perspective/orthographic LOD, quality clamp,
+  deterministic thinning and range. The extended set and retained material
+  subasset were checked on D3D12. Reports are in Logs/DetailProfiles/
+  gpu-details-validation-d3d11-20260924.txt and
+  gpu-details-validation-d3d12-20260924.txt.
+- Actual scene appearance, player build, GTX 1660 performance and long-running
+  GPU resource churn have NOT been validated by these tests.
+
+## Incremental GPU upload and ownership accounting
+
+- Detail Renderer → Gpu Upload Milliseconds (default 1 ms) and Gpu Upload MiB
+  (default 2 MiB). One quota per world/game frame, or per editor update outside
+  Play Mode. Begin for a second camera does not reset it. Different worlds have
+  separate budgets. No camera/scene/material assets are changed.
+- Root data is prepared and SetData'd in contiguous chunks of up to 2048 records
+  using one reusable 384 KiB CPU staging array. A large group therefore no longer
+  builds a full temporary matrix array in a single camera callback. View outputs
+  are prepared one draw at a time, with at most eight allocation units per frame
+  (a root buffer, or draw args plus a visible buffer only if not already shared). Driver calls are indivisible: the time
+  limit is soft and does not guarantee a maximum frame duration.
+- GPU rendering begins only after the complete root and that camera's complete
+  view are ready. Until then the unchanged CPU renderer draws the whole group;
+  no partial GPU draws, duplicate plants or hidden density reduction. Temporary
+  CPU cost is possible during this handoff. Existing ready groups remain on GPU.
+- Memory preflight reserves the full intended root/view sizes, including pending
+  allocations. Resident bytes count actual buffer payloads; reserved bytes may
+  be larger. Partial allocations are owned immediately and released on failure,
+  cancellation, cell replacement/unload, budget shrink and Dispose. Destroyed or
+  idle camera views expire; unused cloned materials also expire after five seconds.
+- Inspector shows actual/reserved/peak bytes, buffer/group/view/material counts,
+  cumulative freed payload, pending groups for the last camera and shared-frame
+  upload bytes/CPU time. These are not total driver VRAM or GPU execution time.
+  Counters reset with backend recreation. The memory audit button compares the
+  live owned buffers with the ledger and checks allocated - freed = resident.
+- Tools → Local Terrain → Check GPU Buffer Lifetime runs synthetic production-
+  backend upload/lifecycle checks with actual GraphicsBuffers. Cameras are masked
+  so it does not test images/FPS. Report: Logs/DetailProfiles/gpu-buffer-lifetime-check.txt.
+  Pure CPU tests also cover shared quotas, time/byte/allocation exhaustion and
+  next-frame progress. Real rapid-flight behavior still needs scene validation.
+- Executed in isolated Unity 6000.3.23f1 / D3D12: eight partial/complete upload-
+  unload cycles, two cameras, injected copy failure, budget shrink, oversized
+  reservation rejection, destroyed camera and repeated Dispose all passed.
+  Allocated/released buffer payload totals matched at 131,201,600 bytes; no live
+  owned buffers remained. This is a synthetic resource-lifetime check, not a
+  driver-wide leak test or a rapid-flight/FPS measurement.
+
+## Expanded shader coverage and shared GPU selection (2026-09-24)
+
+- Read-only `Tests/AuditDetailShaders.ps1` inventories saved layer prefab dependencies.
+  The current inventory contains 36 unique prefabs: 17 grass, 13 stone and six
+  driftwood prefabs, spanning three shader families. Variant dependency traversal
+  can include overridden materials; this is NOT a live scene/profile measurement.
+- Added indirect adapters for BaseShaderProps (GUID 8ce045feb4d898749ad119ec3bb00567)
+  and package HDRP/Lit (GUID 6e4ae4064600d784cac1e41a9e6f2e59). Raw source adapters
+  are explicitly allowlisted, retain the source's passes and leave its assets
+  untouched. BaseShaderProps has no MotionVectors pass in its source; this change
+  does not invent one. Static history is still explicit in the indirect hook.
+- Retained build-variant subassets keep source keywords/render properties but
+  replace modifiable textures with tiny placeholders of matching dimension:
+  supporting HDRP/Lit must not pull unrelated project texture libraries into Resources.
+  Null slots stay null; non-null slots must stay non-null because HDRP material
+  validation derives _NORMALMAP/_MASKMAP from them. Runtime material clones
+  still copy actual textures. Shader graph nonmodifiable texture defaults remain.
+- Each camera/group shares one append/visible-ID buffer and compute dispatch for
+  parts with the same `(LOD, prefab shadow mode, draw shadow mode)`. The selection
+  kernel depends on root bounds and these modes, not individual mesh/material.
+  Draw argument buffers, per-part transforms, materials and actual draws remain
+  separate. Different cameras, LODs and near/far shadow partitions never share an
+  output. A camera-masked part does not prevent a later compatible part dispatch.
+- Memory reservation counts shared visible buffers once. Allocation limits,
+  complete-group handoff, static previous transforms and fallback remain intact.
+  Ten compatible parts therefore require one selection instead of ten; this is
+  not a tenfold frame-rate claim. Root data still dominates many groups' memory.
+- Inspector adds `GPU: общих проходов отсечения` and
+  `Почему объекты остались на CPU? → Console`. The report aggregates prefab,
+  shader, first fallback reason, group count and root candidates for the last
+  camera pass. Upload waits are identified separately. Candidates are NOT visible
+  counts, shader timings or the total loaded world; coarse-rejected groups are absent.
+- Native tests now compile all three adapters and retained material keyword sets.
+  Lifecycle tests also submit to disabled cameras and read indirect argument counts
+  **only in validation**: ten parts / one dispatch / 65 instances per draw;
+  two LODs and all shadow modes, including far ShadowsOnly rejection. Tests check
+  shared memory ownership, partial uploads, two-camera budgets and failure cleanup.
+- No density/LOD distance/material quality settings were changed. Player/car
+  interaction remains out of scope. Actual lighting/motion/streaming in the scene,
+  packaged-player shader stripping and GTX 1660 CPU/GPU frame times still require
+  acceptance testing; no measured FPS improvement is asserted here.
+- Verified on the host RTX 5070 with Unity 6000.3.23f1: three adapters' raster
+  compilation and compute checks passed on D3D11/12; shared-selection argument
+  and resource-lifetime checks passed on both APIs. Ten compatible parts in two
+  cameras now own 23 buffers instead of 41 (same root and ten draws per camera).
+  Final lifecycle fixture allocated/released 116,830,620 bytes and left no owned
+  buffers. Reports: `Logs/DetailProfiles/gpu-expanded-shaders-d3d11-20260924.txt`,
+  `gpu-expanded-shaders-d3d12-20260924.txt`, `gpu-shared-selection-d3d11-20260924.txt`
+  and `gpu-shared-selection-d3d12-20260924.txt`. These are synthetic checks, not
+  GTX 1660 performance or a packaged-player certification.
+
+## Scale from density-mask patches
+
+- Layer/Detail Stamp → Маска плотности детализации → Размер по маске.
+  Opt-in, default off. Edge multiplier defaults to 0.35, inside to 1,
+  scale softness to 0.35. Common/Own/None follow the existing mask inheritance;
+  common settings affect all entries inheriting the mask, not just vegetation.
+- Density and size reuse one procedural noise sample during generation. Density
+  acceptance, seeds, candidate positions and random Scale Range are unchanged.
+  Final uniform scale is random Scale Range multiplied by the mask factor.
+- Size uses a smooth inward ramp from noise threshold `1 - coverage` to
+  `threshold + scaleSoftness * coverage`; this is noise space, not geometric
+  distance to an island centre or metres from the edge. Density softness and
+  minimum density do not affect size. Zero/full coverage use edge/inside size;
+  disabled masks return multiplier 1. Multipliers clamp to at least 0.01 to
+  prevent singular transforms; reversed edge/inside values remain supported.
+- The resulting scale enters the common CPU/GPU instance matrix, transformed
+  bounds and LOD size before upload. No new frame-time noise evaluation or shader
+  parameters. Larger plants may still change shading/overdraw and LOD choice.
+- Preview has Density/Size tabs. Size brightness represents the multiplier relative
+  to the displayed maximum, before random Scale Range; it is not an occupancy map.
+  It uses the same evaluator as generation and does not modify authored settings.
+- C# build and TerrainBridgeChecks passed, including 3600 deterministic samples,
+  density invariance, inheritance, degenerate limits and matrix/bounds/LOD ordering.
+  Live inspector interaction and appearance in the user's scene remain visual checks.
+
+## Incremental detail size edits
+
+- Painting, rock painting and displacement coverage use `LTSurfaceLayer.SurfaceHash()`.
+  It covers surface texture references and surface/deformation properties, excluding
+  detail entries, detail masks and the asset name. Texture-content hashes remain
+  checked separately. Editing vegetation no longer invalidates these surface caches.
+- Each generated cell has a full key and a placement key. The placement snapshot
+  excludes only Scale Range and the four mask-size controls. All other entry fields,
+  prefab recipe, effective density, seed, surface/chunk revisions and stamp area /
+  suppression settings still invalidate placement. Future entry fields default to
+  full invalidation. Stamp area keys do not serialize their vegetation settings.
+- Size-only edits reuse accepted instance IDs, pivots, original rotations and local
+  XZ sample positions. They rebuild size-dependent matrices, bounds, LOD sizes and
+  CPU part caches within the existing generation budget. Sampling at the original
+  terrain position avoids drift with normal-aligned height offsets. This stores
+  24 additional payload bytes per CPU instance; GPU instance layout is unchanged.
+- Unchanged groups retain their CPU caches and GPU resources. Changed groups are
+  replaced cell-atomically, then uploaded through the existing shared GPU budget
+  (CPU fallback until ready). The old cell remains visible if work is interrupted.
+  This is not an in-place GPU scale update or a claim of zero upload cost.
+- `Auto Refresh` discovers edits on its regular refresh pass. The manual rebuild
+  button and assembly reload intentionally require full generation. Density, mask
+  shape, coverage, seed, placement and prefab changes also require generation.
+- `Tests/DetailRegenerationUnityCheck.cs` is an isolated native Unity fixture:
+  copy it into the validation project's Assets, along with runtime LocalTerrain
+  sources. Run `-batchmode -nographics -executeMethod
+  LocalTerrainPrototype.DetailRegenerationUnityCheck.Run`. Do not run on an open
+  user scene. A standalone HDRP validation project also needs the built-in
+  Vehicles package when copying all runtime sources.
+- Validation safety: never place a nested Unity project under the main project's
+  `Temp`, and never junction/symlink its Packages to the main project's package
+  cache. Cleanup of the nested project can traverse links and erase shared package
+  contents. Use a separately owned directory outside Unity-managed folders and
+  independent package copies/resolution. The old Temp-based validation setup was
+  lost and must not be recreated. `RestoreUnityPackageCache.ps1` restores only
+  empty package folders at their locked versions, with archive/file checksums.
+- Passed on Unity 6000.3.23f1: all serialized surface/entry key fields; six fast vs
+  full generation comparisons on translated sloped terrain; IDs, positions,
+  matrices, culling bounds, LOD, part caches, unchanged group identity, empty groups,
+  mid-cell cancellation and mask-coverage invalidation. Terrain samples were removed
+  during each fast update to prove they are not read. C# build and CPU checks passed.
+  This validates generation correctness, not live-scene latency or GPU performance.

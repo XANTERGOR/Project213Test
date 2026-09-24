@@ -19,7 +19,8 @@ namespace LocalTerrainPrototype
             public Rect rect;
             public int coverage,surface;
             public LTSurfaceLayer[] layers;
-            public Image weights0,weights1;
+            public Image weights0,weights1,weights2;
+            public LTPaintRuntime.RoadProjectionSnapshot roadProjection;
         }
         internal sealed class Layer
         {
@@ -29,7 +30,7 @@ namespace LocalTerrainPrototype
         }
         public readonly List<Tile> tiles=new List<Tile>();
         public readonly Dictionary<LTSurfaceLayer,Layer> layers=new Dictionary<LTSurfaceLayer,Layer>();
-        readonly float[] raw=new float[8],working=new float[8],heights=new float[8];
+        readonly float[] raw=new float[LTPaintRuntime.LayerCapacity],working=new float[LTPaintRuntime.LayerCapacity],heights=new float[LTPaintRuntime.LayerCapacity];
         public bool triplanar,lightweight;
         public float blend;
         public void Weights(Tile tile,Vector3 p,Vector3 normal,float[] result)
@@ -39,7 +40,8 @@ namespace LocalTerrainPrototype
             float u=((p.x-tile.rect.xMin)/tile.rect.width*256+.5f)/257;
             float v=((p.z-tile.rect.yMin)/tile.rect.height*256+.5f)/257;
             var a=tile.weights0.Sample(u,v,false);var b=tile.weights1.Sample(u,v,false);
-            for(int i=0;i<tile.layers.Length;i++)raw[i]=i<4?a[i]:b[i-4];
+            var c=tile.weights2!=null?tile.weights2.Sample(u,v,false):Color.clear;
+            for(int i=0;i<tile.layers.Length;i++)raw[i]=i<4?a[i]:i<8?b[i-4]:c[i-8];
             var axisWeights=triplanar?new Vector3(Mathf.Pow(normal.x,4),Mathf.Pow(normal.y,4),Mathf.Pow(normal.z,4)):Vector3.up;
             axisWeights/=Mathf.Max(.00001f,axisWeights.x+axisWeights.y+axisWeights.z);
             for(int axis=0;axis<3;axis++)
@@ -51,8 +53,13 @@ namespace LocalTerrainPrototype
                     var layer=layers[tile.layers[i]];working[i]=raw[i];float h=.5f;
                     bool basic=i==0&&lightweight;
                     if(!basic&&layer.mask!=null&&raw[i]>.00001f)
-                        h=layer.mask.Sample((uv.x+layer.offset.x)/Mathf.Max(.001f,layer.size.x),
-                            (uv.y+layer.offset.y)/Mathf.Max(.001f,layer.size.y),true).g;
+                    {
+                        var textureUV=new Vector2((uv.x+layer.offset.x)/Mathf.Max(.001f,layer.size.x),
+                            (uv.y+layer.offset.y)/Mathf.Max(.001f,layer.size.y));
+                        if(tile.roadProjection!=null&&tile.roadProjection.TrySample(i,p.x,p.z,out var roadUV,out _))
+                            textureUV=roadUV;
+                        h=layer.mask.Sample(textureUV.x,textureUV.y,true).g;
+                    }
                     heights[i]=basic?.5f:Mathf.Clamp01((h-.5f)*layer.strength+.5f+layer.heightOffset);
                 }
                 LTDetailMath.HeightBlend(working,heights,tile.layers.Length,blend);
@@ -77,14 +84,18 @@ namespace LocalTerrainPrototype
                 var state=pair.Value;
                 if(!pair.Key||!chunkKeys.Contains(new Vector2Int(pair.Key.x,pair.Key.z)))
                 {state.detailSnapshot=null;continue;}
-                if(!pair.Key||!state.ready||state.detailLayers==null||!state.weights0||!state.weights1)continue;
+                if(!pair.Key||!state.ready||state.detailLayers==null||!state.weights0||!state.weights1||!state.weights2)continue;
                 var tile=state.detailSnapshot;
-                if(tile==null||tile.coverage!=state.coverageHash||tile.surface!=state.surfaceHash)
+                var roadProjection=CaptureRoadProjection(state);
+                int detailCoverage=roadProjection==null?state.coverageHash:Mix(state.coverageHash,roadProjection.hash);
+                if(tile==null||tile.coverage!=detailCoverage||tile.surface!=state.surfaceHash||
+                    !ReferenceEquals(tile.roadProjection,roadProjection))
                 {
                     float w=world.source.size.x/world.chunksX,d=world.source.size.z/world.chunksZ;
                     tile=new LTDetailSurface.Tile{rect=new Rect(pair.Key.x*w,pair.Key.z*d,w,d),
-                        coverage=state.coverageHash,surface=state.surfaceHash,layers=state.detailLayers,
-                        weights0=new LTDetailSurface.Image(state.weights0),weights1=new LTDetailSurface.Image(state.weights1)};
+                        coverage=detailCoverage,surface=state.surfaceHash,layers=state.detailLayers,roadProjection=roadProjection,
+                        weights0=new LTDetailSurface.Image(state.weights0),weights1=new LTDetailSurface.Image(state.weights1),
+                        weights2=new LTDetailSurface.Image(state.weights2)};
                     state.detailSnapshot=tile;
                 }
                 result.tiles.Add(tile);

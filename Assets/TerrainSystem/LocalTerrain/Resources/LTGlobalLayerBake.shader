@@ -11,6 +11,13 @@ _LTGlobalNormal("Global Normal", 2D) = "bump" {}
 [HideInInspector] _LTHeightBlend("Height blend", Float) = 0
 [HideInInspector] _LTTriplanar("Triplanar", Float) = 0
  [HideInInspector] _LTBaseOnly("Background only", Float) = 0
+[HideInInspector] _LTRoadProjectionEnabled("Spline projection", Float) = 0
+[HideInInspector] _LTRoadProjectionSlots0("Spline slots 0-3", Vector) = (0,0,0,0)
+[HideInInspector] _LTRoadProjectionSlots1("Spline slots 4-7", Vector) = (0,0,0,0)
+[HideInInspector] _LTRoadProjectionSlots2("Spline slots 8-11", Vector) = (0,0,0,0)
+[HideInInspector] _LTRoadProjectionMap("Spline coordinates", 2DArray) = "" {}
+[HideInInspector] _LTRoadSuppressionEnabled("Asphalt suppression", Float) = 0
+[HideInInspector] _LTRoadSuppressionMap("Asphalt coverage", 2D) = "black" {}
 [HideInInspector] _LTTiling0("Tiling 0", Vector) = (0,0,0,0)
 [HideInInspector] _LTTiling1("Tiling 1", Vector) = (0,0,0,0)
 [HideInInspector] _LTTiling2("Tiling 2", Vector) = (0,0,0,0)
@@ -19,6 +26,10 @@ _LTGlobalNormal("Global Normal", 2D) = "bump" {}
 [HideInInspector] _LTTiling5("Tiling 5", Vector) = (0,0,0,0)
 [HideInInspector] _LTTiling6("Tiling 6", Vector) = (0,0,0,0)
 [HideInInspector] _LTTiling7("Tiling 7", Vector) = (0,0,0,0)
+[HideInInspector] _LTTiling8("Tiling 8", Vector) = (0,0,0,0)
+[HideInInspector] _LTTiling9("Tiling 9", Vector) = (0,0,0,0)
+[HideInInspector] _LTTiling10("Tiling 10", Vector) = (0,0,0,0)
+[HideInInspector] _LTTiling11("Tiling 11", Vector) = (0,0,0,0)
 [HideInInspector] _LTTint0("Tint 0", Vector) = (0,0,0,0)
 [HideInInspector] _LTTint1("Tint 1", Vector) = (0,0,0,0)
 [HideInInspector] _LTTint2("Tint 2", Vector) = (0,0,0,0)
@@ -27,6 +38,10 @@ _LTGlobalNormal("Global Normal", 2D) = "bump" {}
 [HideInInspector] _LTTint5("Tint 5", Vector) = (0,0,0,0)
 [HideInInspector] _LTTint6("Tint 6", Vector) = (0,0,0,0)
 [HideInInspector] _LTTint7("Tint 7", Vector) = (0,0,0,0)
+[HideInInspector] _LTTint8("Tint 8", Vector) = (0,0,0,0)
+[HideInInspector] _LTTint9("Tint 9", Vector) = (0,0,0,0)
+[HideInInspector] _LTTint10("Tint 10", Vector) = (0,0,0,0)
+[HideInInspector] _LTTint11("Tint 11", Vector) = (0,0,0,0)
 [HideInInspector] _LTSettings0("Settings 0", Vector) = (0,0,0,0)
 [HideInInspector] _LTSettings1("Settings 1", Vector) = (0,0,0,0)
 [HideInInspector] _LTSettings2("Settings 2", Vector) = (0,0,0,0)
@@ -35,6 +50,10 @@ _LTGlobalNormal("Global Normal", 2D) = "bump" {}
 [HideInInspector] _LTSettings5("Settings 5", Vector) = (0,0,0,0)
 [HideInInspector] _LTSettings6("Settings 6", Vector) = (0,0,0,0)
 [HideInInspector] _LTSettings7("Settings 7", Vector) = (0,0,0,0)
+[HideInInspector] _LTSettings8("Settings 8", Vector) = (0,0,0,0)
+[HideInInspector] _LTSettings9("Settings 9", Vector) = (0,0,0,0)
+[HideInInspector] _LTSettings10("Settings 10", Vector) = (0,0,0,0)
+[HideInInspector] _LTSettings11("Settings 11", Vector) = (0,0,0,0)
 [HideInInspector] _LTFlags0("Flags 0", Vector) = (0,0,0,0)
 [HideInInspector] _LTFlags1("Flags 1", Vector) = (0,0,0,0)
 [HideInInspector] _LTFlags2("Flags 2", Vector) = (0,0,0,0)
@@ -43,32 +62,19 @@ _LTGlobalNormal("Global Normal", 2D) = "bump" {}
 [HideInInspector] _LTFlags5("Flags 5", Vector) = (0,0,0,0)
 [HideInInspector] _LTFlags6("Flags 6", Vector) = (0,0,0,0)
 [HideInInspector] _LTFlags7("Flags 7", Vector) = (0,0,0,0)
-_LTColor0("Layer 0 Color", 2D) = "white" {}
-_LTNormal0("Layer 0 Normal", 2D) = "bump" {}
-_LTMask0("Layer 0 RGB Mask", 2D) = "white" {}
-_LTColor1("Layer 1 Color", 2D) = "white" {}
-_LTNormal1("Layer 1 Normal", 2D) = "bump" {}
-_LTMask1("Layer 1 RGB Mask", 2D) = "white" {}
-_LTColor2("Layer 2 Color", 2D) = "white" {}
-_LTNormal2("Layer 2 Normal", 2D) = "bump" {}
-_LTMask2("Layer 2 RGB Mask", 2D) = "white" {}
-_LTColor3("Layer 3 Color", 2D) = "white" {}
-_LTNormal3("Layer 3 Normal", 2D) = "bump" {}
-_LTMask3("Layer 3 RGB Mask", 2D) = "white" {}
-_LTColor4("Layer 4 Color", 2D) = "white" {}
-_LTNormal4("Layer 4 Normal", 2D) = "bump" {}
-_LTMask4("Layer 4 RGB Mask", 2D) = "white" {}
-_LTColor5("Layer 5 Color", 2D) = "white" {}
-_LTNormal5("Layer 5 Normal", 2D) = "bump" {}
-_LTMask5("Layer 5 RGB Mask", 2D) = "white" {}
-_LTColor6("Layer 6 Color", 2D) = "white" {}
-_LTNormal6("Layer 6 Normal", 2D) = "bump" {}
-_LTMask6("Layer 6 RGB Mask", 2D) = "white" {}
-_LTColor7("Layer 7 Color", 2D) = "white" {}
-_LTNormal7("Layer 7 Normal", 2D) = "bump" {}
-_LTMask7("Layer 7 RGB Mask", 2D) = "white" {}
+[HideInInspector] _LTFlags8("Flags 8", Vector) = (0,0,0,0)
+[HideInInspector] _LTFlags9("Flags 9", Vector) = (0,0,0,0)
+[HideInInspector] _LTFlags10("Flags 10", Vector) = (0,0,0,0)
+[HideInInspector] _LTFlags11("Flags 11", Vector) = (0,0,0,0)
+        _LTColorArray("Layer colors", 2DArray) = "" {}
+        _LTNormalArray("Layer normals RGB", 2DArray) = "" {}
+        _LTMaskArray("Layer masks", 2DArray) = "" {}
+        _LTLayerSlices0("Slices 0-3", Vector) = (0,0,0,0)
+        _LTLayerSlices1("Slices 4-7", Vector) = (0,0,0,0)
+        _LTLayerSlices2("Slices 8-11", Vector) = (0,0,0,0)
 _LTWeights0("Weights 0-3", 2D) = "black" {}
 _LTWeights1("Weights 4-7", 2D) = "black" {}
+_LTWeights2("Weights 8-11", 2D) = "black" {}
         _LTBakeRect("Bake rectangle", Vector) = (0,0,1,1)
         _LTProbe("Validation texture", 2D) = "white" {}
         _LTProbeUV("Validation UV", Vector) = (0,0,0,0)
@@ -82,10 +88,14 @@ _LTWeights1("Weights 4-7", 2D) = "black" {}
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
         CBUFFER_START(UnityPerMaterial)
+float4 _LTLayerSlices0, _LTLayerSlices1, _LTLayerSlices2;
         float4 _LTRect;
 float4 _LTWorldSize;
 float _LTHeightBlend;
 float _LTBaseOnly;
+float _LTRoadProjectionEnabled;
+float4 _LTRoadProjectionSlots0, _LTRoadProjectionSlots1, _LTRoadProjectionSlots2;
+float _LTRoadSuppressionEnabled;
 float _LTTriplanar;
 float4x4 _LTSurfaceWorldToLocal;
 float4x4 _LTBakeLocalToTerrain;
@@ -99,6 +109,10 @@ float4 _LTTiling4;
 float4 _LTTiling5;
 float4 _LTTiling6;
 float4 _LTTiling7;
+float4 _LTTiling8;
+float4 _LTTiling9;
+float4 _LTTiling10;
+float4 _LTTiling11;
 float4 _LTTint0;
 float4 _LTTint1;
 float4 _LTTint2;
@@ -107,6 +121,10 @@ float4 _LTTint4;
 float4 _LTTint5;
 float4 _LTTint6;
 float4 _LTTint7;
+float4 _LTTint8;
+float4 _LTTint9;
+float4 _LTTint10;
+float4 _LTTint11;
 float4 _LTSettings0;
 float4 _LTSettings1;
 float4 _LTSettings2;
@@ -115,6 +133,10 @@ float4 _LTSettings4;
 float4 _LTSettings5;
 float4 _LTSettings6;
 float4 _LTSettings7;
+float4 _LTSettings8;
+float4 _LTSettings9;
+float4 _LTSettings10;
+float4 _LTSettings11;
 float4 _LTFlags0;
 float4 _LTFlags1;
 float4 _LTFlags2;
@@ -123,6 +145,10 @@ float4 _LTFlags4;
 float4 _LTFlags5;
 float4 _LTFlags6;
 float4 _LTFlags7;
+float4 _LTFlags8;
+float4 _LTFlags9;
+float4 _LTFlags10;
+float4 _LTFlags11;
 
 
 

@@ -80,6 +80,8 @@ partial class Checks
     }
     static void Main()
     {
+        RoadMathChecks.Run();
+        RoadIntegrationChecks();
         PaintChecks();
         EdgeBenchmark();
         CutRowsChecks();

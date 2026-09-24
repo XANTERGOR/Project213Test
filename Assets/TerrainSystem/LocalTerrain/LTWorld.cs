@@ -52,6 +52,17 @@ namespace LocalTerrainPrototype
         public Vector2Int displacementBoundaryChunk=Vector2Int.zero;
         [Min(.5f)] public float displacementBoundaryCellSize=.5f;
         public bool enableLayerPainting;
+        public LTArrayResolution arrayColorResolution=LTArrayResolution.R1024;
+        public LTArrayResolution arrayNormalResolution=LTArrayResolution.R1024;
+        public LTArrayResolution arrayMaskResolution=LTArrayResolution.R1024;
+        public bool arrayTrilinear=true;
+        [Range(1,16)] public int arrayAnisotropy=4;
+        [Min(16)] public int arrayMemoryBudgetMiB=512;
+        public LTLayerArrayBakeAsset savedLayerArrays;
+        [System.NonSerialized] public int arrayPackRevision;
+        [System.NonSerialized] public string arrayPackStatus="Массивы создаются при включённой покраске.";
+        [System.NonSerialized] public Texture2DArray arrayColorPreview,arrayNormalPreview,arrayMaskPreview;
+        public void RepackLayerArrays(){arrayPackRevision++;UpdatePainting();}
         [Range(0,1)] public float layerHeightBlend;
         public bool enableGlobalLayerMaps;
         [Range(256,8192)] public int globalLayerResolution=2048;
@@ -131,7 +142,7 @@ namespace LocalTerrainPrototype
             {
                 foreach(Transform child in parent)
                 {
-                    if(child==generatedRoot||child.GetComponent<LTWorld>())continue;
+                    if(child==generatedRoot||child.GetComponent<LTWorld>()||child.GetComponent<LTRoadGenerated>())continue;
                     var stamp=child.GetComponent<LTPaintStamp>();if(stamp)result.Add(stamp);
                     Walk(child);
                 }

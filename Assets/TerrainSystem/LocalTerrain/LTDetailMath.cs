@@ -1,10 +1,37 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace LocalTerrainPrototype
 {
     // Stable hashing, independent of frame timing, list order and runtime string hashes.
     public static class LTDetailMath
     {
+        public static ShadowCastingMode ShadowMode(LTDetailEntry entry,ShadowCastingMode prefabMode,float distanceSquared)
+            =>ShadowMode(prefabMode,ShadowsInRange(entry,distanceSquared));
+        public static bool ShadowsInRange(LTDetailEntry entry,float distanceSquared)
+            =>!entry.limitShadowDistance||distanceSquared<entry.shadowDistance*entry.shadowDistance;
+        public static ShadowCastingMode ShadowMode(ShadowCastingMode prefabMode,bool shadowsInRange)
+            =>shadowsInRange?prefabMode:ShadowCastingMode.Off;
+        public static bool SubmitPart(ShadowCastingMode prefabMode,bool inView,bool shadowsInRange)
+        {
+            var mode=ShadowMode(prefabMode,shadowsInRange);
+            if(prefabMode==ShadowCastingMode.ShadowsOnly&&mode==ShadowCastingMode.Off)return false;
+            return inView||mode!=ShadowCastingMode.Off;
+        }
+        public static float BoundsDistanceSquared(Bounds bounds,Vector3 point)
+        {
+            var d=point-bounds.center;var e=bounds.extents;
+            float x=Mathf.Max(0,Mathf.Abs(d.x)-e.x),y=Mathf.Max(0,Mathf.Abs(d.y)-e.y),z=Mathf.Max(0,Mathf.Abs(d.z)-e.z);
+            return x*x+y*y+z*z;
+        }
+        // originBounds must enclose the instance pivots, not just their offset meshes.
+        public static bool CanSkipOffscreen(bool inView,Bounds originBounds,Vector3 camera,float shadowRange,float maxDistance)
+        {
+            if(inView)return false;
+            float range=Mathf.Min(shadowRange,maxDistance);
+            return range<=0||BoundsDistanceSquared(originBounds,camera)>=range*range;
+        }
+
         public static uint Hash(uint value)
         {
             unchecked{value^=value>>16;value*=0x7feb352du;value^=value>>15;value*=0x846ca68bu;return value^(value>>16);}
@@ -35,20 +62,38 @@ namespace LocalTerrainPrototype
                 Mathf.Lerp(NoiseCorner(ix,iz+1,seed),NoiseCorner(ix+1,iz+1,seed),u),v);
         }
         public static float DensityMask(LTDetailEntry entry,float x,float z,int worldSeed)
+            =>DensityMask(entry,x,z,worldSeed,out _);
+        public static float DensityMask(LTDetailEntry entry,float x,float z,int worldSeed,out float scale)
         {
+            scale=1;
             if(!entry.densityMask)return 1;
             float minimum=Mathf.Clamp01(entry.patchMinimumDensity),coverage=Mathf.Clamp01(entry.patchCoverage);
-            if(coverage<=0)return minimum;
-            if(coverage>=1||minimum>=1)return 1;
+            if(coverage<=0){scale=PatchScale(entry,0);return minimum;}
+            if(coverage>=1){scale=PatchScale(entry,1);return 1;}
+            if(minimum>=1&&!entry.patchScaleEnabled)return 1;
             float size=Mathf.Max(.1f,entry.patchSize);
             x/=size;z/=size;
             uint seed=Hash(unchecked((uint)worldSeed)^Hash(unchecked((uint)entry.patchSeed)));
             // A smaller second octave breaks the regular shapes without a texture allocation.
             float value=.8f*Noise(x,z,seed)+.2f*Noise(x*2+17.13f,z*2-9.71f,Hash(seed));
+            scale=PatchScale(entry,value);
             float threshold=1-coverage,width=Mathf.Clamp01(entry.patchSoftness)*.5f;
             float mask=width<=0?(value>=threshold?1:0):
                 Mathf.SmoothStep(0,1,Mathf.InverseLerp(threshold-width*.5f,threshold+width*.5f,value));
             return Mathf.Lerp(minimum,1,mask);
+        }
+        // Same noise sample as density, but a separate inward ramp. Density floor
+        // must not enlarge plants in gaps. Not geometric distance to the boundary.
+        public static float PatchScale(LTDetailEntry entry,float noise)
+        {
+            if(!entry.densityMask||!entry.patchScaleEnabled)return 1;
+            float edge=Mathf.Max(.01f,entry.patchScaleEdge),inside=Mathf.Max(.01f,entry.patchScaleInside);
+            float coverage=Mathf.Clamp01(entry.patchCoverage);
+            if(coverage<=0)return edge;
+            if(coverage>=1)return inside;
+            float boundary=1-coverage,width=Mathf.Clamp01(entry.patchScaleSoftness)*coverage;
+            float t=width<=0?(noise>boundary?1:0):Mathf.SmoothStep(0,1,Mathf.InverseLerp(boundary,boundary+width,noise));
+            return Mathf.Lerp(edge,inside,t);
         }
         // Each integer candidate owns one unit of density: increasing density only adds candidates.
         public static bool DensityAccept(uint id,int index,float density)=>Unit(id,18)<Mathf.Clamp01(density-index);

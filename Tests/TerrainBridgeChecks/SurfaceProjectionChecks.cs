@@ -37,7 +37,7 @@ partial class Checks
         const string root="Assets/TerrainSystem/LocalTerrain/";
         var rocks=File.ReadAllText(root+"LTPaintRocks.cs");
         Require(rocks.Contains("!stamp.useTerrainMaterial")&&rocks.Contains("stamp.GetComponentInParent<LTWorld>()!=world"),"rock material must be opt-in and scoped to its world");
-        Require(rocks.Contains("layers.Count>8")&&rocks.Contains("continue;"),"layer overflow must not silently drop layers");
+        Require(rocks.Contains("layers.Count>LayerCapacity")&&rocks.Contains("continue;"),"layer overflow must not silently drop layers");
         Require(rocks.Contains("RestoreRockMaterialsForSave")&&rocks.Contains("ReleaseRockMaterials")&&rocks.Contains("HasRockMaterial(state)"),"owned rock material lifecycle restoration missing");
         Require(!rocks.Contains("filter.sharedMesh=")&&!rocks.Contains(".vertices="),"material projection must not edit rock geometry");
         Require(rocks.Contains("_LTRockProjection\",1")&&rocks.Contains("_LTGlobalParams\",Vector4.zero"),"rock must use world coordinates and no planar far atlas");
@@ -45,7 +45,7 @@ partial class Checks
         Require(runtime.Contains("RestoreRockMaterialsForSave();")&&runtime.Contains("ReleaseRockMaterials();")&&runtime.Contains("TickRockMaterials(world,shader,active,bounds);"),"rock lifecycle not connected");
         var sampling=File.ReadAllText(root+"Shaders/LTEightLayerSampling.hlsl");
         var projection=File.ReadAllText(root+"Shaders/LTProjectedLayers.hlsl");
-        Require(projection.Contains("LTSampleLayersMapped(p.xz,uv,ux,uy")&&sampling.Contains("GetAbsolutePositionWS(sourcePositionRWS)"),"paint coverage and world texture coordinates must stay separate");
+        Require(projection.Contains("LTSampleLayersMappedFrame(p.xz,dx.xz,dy.xz,uv,ux,uy,axis")&&sampling.Contains("GetAbsolutePositionWS(sourcePositionRWS)"),"paint coverage and world texture coordinates must stay separate");
         Require(sampling.Contains("[branch] if(projected && fade < 1)")&&sampling.Contains("else if(fade < 1)"),"full far must skip projected sampling; ordinary XZ path must remain available");
         var globals=File.ReadAllText(root+"LTPaintGlobals.cs");
         Require(globals.Contains("globalsReady=projectionMatches")&&globals.Contains("saved.triplanar==world.triplanarTexturing"),"atlas projection must match live and saved material mode");

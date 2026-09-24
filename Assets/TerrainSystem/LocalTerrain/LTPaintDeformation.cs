@@ -208,7 +208,7 @@ namespace LocalTerrainPrototype
         }
         static Vector4[] DeformationSettings(List<LTSurfaceLayer> layers)
         {
-            var settings=new Vector4[8];
+            var settings=new Vector4[LayerCapacity];
             for(int i=0;i<layers.Count;i++)if(layers[i].deformation)
                 settings[i]=new Vector4(Mathf.Clamp(layers[i].deformationDepth,0,2),
                     Mathf.Max(0,layers[i].deformationRecovery),Mathf.Clamp(layers[i].deformationTessellation,1,63),0);
@@ -406,7 +406,7 @@ namespace LocalTerrainPrototype
             foreach(var stamp in stamps)if(!deformationRegions.ContainsKey(stamp))ordered.Add(stamp);
             foreach(var stamp in ordered)
             {
-                if(!stamp.layer.deformation||stamp.layer.deformationDepth<=0)continue;
+                if(!stamp.EffectiveLayer.deformation||stamp.EffectiveLayer.deformationDepth<=0)continue;
                 var rect=StampBounds(world,stamp);
                 rect=Rect.MinMaxRect(Mathf.Max(0,rect.xMin),Mathf.Max(0,rect.yMin),
                     Mathf.Min(world.source.size.x,rect.xMax),Mathf.Min(world.source.size.z,rect.yMax));

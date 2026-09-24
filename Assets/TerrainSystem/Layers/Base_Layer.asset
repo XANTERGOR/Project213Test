@@ -20,7 +20,23 @@ MonoBehaviour:
   aoStrength: 1
   heightStrength: 1
   heightOffset: 0
+  displacement: 0
+  displacementAmplitude: 0.15
+  displacementCenter: 0.5
+  displacementSmoothingMip: 0
+  deformation: 0
+  deformationDepth: 0.15
+  deformationRecovery: 20
+  deformationTessellation: 32
   metallic: 0
-  smoothness: 0.4
+  smoothness: 0
   tileSizeMetres: {x: 4, y: 4}
   tileOffsetMetres: {x: 0, y: 0}
+  detailDensityMask:
+    enabled: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+  details: []

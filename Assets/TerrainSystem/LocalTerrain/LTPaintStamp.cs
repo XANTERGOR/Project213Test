@@ -32,6 +32,9 @@ namespace LocalTerrainPrototype
     public sealed class LTPaintStamp : MonoBehaviour
     {
         public LTSurfaceLayer layer;
+        public LTRoad Road=>GetComponent<LTRoad>();
+        public LTSurfaceLayer EffectiveLayer {get {var road=Road;return road?road.groundLayer:layer;}}
+        public bool ActiveForPaint {get {var road=Road;return isActiveAndEnabled&&(!road||road.isActiveAndEnabled);}}
         public LTStampShape shape=LTStampShape.Ellipse;
         public Vector2 size=new Vector2(40,40);
         [Min(.5f), Tooltip("Желаемый шаг карты глубины этой области, сантиметры. Не меняет маску покраски.")]
@@ -48,10 +51,11 @@ namespace LocalTerrainPrototype
         public LTPaintFilter slopeFilter=new LTPaintFilter(0,90,5);
         public LTPaintFilter curveFilter=new LTPaintFilter(-1,1,.1f);
         [Min(.1f)] public float curveRadius=5;
-        public bool HasTerrainFilters=>heightFilter.enabled||slopeFilter.enabled||curveFilter.enabled;
+        public bool HasTerrainFilters=>!Road&&(heightFilter.enabled||slopeFilter.enabled||curveFilter.enabled);
         void OnValidate(){size.x=Mathf.Max(.01f,size.x);size.y=Mathf.Max(.01f,size.y);}
         void OnDrawGizmosSelected()
         {
+            if(Road)return;
             var matrix=Gizmos.matrix;var color=Gizmos.color;
             Gizmos.matrix=transform.localToWorldMatrix;Gizmos.color=new Color(.9f,.3f,1);
             if(shape==LTStampShape.Rectangle)Gizmos.DrawWireCube(Vector3.zero,new Vector3(size.x,.1f,size.y));

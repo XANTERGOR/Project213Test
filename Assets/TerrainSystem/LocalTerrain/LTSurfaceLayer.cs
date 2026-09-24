@@ -41,6 +41,23 @@ namespace LocalTerrainPrototype
         public LTDetailDensityMask detailDensityMask=new LTDetailDensityMask();
         [Tooltip("Статическая детализация: настройки для будущего инстанс-спавнера, не GameObject-копий.")]
         public System.Collections.Generic.List<LTDetailEntry> details=new System.Collections.Generic.List<LTDetailEntry>();
+        // Painting/displacement must not depend on vegetation settings or editor object names.
+        public int SurfaceHash()
+        {
+            int hash=17;
+            void Add(int value){hash=unchecked(hash*397^value);}
+            Add(baseColorMap?baseColorMap.GetInstanceID():0);Add(tint.GetHashCode());
+            Add(normalMap?normalMap.GetInstanceID():0);Add(normalStrength.GetHashCode());
+            Add(maskMap?maskMap.GetInstanceID():0);Add(aoStrength.GetHashCode());
+            Add(heightStrength.GetHashCode());Add(heightOffset.GetHashCode());
+            Add(displacement.GetHashCode());Add(displacementAmplitude.GetHashCode());
+            Add(displacementCenter.GetHashCode());Add(displacementSmoothingMip);
+            Add(deformation.GetHashCode());Add(deformationDepth.GetHashCode());
+            Add(deformationRecovery.GetHashCode());Add(deformationTessellation.GetHashCode());
+            Add(metallic.GetHashCode());Add(smoothness.GetHashCode());
+            Add(tileSizeMetres.GetHashCode());Add(tileOffsetMetres.GetHashCode());
+            return hash;
+        }
         void OnValidate()
         {
             if(detailDensityMask==null)detailDensityMask=new LTDetailDensityMask();

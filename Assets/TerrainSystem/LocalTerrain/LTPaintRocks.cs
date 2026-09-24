@@ -67,9 +67,9 @@ namespace LocalTerrainPrototype
                 }
                 var rect=Rect.MinMaxRect(min.x,min.z,Mathf.Max(min.x+.01f,max.x),Mathf.Max(min.z+.01f,max.z));
                 var local=new List<LTPaintStamp>();var layers=new List<LTSurfaceLayer>{world.baseLayer};
-                for(int i=0;i<active.Count;i++)if(Touches(rect,bounds[i]))
-                {local.Add(active[i]);if(!layers.Contains(active[i].layer))layers.Add(active[i].layer);}
-                if(layers.Count>8){warnings.Add(stamp.name+": больше 8 слоёв, материал слоёв не назначен");continue;}
+                for(int i=0;i<active.Count;i++)if(!active[i].Road&&Touches(rect,bounds[i]))
+                {local.Add(active[i]);if(!layers.Contains(active[i].EffectiveLayer))layers.Add(active[i].EffectiveLayer);}
+                if(layers.Count>LayerCapacity){warnings.Add(stamp.name+$": больше {LayerCapacity} слоёв, материал слоёв не назначен");continue;}
                 live.Add(stamp);
                 if(!rocks.TryGetValue(stamp,out var rock))
                 {
@@ -101,7 +101,7 @@ namespace LocalTerrainPrototype
                 surface=Mix(surface,world.layerHeightBlend.GetHashCode());
                 foreach(var layer in layers)
                 {
-                    surface=Mix(surface,JsonUtility.ToJson(layer).GetHashCode());
+                    surface=Mix(surface,layer.SurfaceHash());
                     if(layer.baseColorMap)surface=Mix(surface,layer.baseColorMap.imageContentsHash.GetHashCode());
                     if(layer.normalMap)surface=Mix(surface,layer.normalMap.imageContentsHash.GetHashCode());
                     if(layer.maskMap)surface=Mix(surface,layer.maskMap.imageContentsHash.GetHashCode());

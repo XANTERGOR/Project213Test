@@ -28,10 +28,20 @@ namespace LocalTerrainPrototype
         public float patchMinimumDensity=.05f;
         [Tooltip("Seed общей маски: объекты с наследованием растут в общих пятнах.")]
         public int patchSeed;
+        [Tooltip("Умножать Scale Range на размер по пятнам маски. Только при включённой маске; не меняет плотность и позиции.")]
+        public bool patchScaleEnabled;
+        [Min(.01f), Tooltip("Множитель размера у границы и между пятнами. Применяется поверх случайного Scale Range.")]
+        public float patchScaleEdge=.35f;
+        [Min(.01f), Tooltip("Множитель размера внутри пятна. 1 — сохранить случайный Scale Range.")]
+        public float patchScaleInside=1;
+        [Range(0,1), Tooltip("Ширина плавного роста от границы внутрь пятна, в диапазоне шума. Не метры. Не меняет мягкость плотности. 0 — резкий переход.")]
+        public float patchScaleSoftness=.35f;
         public void Validate()
         {
             patchSize=Mathf.Max(.1f,patchSize);patchCoverage=Mathf.Clamp01(patchCoverage);
             patchSoftness=Mathf.Clamp01(patchSoftness);patchMinimumDensity=Mathf.Clamp01(patchMinimumDensity);
+            patchScaleEdge=Mathf.Max(.01f,patchScaleEdge);patchScaleInside=Mathf.Max(.01f,patchScaleInside);
+            patchScaleSoftness=Mathf.Clamp01(patchScaleSoftness);
         }
     }
 
@@ -66,6 +76,14 @@ namespace LocalTerrainPrototype
         public float patchMinimumDensity=.05f;
         [Tooltip("Seed рисунка пятен. Меняет маску, но не позиции кандидатов. Одинаковые параметры и seed позволяют нескольким префабам расти в общих пятнах.")]
         public int patchSeed;
+        [Tooltip("Размер по своей маске. В режиме «Общая» наследуется вместе с маской; «Без маски» выключает эффект.")]
+        public bool patchScaleEnabled;
+        [Min(.01f), Tooltip("Множитель Scale Range на краях и между пятнами.")]
+        public float patchScaleEdge=.35f;
+        [Min(.01f), Tooltip("Множитель Scale Range внутри пятен.")]
+        public float patchScaleInside=1;
+        [Range(0,1), Tooltip("Ширина роста внутрь пятна, в диапазоне шума, независимо от плотности. 0 — резкий переход.")]
+        public float patchScaleSoftness=.35f;
         [Tooltip("X — минимальный, Y — максимальный равномерный множитель масштаба. 1 — исходный размер префаба.")]
         public Vector2 scaleRange=new Vector2(.8f,1.2f);
         [Tooltip("X/Y — минимальный/максимальный угол случайного поворота вокруг оси вверх объекта, в градусах. 0–360 — полный оборот.")]
@@ -80,6 +98,10 @@ namespace LocalTerrainPrototype
         public float fadeStart=35;
         [Min(0), Tooltip("Расстояние от камеры в метрах, после которого объект не рисуется, даже если нет LODGroup. 0 — не рисовать.")]
         public float cullDistance=50;
+        [Tooltip("Отключать отбрасывание обычных теней дальше Shadow Distance. Контактные тени HDRP остаются, если включены в HDRP/Volume/источнике света и материал пишет глубину. Тени, выключенные в префабе, не включаются. Приём теней не меняется.")]
+        public bool limitShadowDistance;
+        [Min(0), Tooltip("Расстояние от камеры до основания экземпляра, м. Начиная с этой дистанции обычные тени отключены; 0 — только доступные контактные тени. Переключение дискретное. Контактные тени ограничены экраном и настройками Volume.")]
+        public float shadowDistance=25;
         [Tooltip("Зарезервировано для совместимого шейдера. Текущий рендерер пока использует дискретное отсечение и выводит предупреждение.")]
         public bool shaderFade;
         [Tooltip("Стабильное уменьшение числа экземпляров вдали. Для заметных камней обычно выключено.")]
@@ -105,6 +127,17 @@ namespace LocalTerrainPrototype
             if(mode!=LTDetailMaskMode.Common||common==null)return;
             patchSize=common.patchSize;patchCoverage=common.patchCoverage;patchSoftness=common.patchSoftness;
             patchMinimumDensity=common.patchMinimumDensity;patchSeed=common.patchSeed;
+            patchScaleEnabled=common.patchScaleEnabled;patchScaleEdge=common.patchScaleEdge;
+            patchScaleInside=common.patchScaleInside;patchScaleSoftness=common.patchScaleSoftness;
+        }
+        // Fail closed for future fields: only explicitly listed scale-only settings
+        // are removed from the placement key. Never mutate an authored entry.
+        public LTDetailEntry PlacementSettings()
+        {
+            var copy=(LTDetailEntry)MemberwiseClone();
+            copy.scaleRange=Vector2.one;
+            copy.patchScaleEnabled=false;copy.patchScaleEdge=1;copy.patchScaleInside=1;copy.patchScaleSoftness=0;
+            return copy;
         }
         public void Validate(HashSet<string> used)
         {
@@ -114,10 +147,13 @@ namespace LocalTerrainPrototype
             density=Mathf.Max(0,density);probability=Mathf.Clamp01(probability);
             patchSize=Mathf.Max(.1f,patchSize);patchCoverage=Mathf.Clamp01(patchCoverage);
             patchSoftness=Mathf.Clamp01(patchSoftness);patchMinimumDensity=Mathf.Clamp01(patchMinimumDensity);
+            patchScaleEdge=Mathf.Max(.01f,patchScaleEdge);patchScaleInside=Mathf.Max(.01f,patchScaleInside);
+            patchScaleSoftness=Mathf.Clamp01(patchScaleSoftness);
             scaleRange=Ordered(scaleRange,.001f,float.MaxValue);
             slopeRange=Ordered(slopeRange,0,90);yawRange=Ordered(yawRange,-360,360);
             heightOffsetRange=Ordered(heightOffsetRange,-1000,1000);
             cullDistance=Mathf.Max(0,cullDistance);fadeStart=Mathf.Clamp(fadeStart,0,cullDistance);
+            shadowDistance=Mathf.Max(0,shadowDistance);
             alignToNormal=Mathf.Clamp01(alignToNormal);farDensity=Mathf.Clamp01(farDensity);
             deformationBoundsPadding=Mathf.Max(0,deformationBoundsPadding);
         }

@@ -15,7 +15,9 @@ namespace LocalTerrainPrototype
 #if UNITY_EDITOR
         public static string Signature(LTWorld world)
         {
-            var text=new System.Text.StringBuilder("LT global bake v2;");
+            var text=new System.Text.StringBuilder("LT global bake v3;");
+            text.Append("layer-arrays-v1:").Append(LTPaintRuntime.LayerCapacity).Append(';');
+            text.Append((int)world.arrayColorResolution).Append('/').Append((int)world.arrayNormalResolution).Append('/').Append((int)world.arrayMaskResolution).Append(';');
             text.Append(world.triplanarTexturing?"triplanar;":"planar;");
             void Number(float value)=>text.Append(value.ToString("R",System.Globalization.CultureInfo.InvariantCulture)).Append(';');
             void Reference(Object value)
@@ -49,8 +51,23 @@ namespace LocalTerrainPrototype
             text.Append(world.lightweightBackground?"light-background;":"full-background;");
             foreach(var stamp in world.CollectPaintStamps())
             {
-                if(!stamp.isActiveAndEnabled||!stamp.layer||stamp.strength<=0)continue;
-                Layer(stamp.layer);Reference(stamp.mask);Number((int)stamp.shape);Number(stamp.size.x);Number(stamp.size.y);
+                if(!stamp.ActiveForPaint||!stamp.EffectiveLayer||(!stamp.Road&&stamp.strength<=0))continue;
+                Layer(stamp.EffectiveLayer);
+                var road=stamp.Road;
+                if(road)
+                {
+                    // Serialized authoring values, never instance IDs or generated ownership fields.
+                    text.Append("road;");
+                    foreach(var point in road.points){Number(point.position.x);Number(point.position.y);Number(point.position.z);Number(point.bank);}
+                    Number((int)road.mode);Number((int)road.pattern);Number((int)road.projection);
+                    Number(road.width);Number(road.shoulderWidth);Number(road.blendWidth);Number(road.rutWidth);Number(road.rutSeparation);
+                    Number(road.edgeNoise);Number(road.noiseSize);Number(road.seed);Number(road.sampleSpacing);
+                    Number(road.textureRepeatMetres);Number(road.textureOffset.x);Number(road.textureOffset.y);
+                    var roadMatrix=world.transform.worldToLocalMatrix*road.transform.localToWorldMatrix;
+                    for(int i=0;i<16;i++)Number(roadMatrix[i]);
+                    continue;
+                }
+                Reference(stamp.mask);Number((int)stamp.shape);Number(stamp.size.x);Number(stamp.size.y);
                 Number(stamp.strength);Number(stamp.edgeFalloff);
                 text.Append(JsonUtility.ToJson(stamp.heightFilter)).Append(';');
                 text.Append(JsonUtility.ToJson(stamp.slopeFilter)).Append(';');

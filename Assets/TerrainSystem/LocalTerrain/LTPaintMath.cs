@@ -93,8 +93,8 @@ namespace LocalTerrainPrototype
         public static float DisplacementVisibility(float[] weights,float[] heights,float blend,int activeLayers)
         {
             float highest=-1,total=0,visible=0;
-            for(int i=0;i<8;i++)if(weights[i]>.00001f)highest=Mathf.Max(highest,heights[i]+weights[i]);
-            for(int i=0;i<8;i++)
+            for(int i=0;i<weights.Length;i++)if(weights[i]>.00001f)highest=Mathf.Max(highest,heights[i]+weights[i]);
+            for(int i=0;i<weights.Length;i++)
             {
                 float w=weights[i];
                 if(blend>.0001f)w*=Mathf.Lerp(1,Mathf.Clamp01((heights[i]+w-highest+.2f)/.2f),blend);
@@ -157,15 +157,18 @@ namespace LocalTerrainPrototype
         // Each cell covers four endpoint weight texels. Max-reduced mips retain even
         // a one-texel displacement island when a large triangle encloses it.
         public static System.Collections.Generic.List<Color32[]> DisplacementPyramid(Color32[] first,Color32[] second,int resolution,int activeLayers)
+            =>DisplacementPyramid(first,second,null,resolution,activeLayers);
+        public static System.Collections.Generic.List<Color32[]> DisplacementPyramid(Color32[] first,Color32[] second,Color32[] third,int resolution,int activeLayers)
         {
             int size=resolution-1;
-            if(size<1||(size&(size-1))!=0||first.Length!=resolution*resolution||second.Length!=first.Length)
+            if(size<1||(size&(size-1))!=0||first.Length!=resolution*resolution||second.Length!=first.Length||(third!=null&&third.Length!=first.Length))
                 throw new System.ArgumentException("Expected endpoint weight grid with power-of-two cell count.");
             bool Occupied(int index)
             {
-                var a=first[index];var b=second[index];
+                var a=first[index];var b=second[index];var c=third!=null?third[index]:default;
                 return ((activeLayers&1)!=0&&a.r>0)||((activeLayers&2)!=0&&a.g>0)||((activeLayers&4)!=0&&a.b>0)||((activeLayers&8)!=0&&a.a>0)||
-                    ((activeLayers&16)!=0&&b.r>0)||((activeLayers&32)!=0&&b.g>0)||((activeLayers&64)!=0&&b.b>0)||((activeLayers&128)!=0&&b.a>0);
+                    ((activeLayers&16)!=0&&b.r>0)||((activeLayers&32)!=0&&b.g>0)||((activeLayers&64)!=0&&b.b>0)||((activeLayers&128)!=0&&b.a>0)||
+                    ((activeLayers&256)!=0&&c.r>0)||((activeLayers&512)!=0&&c.g>0)||((activeLayers&1024)!=0&&c.b>0)||((activeLayers&2048)!=0&&c.a>0);
             }
             var pixels=new Color32[size*size];
             for(int y=0;y<size;y++)for(int x=0;x<size;x++)

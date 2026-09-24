@@ -32,6 +32,13 @@ MonoBehaviour:
   smoothness: 0
   tileSizeMetres: {x: 4, y: 4}
   tileOffsetMetres: {x: 0, y: 0}
+  detailDensityMask:
+    enabled: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
   details:
   - id: cc27faf124bc4c57bdd3249d8a854d7b
     enabled: 1
@@ -39,6 +46,14 @@ MonoBehaviour:
     category: 1
     density: 0.5
     probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -56,6 +71,14 @@ MonoBehaviour:
     category: 1
     density: 0.5
     probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -73,6 +96,14 @@ MonoBehaviour:
     category: 1
     density: 0.5
     probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -90,6 +121,14 @@ MonoBehaviour:
     category: 1
     density: 0.5
     probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -107,6 +146,14 @@ MonoBehaviour:
     category: 1
     density: 0.5
     probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -124,6 +171,14 @@ MonoBehaviour:
     category: 1
     density: 0.5
     probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -137,27 +192,18 @@ MonoBehaviour:
     deformationBoundsPadding: 0.5
   - id: 7dda0a81871141cda841ce22945b7b0a
     enabled: 1
-    prefab: {fileID: 4697047626839586244, guid: ca46384717a100943b0723a7641d0aeb, type: 3}
+    prefab: {fileID: 4697047626839586244, guid: f4ae750384d80ad4ea1403cbdd19733a, type: 3}
     category: 2
     density: 0.1
     probability: 1
-    scaleRange: {x: 0.8, y: 1.2}
-    yawRange: {x: 0, y: 360}
-    slopeRange: {x: 0, y: 45}
-    alignToNormal: 1
-    heightOffsetRange: {x: 0, y: 0}
-    fadeStart: 35
-    cullDistance: 50
-    shaderFade: 0
-    thinInDistance: 0
-    farDensity: 0.25
-    deformationBoundsPadding: 0.5
-  - id: 029e022493ad421080f58057529387b8
-    enabled: 1
-    prefab: {fileID: 8610392185217078294, guid: 1cceea0fcbf515547b4572ae3fa1bd0b, type: 3}
-    category: 2
-    density: 0.1
-    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -171,10 +217,18 @@ MonoBehaviour:
     deformationBoundsPadding: 0.5
   - id: 51506d6d642f48c9b594bae2fa7dc72c
     enabled: 1
-    prefab: {fileID: 9152946757159791403, guid: 5b3dbd30bcd5bcd4a8790f2390695006, type: 3}
+    prefab: {fileID: 9152946757159791403, guid: 41753ca32c3ec3541a1122d0e8fd1674, type: 3}
     category: 2
     density: 0.1
     probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -188,10 +242,18 @@ MonoBehaviour:
     deformationBoundsPadding: 0.5
   - id: e6003b7f54a5423ba85bee3e4303def7
     enabled: 1
-    prefab: {fileID: 3849192596600764344, guid: f4d7a4bffa3677a4d923a05279c97c17, type: 3}
+    prefab: {fileID: 3849192596600764344, guid: 045300595112e2c409909d0e447f62d4, type: 3}
     category: 2
     density: 0.1
     probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -205,10 +267,18 @@ MonoBehaviour:
     deformationBoundsPadding: 0.5
   - id: ff7923bbbad642248faffcfcba72cada
     enabled: 1
-    prefab: {fileID: 2560732552008188974, guid: fd3c837481830b54aac801e47c6f7eac, type: 3}
+    prefab: {fileID: 2560732552008188974, guid: b387d8ef9d23fa944883d03cc0624eed, type: 3}
     category: 2
     density: 0.1
     probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}

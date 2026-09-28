@@ -51,8 +51,9 @@ namespace LocalTerrainPrototype
             text.Append(world.lightweightBackground?"light-background;":"full-background;");
             foreach(var stamp in world.CollectPaintStamps())
             {
-                if(!stamp.ActiveForPaint||!stamp.EffectiveLayer||(!stamp.Road&&stamp.strength<=0))continue;
+                if(!stamp.ActiveForPaint||!stamp.HasPaintLayers||(!stamp.Road&&stamp.strength<=0))continue;
                 Layer(stamp.EffectiveLayer);
+                Layer(stamp.SecondaryLayer);
                 var road=stamp.Road;
                 if(road)
                 {
@@ -63,6 +64,11 @@ namespace LocalTerrainPrototype
                     Number(road.width);Number(road.shoulderWidth);Number(road.blendWidth);Number(road.rutWidth);Number(road.rutSeparation);
                     Number(road.edgeNoise);Number(road.noiseSize);Number(road.seed);Number(road.sampleSpacing);
                     Number(road.textureRepeatMetres);Number(road.textureOffset.x);Number(road.textureOffset.y);
+                    Number(road.textureAcrossMetres);
+                    // Include value-only paint settings and point profiles, not generated ownership.
+                    text.Append(UnityEngine.JsonUtility.ToJson(road.variation));
+                    text.Append(UnityEngine.JsonUtility.ToJson(road.wheelTracks));
+                    foreach(var point in road.points)Number(point.VariationStrength);
                     var roadMatrix=world.transform.worldToLocalMatrix*road.transform.localToWorldMatrix;
                     for(int i=0;i<16;i++)Number(roadMatrix[i]);
                     if(road.startJunction)Number(road.startJunction.EndpointHash);

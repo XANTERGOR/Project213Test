@@ -35,6 +35,16 @@ namespace LocalTerrainPrototype
         public LTRoad Road=>GetComponent<LTRoad>();
         public LTRoadJunction Junction=>GetComponent<LTRoadJunction>();
         public LTSurfaceLayer EffectiveLayer {get {var road=Road;var node=Junction;return road?road.groundLayer:node?node.groundLayer:layer;}}
+        public LTSurfaceLayer SecondaryLayer {get {var road=Road;return road?road.ActiveWheelLayer:null;}}
+        public bool HasPaintLayers=>EffectiveLayer||SecondaryLayer;
+        // Full palettes include assigned-but-disabled layers; live chunk palettes
+        // include only contributors. Both routes preserve stable first-use order.
+        public void AppendLayers(System.Collections.Generic.List<LTSurfaceLayer> layers,bool includeDisabled=false)
+        {
+            var primary=EffectiveLayer;if(primary&&!layers.Contains(primary))layers.Add(primary);
+            var road=Road;var secondary=includeDisabled&&road?road.wheelLayer:SecondaryLayer;
+            if(secondary&&!layers.Contains(secondary))layers.Add(secondary);
+        }
         public bool ActiveForPaint {get {var road=Road;var node=Junction;return isActiveAndEnabled&&(!road||road.isActiveAndEnabled)&&(!node||node.isActiveAndEnabled);}}
         public LTStampShape shape=LTStampShape.Ellipse;
         public Vector2 size=new Vector2(40,40);

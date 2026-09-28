@@ -51,7 +51,7 @@ namespace LocalTerrainPrototype
             {
                 if(road.startJunction==this)ports.Add(Port(road,true));
                 if(road.endJunction==this)ports.Add(Port(road,false));
-                if(road.groundLayer&&road.groundLayer==groundLayer&&road.projection==LTRoadProjection.Spline)
+                if(groundLayer&&(road.groundLayer==groundLayer||road.ActiveWheelLayer==groundLayer)&&road.projection==LTRoadProjection.Spline)
                     throw new ArgumentException("Для площадки назначьте отдельный слой с обычным грунтом. Направленный слой веток может быть общим для всех дорог.");
                 if(road.mode==LTRoadMode.Asphalt&&surface!=LTRoadMode.Asphalt)
                     throw new ArgumentException("Для подключения асфальта выберите Asphalt у узла перекрёстка.");

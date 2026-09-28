@@ -406,7 +406,8 @@ namespace LocalTerrainPrototype
             foreach(var stamp in stamps)if(!deformationRegions.ContainsKey(stamp))ordered.Add(stamp);
             foreach(var stamp in ordered)
             {
-                if(!stamp.EffectiveLayer.deformation||stamp.EffectiveLayer.deformationDepth<=0)continue;
+                var primary=stamp.EffectiveLayer;var secondary=stamp.SecondaryLayer;
+                if(!(primary&&primary.deformation&&primary.deformationDepth>0)&&!(secondary&&secondary.deformation&&secondary.deformationDepth>0))continue;
                 var rect=StampBounds(world,stamp);
                 rect=Rect.MinMaxRect(Mathf.Max(0,rect.xMin),Mathf.Max(0,rect.yMin),
                     Mathf.Min(world.source.size.x,rect.xMax),Mathf.Min(world.source.size.z,rect.yMax));

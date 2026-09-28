@@ -115,7 +115,8 @@ namespace LocalTerrainPrototype
                     if(world)
                     {
                         if(world.baseLayer)layers.Add(world.baseLayer);
-                        foreach(var stamp in world.CollectPaintStamps())if(stamp.EffectiveLayer&&!layers.Contains(stamp.EffectiveLayer)&&layers.Count<LTPaintRuntime.LayerCapacity)layers.Add(stamp.EffectiveLayer);
+                        foreach(var stamp in world.CollectPaintStamps())stamp.AppendLayers(layers,true);
+                        if(layers.Count>LTPaintRuntime.LayerCapacity)layers.RemoveRange(LTPaintRuntime.LayerCapacity,layers.Count-LTPaintRuntime.LayerCapacity);
                     }
                 }
                 if(!displacementComparison)

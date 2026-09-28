@@ -1,5 +1,42 @@
 # Spline roads and explicit junctions
 
+## Offroad variation
+
+In Road, expand **«Вариативность дороги»** and enable **«Включить вариативность»**.
+It is opt-in; existing roads and asphalt remain unchanged when disabled.
+
+- `Общая сила` blends back to the original road at zero. `Seed вариативности`
+  is deterministic, independent of camera/time and separate from the existing rut-edge seed.
+- `Изменение полуширины` gives independent left/right narrowing and widening
+  (default up to ±15% of half-width); `Длина изменений ширины` controls its scale.
+  Height, paint, removal masks and scene gizmos use the same side widths. Density,
+  dirty bounds and sparse UV bakes conservatively include the widest possible road.
+- `Подмешивание грунта` / `Размер пятен` reveal the previously painted terrain
+  beneath the road in large patches. They do not create new materials, textures or
+  palette slots. The road needs a different substrate to show material contrast;
+  later paint stamps can still cover it. This is not a dedicated sand/gravel layer selector.
+- `Колеи на сплошной дороге` adds ruts while retaining Solid's full-width paint mask.
+  Configure rut width/separation/depth under `Покрытие`. `Ослабление колей` and
+  `Длина изменений колей` vary their strength along the road. Tracks mode retains
+  its central unpainted strip. Patches preserve more coating in the wheel tracks.
+- Each authored point has optional **«Своя сила вариативности»** (0–1 multiplier).
+  Unset means 1; values interpolate along the spline. Generated junction endpoints
+  remain node-controlled. Variation fades out over the whole straight entrance neck,
+  and at free rounded caps, to retain the existing connection geometry.
+
+Patch edits leave the road's geometry and removal signatures unchanged; solitary
+spline-layer UV maps are reused. Shared-layer road networks still rebake ownership
+when paint weights change. Layer-dependent vegetation/displacement may need their
+normal paint refresh: this is not a guarantee of zero downstream work. Width/rut
+edits use the existing scoped terrain rebuild. No extra per-frame generator or
+shader pass is added. Camera LOD still uses baked geometry; colliders remain LOD0.
+
+Managed checks cover 23,463 finite/bounded/deterministic probes, disabled/zero/asphalt
+parity, local profiles, fixed junction entrances, patch-only invalidation, fresh-vs-
+cached single-road UV maps and 0 B allocation for warmed math queries. A variable-
+width rutted multi-chunk fixture also checks height budgets and watertight mixed LODs.
+Native Unity import/render, appearance and live editor timings are separate checks.
+
 ## Authoring
 
 Select an LTWorld (or its child), then use **GameObject → Local Terrain → Road (Offroad)**
@@ -25,9 +62,16 @@ or **Road (Asphalt)**. No scene objects are created until this command is used.
   in the inspector. Banking is in degrees. `Прижать к terrain` samples source terrain
   plus height/mesh stamps, excluding all roads; it captures those stamps once.
 - `Ширина`, `Обочина`, `Плавный переход` control the footprint and height transition.
-  The CPU terrain mesh and its collider receive the road shape. Road zones retain
-  their fine topology in terrain LODs. `Размер ячейки terrain` controls that density;
-  tiny values can exceed the existing terrain vertex budget.
+  The CPU terrain mesh and its collider receive the road shape. `Размер ячейки terrain`
+  controls LOD0 density; tiny values can exceed the existing terrain vertex budget.
+  Offroad roads and offroad junctions simplify with the terrain, using each LTWorld
+  LOD's simplification steps and maximum height error (including rut geometry).
+  This applies to both WholeChunk and WithinChunk. LOD0 and colliders are unchanged.
+  Asphalt road/junction foundations still retain fine topology: the separate asphalt
+  meshes have independent LODs, so independently coarsening their foundations could
+  make terrain intersect the visible ribbon. Rock/cut contact contours stay protected.
+  Existing baked LODs need one terrain rebuild to adopt this policy. In Scene view,
+  enable `Preview LODs` and leave `Force LOD = -1` to use camera distance.
 - Offroad is a **terrain layer**, not a separate ribbon. Assign `Слой terrain`.
   `Solid` paints the full width; `Tracks` paints two strips and can lower their
   terrain height. The centre of two tracks remains unpainted/un-cleared.
@@ -127,6 +171,16 @@ delete/Undo, saved-scene reopen, camera LOD switching and shared-layer chunk bor
   twelve-slot painting/displacement/deformation and copied-layer ID regressions,
   production terrain mesh integration,
   and the existing terrain/detail regression suite.
+- Road-terrain LOD regression (2026-09-28): five managed 2x2-chunk fixtures cover
+  flat offroad, curved/banked ruts, varied offroad, an offroad junction and an asphalt foundation.
+  526,241 emitted-surface comparisons stay within the configured height budgets;
+  mixed patch/chunk boundaries are watertight and returning near restores exact LOD0.
+  LOD0/collider geometry is unchanged, and asphalt contact cells and stitch masks
+  remain fixed. WholeChunk border preservation and offroad reduction are also checked.
+  Synthetic LOD0 -> distant whole-fixture triangle counts: flat 16,491 -> 400;
+  rutted 16,550 -> 3,345; junction 5,679 -> 508. These are not live-scene statistics
+  or FPS measurements. C# editor build passed (0 errors, 3 warnings) and the full
+  managed suite passed; native import/render and the user's scene remain unverified.
 - Texture-array migration source contracts: three shared color/normal/mask arrays,
   all twelve local-to-world slice mappings in raster/ray sampling and tessellation,
   canonical RGB normal decoding, and unique material mapping uniforms. Cache checks
@@ -153,6 +207,105 @@ delete/Undo, saved-scene reopen, camera LOD switching and shared-layer chunk bor
 
 No validation Unity project, package changes, linked caches or working-scene saves
 were made for this implementation.
+
+## Wheel-wear surface strips — 2026-09-28
+
+- Offroad → **Следы колёс** → **Выделять следы колёс** adds an optional
+  secondary `LTSurfaceLayer`. Both strips use one additional local slot out of 12;
+  their weights composite after this road's ground coverage, before subsequent
+  stamps. Existing roads default to disabled. Asphalt is unaffected.
+- Assign a separate layer or press **Создать слой следов из покрытия…** and choose
+  its asset path. This explicitly creates a unique copy, not an overwrite: tint
+  RGB × 0.75, normal strength × 0.5, smoothness capped at 0.25, no metallic,
+  displacement, deformation or copied detail recipes. Texture assets are shared
+  read-only. Undo restores the road's assignment; the created layer asset remains.
+- Starting settings: width 0.65 m, centre spacing 1.8 m, strength 0.85, edge softness
+  0.4. Colour-strip dimensions are independent of geometric rut dimensions/depth.
+  Width must be less than centre spacing; their sum must fit the road width.
+  A tread pattern is not generated; a custom surface layer can supply textures.
+- The overlay inherits World/Spline projection and the continuous full-road UV
+  frame, not a separate repeated UV frame per tyre. Its repeat size/offset can now
+  be independent of the ground layer (see below). Shared spline material ownership
+  uses the wheel footprints, not the road's entire footprint. Explicit junction
+  ports fade the strips; existing centre/road layers and LOD topology are retained.
+- **Убирать камни в следах** uses the soft wheel footprint, independent of layer
+  assignment and paint opacity. Disable the older whole-road **Убирать камни** to
+  keep stones in the centre and shoulders. This clearing toggle does not directly
+  remove vegetation; as with any terrain painting, changed layer weights can affect
+  layer-based detail recipes. Edge noise and existing rut variation also modulate
+  the visual strips; underlying colour patches do not.
+- Assigned disabled wheel layers stay in the full packed palette, while the live
+  chunk palette uses only enabled contributors. After adding/replacing the asset,
+  refresh saved arrays in LTWorld → **Массивы**. Re-bake saved global maps if used.
+  Terrain painting, array palettes, displacement coverage and saved signatures
+  include the secondary layer. Road painting remains excluded from rock-stamp
+  overlays. Masks retain their current resolution: very narrow tracks
+  can be softened by the terrain weight-map texel size.
+- Wheel colour/width settings do not change the road geometry hash or its height
+  function. A chosen layer's own displacement/deformation can still affect the
+  rendered surface if explicitly enabled; the convenience copy disables both.
+- `RoadWheelTracksChecks` exercises production managed math: two bounded strips,
+  centre gap/soft edges/caps, normalized compositing, geometry and legacy/asphalt
+  parity, selective clearing, scoped hashes, shared-road UV ownership, junction
+  fading, curved/banked paths, invalid inputs and zero-allocation hot queries.
+  Additional source contracts cover palettes, saving and copy safety. These are
+  not native Unity import, saved-asset roundtrip or live-render/performance tests.
+- Verification: C# editor build passed with 0 errors / 6 warnings; the managed
+  suite passed, including 20,377 wheel-mask grid probes and 0 B allocated by
+  warmed wheel-mask/stone-clearing queries. Existing terrain LOD regressions also
+  pass. No Unity/package restart, working-scene save or generated asset rewrite
+  was used for these checks.
+
+### Independent tiling and vegetation outside wheel strips
+
+- In Spline mode, **Покрытие → Повтор поперёк, м** sets metres per transverse
+  repeat; zero preserves the old one-repeat-over-road-width mapping.
+  **Повтор вдоль пути, м** retains its existing meaning. Smaller values repeat
+  the texture more frequently; neither changes the road or painted strip width.
+- **Следы колёс → Свой тайлинг следов** enables a separate **Повтор следов, м**
+  (`X` across / `Y` along) and UV offset. On first enabling it copies the current
+  ground settings, avoiding a jump; subsequent off/on toggles preserve the authored
+  values. With the toggle off, wheel UVs exactly inherit the road settings.
+  The origin stays at `U = 0.5` on the centreline; this is one continuous UV frame,
+  not a separate tread frame around each tyre. World mode still uses the two
+  separate Surface Layer assets' Tile Size Metres / Tile Offset Metres.
+- **Растительность: оставить только вне следов** is a shortcut to
+  **Растительность и камни → Растительность → Убирать только в следах**.
+  Alternatives are no removal and whole-road removal. Existing scenes keep their
+  previous setting until the user selects the new mode. Selecting the mode also
+  enables wheel tracks; subsequently disabling tracks disables this removal too,
+  never silently changing it to whole-road removal.
+- Strip-only vegetation exclusion is complete inside the configured wheel width,
+  including soft paint edges, and independent of paint opacity, edge noise and rut
+  weakening. It uses rounded finite caps and is applied through the existing common
+  detail acceptance path before CPU/GPU rendering. It excludes roots/placement
+  points, not entire prefab bounding boxes: large canopies can overhang the strip.
+  The central gap and outside probabilities are preserved, but this is removal,
+  not a new spawn source: configure plant recipes on the ground layer/detail stamps
+  as usual. Stone-clearing controls keep their previous behavior.
+- UV changes update projection caches and saved-global-map signatures, not road
+  geometry/LOD hashes. Independent wheel UV cache keys do not depend on ground
+  repeat/offset changes. Vegetation mode changes update detail placement keys,
+  not paint/geometry. Texture arrays contain the same pixels: changing only tiling
+  does not require repacking them. Saved global maps, if used, need a new bake.
+- `RoadTilingVegetationChecks` covers independent/inherited UVs, cache invalidation,
+  shared-material roads, chunk seams/cap extension, deterministic strip-only removal
+  including curves/banking, unchanged centre/shoulders, legacy/asphalt behavior,
+  invalid input and allocation-free hot queries. C# and managed checks are separate
+  from live Unity visual/CPU/GPU verification. If Auto Refresh is disabled on the
+  detail renderer, explicitly rebuild details after changing removal settings.
+- Verification for this extension: editor C# build passed (0 errors / 6 warnings);
+  full managed suite passed, including 21,535 straight-strip exclusion probes plus
+  curved/banked and shared-UV fixtures. Warmed UV/exclusion queries allocated 0 B.
+  No working scene, generated mesh, package or material asset was edited by tests.
+
+### Native visual follow-up (not performed automatically)
+
+Enable the feature on an offroad, create/assign the wheel layer, adjust its tint,
+then check a turn, chunk seam, distant LOD and a shared-material crossing. Toggle
+whole-road versus strip-only stone clearing and verify Undo/disable restore the
+previous coverage. Save/reopen arrays through the existing explicit tools. Do not
+save or overwrite the user's scene as part of an automated check.
 
 ### Array sampler ownership regression
 

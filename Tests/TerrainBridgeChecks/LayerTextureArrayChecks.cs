@@ -9,6 +9,7 @@ partial class Checks
     static void LayerTextureArrayContracts()
     {
         SavedLayerArrayContracts();
+        LayerMicroShadowContracts();
         // Source contracts only: the array owner is not instantiated by this CPU harness.
         // GPU format support, native lifetime and rendering require the Unity checks.
         const string root="Assets/TerrainSystem/LocalTerrain/";
@@ -73,9 +74,13 @@ partial class Checks
         Check(runtime.Contains("layerArrays.Bind(material,layers);"),"ordinary and rock Bind path uses the shared owner");
         Check(runtime.Contains("varall=world.CollectPaintStamps();"),"palette derives from world-owned stamps");
         var palette=Between(runtime,"varpalette=","intarrayRevision=","full palette");
+        var stampLayers=Read("LTPaintStamp.cs");
         Check(palette.Contains("newList<LTSurfaceLayer>{world.baseLayer}")&&
-            palette.Contains("foreach(varstampinall)if(stamp.EffectiveLayer&&!palette.Contains(stamp.EffectiveLayer))palette.Add(stamp.EffectiveLayer);"),
-            "palette includes base plus every distinct layer, including disabled stamps");
+            palette.Contains("foreach(varstampinall)stamp.AppendLayers(palette,true);")&&
+            stampLayers.Contains("if(primary&&!layers.Contains(primary))layers.Add(primary);")&&
+            stampLayers.Contains("includeDisabled&&road?road.wheelLayer:SecondaryLayer")&&
+            stampLayers.Contains("if(secondary&&!layers.Contains(secondary))layers.Add(secondary);"),
+            "palette includes base plus every distinct primary/secondary layer, including disabled stamps");
         Check(!palette.Contains("LayerCapacity")&&!palette.Contains(".Take(")&&!arrays.Contains("LayerCapacity")&&!arrays.Contains(".Take("),
             "world palette is not truncated to the twelve local slots");
         var invalidation=Between(runtime,"if(arrayRevision!=layerArrays.Revision)","varroadErrors=","array-generation invalidation");
@@ -189,5 +194,33 @@ partial class Checks
             build.Contains("catch{Destroy(array);throw;}"),"failed packing releases partial array allocations");
         if(failures.Count>0)throw new Exception("Texture array source contracts failed:\n - "+string.Join("\n - ",failures));
         Console.WriteLine("PASS texture array source contracts: three arrays/twelve mappings, world cache/full palette, texture-only fingerprint, disposal, GPU mip packing and peak budget. No native GPU execution.");
+    }
+
+    static void LayerMicroShadowContracts()
+    {
+        // Source contracts, not a rendered-frame assertion. LT owns the layer AO;
+        // the stock _MASKMAP texture/keyword need not exist on its materials.
+        const string root="Assets/TerrainSystem/LocalTerrain/";
+        string Read(string file)=>Regex.Replace(File.ReadAllText(root+file),@"(?m)//[^\r\n]*|/\*[\s\S]*?\*/","");
+        var data=Read("Shaders/LTEightLayerData.hlsl");
+        var block=Regex.Match(data,@"(?s)#if defined\(_SPECULAR_OCCLUSION_FROM_BENT_NORMAL_MAP\).*?#endif").Value;
+        Require(block.Length>0,"LT specular occlusion block exists");
+        Require(!block.Contains("_MASKMAP"),"LT array AO must feed deferred micro shadows without the stock _MASKMAP keyword");
+        Require(Regex.IsMatch(block,@"#elif\s+!defined\(_SPECULAR_OCCLUSION_NONE\)"),"LT retains the explicit specular occlusion Off option");
+        Require(block.Contains("GetSpecularOcclusionFromBentAO(V, bentNormalWS, surfaceData.normalWS, surfaceData.ambientOcclusion,"),
+            "LT retains the bent-normal occlusion path with blended layer AO");
+        Require(block.Contains("surfaceData.specularOcclusion = GetSpecularOcclusionFromAmbientOcclusion(ClampNdotV(dot(surfaceData.normalWS, V)), surfaceData.ambientOcclusion, PerceptualSmoothnessToRoughness(surfaceData.perceptualSmoothness));"),
+            "LT uses the HDRP specular occlusion function with final normal, AO and roughness");
+        Require(data.IndexOf("LTApplyLayers(input, surfaceData,",StringComparison.Ordinal)<data.IndexOf(block,StringComparison.Ordinal)&&
+            data.IndexOf("ApplyDebugToSurfaceData(input.tangentToWorld",StringComparison.Ordinal)<data.IndexOf(block,StringComparison.Ordinal),
+            "LT occlusion derives from the final layer/debug surface rather than the stock material");
+        var sampling=Read("Shaders/LTEightLayerSampling.hlsl");
+        Require(sampling.Contains("surfaceData.ambientOcclusion=saturate(ao);"),"LT exports blended AO to HDRP");
+        Require(sampling.Contains("ao=lerp(ao,1,fade)")&&sampling.Contains("n=farNormal;ao=1;"),
+            "the existing far-atlas path has neutral AO, without invented micro shadows");
+        foreach(var name in new[]{"LTEightLayers","LTEightLayersTessellation"})
+            Require(Read("Resources/"+name+".shader").Contains("#include \"Assets/TerrainSystem/LocalTerrain/Shaders/LTEightLayerData.hlsl\""),
+                "normal and tessellated shaders share the corrected surface data: "+name);
+        Console.WriteLine("PASS LT micro-shadow source contracts: array AO reaches specular occlusion without _MASKMAP; Off/bent normals/far fallback retained. No GPU execution.");
     }
 }

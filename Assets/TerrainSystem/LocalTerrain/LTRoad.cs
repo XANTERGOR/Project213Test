@@ -22,6 +22,8 @@ namespace LocalTerrainPrototype
         public LTRoadProjection projection = LTRoadProjection.World;
         public LTRoadJunction startJunction,endJunction;
         public Vector2 textureOffset;
+        [Min(0),Tooltip("Spline only: metres per repeat across the road. 0 preserves one repeat over the road width.")]
+        public float textureAcrossMetres;
         [Min(.01f)] public float width = 6;
         [Min(0)] public float shoulderWidth = 1;
         [Min(0)] public float blendWidth = 3;
@@ -32,7 +34,12 @@ namespace LocalTerrainPrototype
         [Range(0, 1)] public float edgeNoise = .2f;
         [Min(.01f)] public float noiseSize = 3;
         public int seed = 12345;
+        public LTRoadVariation variation=LTRoadVariation.Default;
         public LTSurfaceLayer groundLayer;
+        public LTRoadWheelTracks wheelTracks=LTRoadWheelTracks.Default;
+        [HideInInspector] public bool wheelTilingInitialized;
+        public LTSurfaceLayer wheelLayer;
+        public LTSurfaceLayer ActiveWheelLayer=>mode==LTRoadMode.Offroad&&wheelTracks.enabled&&wheelLayer!=groundLayer?wheelLayer:null;
         public Material asphaltMaterial;
         public LTRoadMeshSource asphaltSource;
         public Mesh asphaltModule;
@@ -53,6 +60,7 @@ namespace LocalTerrainPrototype
         [Min(.01f)] public float textureRepeatMetres = 4;
         [Min(0)] public float surfaceOffset = .06f;
         public bool clearVegetation = true;
+        public bool vegetationOnlyWheelTracks;
         public bool clearStones;
         [Range(0, 1), Tooltip("Vegetation removal strength within the paint mask. Does not widen tracks.")]
         public float vegetationFade = 1;
@@ -81,13 +89,16 @@ namespace LocalTerrainPrototype
             var settings = new LTRoadMath.Settings
             {
                 mode = mode, pattern = pattern, width = width, shoulderWidth = shoulderWidth,
-                projection = projection, textureOffset = textureOffset,
+                projection = projection, textureOffset = textureOffset,textureAcrossMetres=textureAcrossMetres,
                 blendWidth = blendWidth, flatten = flatten, rutWidth = rutWidth,
                 rutSeparation = rutSeparation, rutDepth = rutDepth, edgeNoise = edgeNoise,
                 noiseSize = noiseSize, seed = seed, sampleSpacing = sampleSpacing,
+                variation=variation,
+                wheelTracks=wheelTracks,wheelLayerId=ActiveWheelLayer?ActiveWheelLayer.GetInstanceID():0,
                 terrainCellSize = terrainCellSize, meshChunkLength = meshChunkLength,
                 textureRepeatMetres = textureRepeatMetres, surfaceOffset = surfaceOffset,
                 clearVegetation = clearVegetation, clearStones = clearStones, vegetationFade = vegetationFade,
+                vegetationOnlyWheelTracks=vegetationOnlyWheelTracks,
                 straightStart=startJunction&&startJunction.isActiveAndEnabled,straightEnd=endJunction&&endJunction.isActiveAndEnabled,
                 junctionStartLength=startJunction?startJunction.neckLength:0,junctionEndLength=endJunction?endJunction.neckLength:0,
                 groundLayerId = groundLayer != null ? groundLayer.GetInstanceID() : 0,
@@ -113,7 +124,8 @@ namespace LocalTerrainPrototype
         {
             if (points == null || cachedPoints == null || points.Count != cachedPoints.Length) return false;
             for (int i = 0; i < points.Count; i++)
-                if (!points[i].position.Equals(cachedPoints[i].position) || !points[i].bank.Equals(cachedPoints[i].bank)) return false;
+                if (!points[i].position.Equals(cachedPoints[i].position) || !points[i].bank.Equals(cachedPoints[i].bank) ||
+                    points[i].VariationStrength!=cachedPoints[i].VariationStrength) return false;
             return true;
         }
 
@@ -138,18 +150,30 @@ namespace LocalTerrainPrototype
             rutDepth = Clamp(rutDepth, 0, 1000, .08f);
             edgeNoise = Clamp(edgeNoise, 0, 1, .2f);
             noiseSize = Clamp(noiseSize, .01f, 10000, 3);
+            variation.strength=Clamp(variation.strength,0,1,1);
+            variation.widthAmount=Clamp(variation.widthAmount,0,.35f,.15f);variation.widthLength=Clamp(variation.widthLength,.1f,100000,12);
+            variation.patchStrength=Clamp(variation.patchStrength,0,1,.5f);variation.patchSize=Clamp(variation.patchSize,.1f,100000,8);
+            variation.rutVariation=Clamp(variation.rutVariation,0,1,.65f);variation.rutLength=Clamp(variation.rutLength,.1f,100000,10);
+            wheelTracks.width=Clamp(wheelTracks.width,.01f,10000,.65f);wheelTracks.separation=Clamp(wheelTracks.separation,.01f,10000,1.8f);
+            wheelTracks.strength=Clamp(wheelTracks.strength,0,1,.85f);wheelTracks.softness=Clamp(wheelTracks.softness,.01f,1,.4f);
+            wheelTracks.tileSizeMetres.x=Clamp(wheelTracks.tileSizeMetres.x,.01f,100000,6);
+            wheelTracks.tileSizeMetres.y=Clamp(wheelTracks.tileSizeMetres.y,.01f,100000,4);
+            wheelTracks.textureOffset.x=Clamp(wheelTracks.textureOffset.x,-1e6f,1e6f,0);
+            wheelTracks.textureOffset.y=Clamp(wheelTracks.textureOffset.y,-1e6f,1e6f,0);
             sampleSpacing = Clamp(sampleSpacing, .01f, 10000, 1);
             terrainCellSize = Clamp(terrainCellSize, .01f, 10000, .5f);
             meshChunkLength = Clamp(meshChunkLength, .01f, 100000, 32);
             moduleLength=Clamp(moduleLength,0,100000,0);moduleBaseY=Clamp(moduleBaseY,-10000,10000,0);
             textureRepeatMetres = Clamp(textureRepeatMetres, .01f, 100000, 4);
+            textureAcrossMetres=Clamp(textureAcrossMetres,0,100000,0);
             surfaceOffset = Clamp(surfaceOffset, 0, 1000, .06f);
             vegetationFade = Clamp(vegetationFade, 0, 1, 1);
             textureOffset.x = Clamp(textureOffset.x, -1e6f, 1e6f, 0);
             textureOffset.y = Clamp(textureOffset.y, -1e6f, 1e6f, 0);
             if (points != null) for (int i = 0; i < points.Count; i++)
             {
-                var point = points[i]; point.bank = Clamp(point.bank, -80, 80, 0); points[i] = point;
+                var point = points[i]; point.bank = Clamp(point.bank, -80, 80, 0);
+                point.variationStrength=Clamp(point.variationStrength,0,1,1);points[i] = point;
             }
             cached = null;
         }

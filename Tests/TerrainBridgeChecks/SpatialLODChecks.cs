@@ -41,7 +41,8 @@ partial class Checks
                 int chunk=c;var r=RectOf(c);var fine=forest.Plan(c);var levels=new List<Vector3Int>[5];levels[0]=fine;
                 Rect Area(Vector3Int p)=>new Rect(r.xMin+p.x/(float)LTSpatialLODMath.N*width,r.yMin+p.y/(float)LTSpatialLODMath.N*width,p.z/(float)LTSpatialLODMath.N*width,p.z/(float)LTSpatialLODMath.N*width);
                 bool Protected(Vector3Int p)=>irregular&&LTStampMesh.Overlap(Area(p),protection);
-                for(int l=1;l<5;l++)levels[l]=LTLODMesh.Coarsen(fine,r,l,100,H,irregular?new List<Rect>{protection}:null,null,divisions,false);
+                var preparation=new LTLODMesh.Preparation(fine,r,H);
+                for(int l=1;l<5;l++)levels[l]=preparation.Coarsen(l,100,irregular?new List<Rect>{protection}:null,null,divisions,false);
                 int Mask(Vector3Int p){int mask=0;for(int s=0;s<4;s++)if(forest.Midpoint(chunk,p,s))mask|=1<<s;return mask;}
                 var data=LTSpatialLODMath.BuildLayout(levels,divisions,100000,Mask,Protected);
                 LTStampMesh.EmitSpatialVariants(data,r,new Vector2(extent,extent),100000,H,irregular?Cut:null);

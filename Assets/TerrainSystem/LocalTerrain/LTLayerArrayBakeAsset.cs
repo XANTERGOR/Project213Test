@@ -21,7 +21,7 @@ namespace LocalTerrainPrototype
             var result=new List<LTSurfaceLayer>();
             if(world.baseLayer)result.Add(world.baseLayer);
             foreach(var stamp in world.CollectPaintStamps())
-                if(stamp.EffectiveLayer&&!result.Contains(stamp.EffectiveLayer))result.Add(stamp.EffectiveLayer);
+                stamp.AppendLayers(result,true);
             return result;
         }
         public bool Matches(LTWorld world,IList<LTSurfaceLayer> palette,out string reason)

@@ -10,7 +10,7 @@ namespace LocalTerrainPrototype
     [CustomEditor(typeof(LTRoad))]
     public sealed class LTRoadEditor : UnityEditor.Editor
     {
-        bool shapeOpen = true, surfaceOpen = true, detailOpen, meshOpen, pointsOpen = true;
+        bool shapeOpen = true, surfaceOpen = true, wheelOpen=true, variationOpen=true, detailOpen, meshOpen, pointsOpen = true;
         int selectedPoint;
         bool editPath = true, ownsToolVisibility, previousToolsHidden;
         string localError, previewError;
@@ -68,9 +68,12 @@ namespace LocalTerrainPrototype
                             EditorGUILayout.HelpBox("Несколько дорог Spline могут использовать один слой в чанке. Этот слой нельзя одновременно использовать как фоновый или обычную кисть. Площадке перекрёстка назначьте отдельный слой без направленных колей.", MessageType.Info);
                             EditorGUILayout.HelpBox("Карта проекции: около 1 МиБ GPU + 1 МиБ CPU на слой/чанк для одной дороги; 2 + 2 МиБ для нескольких. Дополнительные дороги не занимают отдельные слоты слоёв.", MessageType.Info);
                             Field("textureRepeatMetres", "Повтор вдоль пути, м", "Расстояние вдоль сплайна на один повтор текстуры.");
-                            Field("textureOffset", "Смещение текстуры", "Смещение UV текстуры вдоль и поперёк дороги.");
+                            Field("textureAcrossMetres", "Повтор поперёк, м", "0 — один повтор на всю ширину дороги, как раньше. Положительное значение — метры на один повтор поперёк. Меньше значение — мельче рисунок.");
+                            Field("textureOffset", "Смещение текстуры", "Смещение в повторах текстуры: X — поперёк дороги, Y — вдоль.");
                         }
-                        if(serializedObject.FindProperty("pattern").enumValueIndex==(int)LTRoadPattern.Tracks)
+                        else EditorGUILayout.HelpBox("World: тайлинг покрытия и следов настраивается независимо в их Surface Layer → Tile Size Metres / Tile Offset Metres. Настройки Spline ниже при этом не используются.",MessageType.Info);
+                        if(serializedObject.FindProperty("pattern").enumValueIndex==(int)LTRoadPattern.Tracks||
+                            serializedObject.FindProperty("variation.enabled").boolValue&&serializedObject.FindProperty("variation.solidRuts").boolValue)
                         {
                             Field("rutWidth", "Ширина колеи, м", "Ширина каждой полосы колеи.");
                             Field("rutSeparation", "Между колеями, м", "Расстояние между центрами колей.");
@@ -87,12 +90,35 @@ namespace LocalTerrainPrototype
                     }
                     EditorGUILayout.HelpBox("Компонент кисти покрытия управляется дорогой. Настраивайте покрытие здесь.", MessageType.Info);
                 }
+                if(mode==LTRoadMode.Offroad)
+                {
+                    DrawWheelTracks();
+                    variationOpen=EditorGUILayout.Foldout(variationOpen,"Вариативность дороги",true);
+                    if(variationOpen)
+                    {
+                        Field("variation.enabled","Включить вариативность","Выключено — прежняя форма, маски и колеи без изменений.");
+                        using(new EditorGUI.DisabledScope(!serializedObject.FindProperty("variation.enabled").boolValue))
+                        {
+                            Field("variation.strength","Общая сила","0 — исходная дорога; 1 — полное действие настроек. Множитель также можно задать в точках пути.");
+                            Field("variation.seed","Seed вариативности","Воспроизводимые пятна и края; не зависит от камеры или времени.");
+                            Field("variation.widthAmount","Изменение полуширины","Независимые левые/правые края. 0.15 — до ±15% полуширины.");
+                            Field("variation.widthLength","Длина изменений ширины, м","Плавные сужения и расширения вдоль пути.");
+                            Field("variation.patchStrength","Подмешивание грунта","Крупные пятна открывают исходные слои под дорогой. Колеи сохраняют больше дорожного покрытия.");
+                            Field("variation.patchSize","Размер пятен, м","Масштаб вдоль/поперёк дороги, независимо от тайлинга текстуры.");
+                            Field("variation.solidRuts","Колеи на сплошной дороге","Добавить рельеф колей в режиме Solid. Ширина, расстояние и максимальная глубина — в Покрытии.");
+                            Field("variation.rutVariation","Ослабление колей","Колеи местами становятся мельче; 1 позволяет им почти исчезать. В Tracks меняется и маска колей.");
+                            Field("variation.rutLength","Длина изменений колей, м","Масштаб чередования выраженных и слабых колей.");
+                        }
+                        EditorGUILayout.HelpBox("Пятна смешивают дорогу с уже покрашенным грунтом, без новых слоёв. Если под дорогой такой же материал, цветовые пятна незаметны. Они не меняют форму сплайна и маску удаления травы; displacement слоёв по-прежнему зависит от их смешивания. Ширина/колеи обновляют геометрию при редактировании, не при движении камеры. У въездов в перекрёстки вариативность затухает.",MessageType.Info);
+                    }
+                }
                 detailOpen = EditorGUILayout.Foldout(detailOpen, "Растительность и камни", true);
                 if (detailOpen)
                 {
-                    Field("clearVegetation", "Убирать растительность", "Удалять растительность в области дороги.");
+                    DrawVegetationPlacement(mode);
                     Field("clearStones", "Убирать камни", "Удалять камни в области дороги.");
-                    Field("vegetationFade", "Сила удаления растительности", "Доля удаляемой растительности внутри маски, от 0 до 1. Плавный край определяется маской дороги.");
+                    if(mode!=LTRoadMode.Offroad||!serializedObject.FindProperty("vegetationOnlyWheelTracks").boolValue)
+                        Field("vegetationFade", "Сила удаления растительности", "Доля удаляемой растительности внутри маски, от 0 до 1. Плавный край определяется маской дороги.");
                 }
                 if (mode == LTRoadMode.Asphalt)
                 {
@@ -142,6 +168,103 @@ namespace LocalTerrainPrototype
             if (Road.generatedRoot)
                 using (new EditorGUI.DisabledScope(true)) EditorGUILayout.ObjectField("Созданные меши", Road.generatedRoot, typeof(Transform), true);
             if(!string.IsNullOrEmpty(Road.meshLODStatus))EditorGUILayout.HelpBox(Road.meshLODStatus,MessageType.Info);
+        }
+
+        void DrawVegetationPlacement(LTRoadMode mode)
+        {
+            if(mode!=LTRoadMode.Offroad)
+            {Field("clearVegetation","Убирать растительность","Удалять растительность в области дороги.");return;}
+            var clear=serializedObject.FindProperty("clearVegetation");
+            var only=serializedObject.FindProperty("vegetationOnlyWheelTracks");
+            int current=clear.boolValue?(only.boolValue?2:1):0;
+            int next=EditorGUILayout.Popup("Растительность",current,new[]{"Не удалять","Убирать по всей дороге","Убирать только в следах"});
+            if(next!=current)
+            {
+                clear.boolValue=next!=0;only.boolValue=next==2;
+                if(next==2)serializedObject.FindProperty("wheelTracks.enabled").boolValue=true;
+            }
+            if(clear.boolValue&&only.boolValue)
+            {
+                EditorGUILayout.HelpBox("Внутри полной ширины следов места посадки исключаются, независимо от силы слоя, шума и ослабления колей. Между полосами и снаружи сохраняются правила плотности слоёв/штампов; новые растения этот режим не добавляет. Крона большого куста может нависать над следом — проверяется точка посадки.",MessageType.Info);
+                if(!serializedObject.FindProperty("wheelTracks.enabled").boolValue)
+                    EditorGUILayout.HelpBox("Следы колёс выключены: удаление только в следах сейчас не действует.",MessageType.Warning);
+            }
+        }
+
+        void DrawWheelTracks()
+        {
+            wheelOpen=EditorGUILayout.Foldout(wheelOpen,"Следы колёс",true);
+            if(!wheelOpen)return;
+            Field("wheelTracks.enabled","Выделять следы колёс","Две полосы отдельного terrain-слоя поверх покрытия дороги. По умолчанию выключено.");
+            using(new EditorGUI.DisabledScope(!serializedObject.FindProperty("wheelTracks.enabled").boolValue))
+            {
+                Field("wheelLayer","Слой следов","Отдельный Surface Layer: цвет, нормали и шероховатость уплотнённого грунта. Не назначайте сюда слой самого покрытия.");
+                using(new EditorGUI.DisabledScope(!serializedObject.FindProperty("groundLayer").objectReferenceValue))
+                    if(GUILayout.Button("Создать слой следов из покрытия…"))
+                    {
+                        serializedObject.ApplyModifiedProperties();
+                        TryAction(CreateWheelLayer);
+                        serializedObject.Update();
+                    }
+                Field("wheelTracks.strength","Сила смешивания","Доля слоя следов внутри полос. Не влияет на глубину колей или очистку камней.");
+                Field("wheelTracks.width","Ширина одного следа, м","Ширина окрашенной полосы; независима от геометрической колеи.");
+                Field("wheelTracks.separation","Между центрами следов, м","Расстояние между центрами левой и правой полосы.");
+                Field("wheelTracks.softness","Мягкость краёв","Доля полуширины, занимаемая плавным переходом от полного покрытия к нулю.");
+                if(serializedObject.FindProperty("projection").enumValueIndex==(int)LTRoadProjection.Spline)
+                {
+                    var own=serializedObject.FindProperty("wheelTracks.independentTiling");
+                    bool wasOwn=own.boolValue;
+                    Field("wheelTracks.independentTiling","Свой тайлинг следов","Выключено — наследовать тайлинг покрытия. Включено — отдельный размер повтора и смещение; ширина окрашенных полос не меняется.");
+                    if(!wasOwn&&own.boolValue&&!serializedObject.FindProperty("wheelTilingInitialized").boolValue)
+                    {
+                        float across=serializedObject.FindProperty("textureAcrossMetres").floatValue;
+                        if(across<=0)across=serializedObject.FindProperty("width").floatValue;
+                        serializedObject.FindProperty("wheelTracks.tileSizeMetres").vector2Value=new Vector2(Mathf.Max(.01f,across),serializedObject.FindProperty("textureRepeatMetres").floatValue);
+                        serializedObject.FindProperty("wheelTracks.textureOffset").vector2Value=serializedObject.FindProperty("textureOffset").vector2Value;
+                        serializedObject.FindProperty("wheelTilingInitialized").boolValue=true;
+                    }
+                    using(new EditorGUI.DisabledScope(!own.boolValue))
+                    {
+                        Field("wheelTracks.tileSizeMetres","Повтор следов, м","X — поперёк, Y — вдоль сплайна. Меньше число — чаще повтор. Общая непрерывная UV-развёртка дороги, не отдельная развёртка каждой шины.");
+                        Field("wheelTracks.textureOffset","Смещение следов","В повторах текстуры: X — поперёк, Y — вдоль. Не перемещает сами полосы.");
+                    }
+                }
+                Field("wheelTracks.clearStones","Убирать камни в следах","Удаляет камни внутри полос, независимо от цвета/силы слоя. Не убирает растительность.");
+                if(GUILayout.Button("Растительность: оставить только вне следов"))
+                {
+                    serializedObject.FindProperty("clearVegetation").boolValue=true;
+                    serializedObject.FindProperty("vegetationOnlyWheelTracks").boolValue=true;
+                    detailOpen=true;GUI.changed=true;
+                }
+                if(serializedObject.FindProperty("wheelTracks.enabled").boolValue)
+                {
+                    var layer=serializedObject.FindProperty("wheelLayer").objectReferenceValue;
+                    if(!layer||layer==serializedObject.FindProperty("groundLayer").objectReferenceValue)
+                        EditorGUILayout.HelpBox("Назначьте отдельный слой следов или создайте копию кнопкой выше. Без него полосы не окрашиваются; очистка камней всё равно работает.",MessageType.Warning);
+                    if(serializedObject.FindProperty("clearStones").boolValue)
+                        EditorGUILayout.HelpBox("В «Растительность и камни» включено удаление камней по всей дороге. Выключите его, чтобы очищались только следы.",MessageType.Info);
+                }
+            }
+            EditorGUILayout.HelpBox("Обе полосы занимают один дополнительный слот из 12 и используют проекцию покрытия. Копия будет темнее, с менее выраженными нормалями, без displacement и правил спавна. Рельеф колей настраивается отдельно. После добавления нового слоя обновите сохранённые массивы в LTWorld → «Массивы». У подключённых перекрёстков следы плавно затухают.",MessageType.Info);
+        }
+
+        void CreateWheelLayer()
+        {
+            if(!Road.groundLayer)throw new InvalidOperationException("Сначала назначьте слой покрытия дороги.");
+            string path=EditorUtility.SaveFilePanelInProject("Сохранить слой следов колёс",Road.groundLayer.name+"_WheelTracks","asset","Выберите место для отдельной копии слоя. Исходный слой и текстуры не изменятся.");
+            if(string.IsNullOrEmpty(path))return;
+            // Never overwrite an existing asset, even if its name was chosen in the dialog.
+            path=AssetDatabase.GenerateUniqueAssetPath(path);
+            var copy=Instantiate(Road.groundLayer);
+            copy.name=System.IO.Path.GetFileNameWithoutExtension(path);
+            var tint=copy.tint;copy.tint=new Color(tint.r*.75f,tint.g*.75f,tint.b*.75f,tint.a);
+            copy.normalStrength*=.5f;copy.smoothness=Mathf.Min(copy.smoothness,.25f);copy.metallic=0;
+            copy.displacement=false;copy.deformation=false;copy.details=new List<LTDetailEntry>();
+            AssetDatabase.CreateAsset(copy,path);AssetDatabase.SaveAssetIfDirty(copy);
+            Undo.RecordObject(Road,"Назначить слой следов колёс");
+            Road.wheelLayer=copy;Road.wheelTracks.enabled=true;
+            EditorUtility.SetDirty(Road);PrefabUtility.RecordPrefabInstancePropertyModifications(Road);
+            LTRoadBakeQueue.Queue(Road);SceneView.RepaintAll();EditorGUIUtility.PingObject(copy);
         }
 
         void DrawPathToolbar()
@@ -231,6 +354,12 @@ namespace LocalTerrainPrototype
                     {
                         EditorGUILayout.PropertyField(point.FindPropertyRelative("position"), Label("Позиция", "Координаты относительно объекта дороги."));
                         EditorGUILayout.PropertyField(point.FindPropertyRelative("bank"), Label("Крен, °", "Поперечный наклон дороги в этой точке; интерполируется вдоль пути."));
+                        if(Road.mode==LTRoadMode.Offroad&&Road.variation.enabled)
+                        {
+                            EditorGUILayout.PropertyField(point.FindPropertyRelative("overrideVariation"),Label("Своя сила вариативности","Без переопределения множитель равен 1. Между точками плавно интерполируется."));
+                            if(point.FindPropertyRelative("overrideVariation").boolValue)
+                                EditorGUILayout.PropertyField(point.FindPropertyRelative("variationStrength"),Label("Множитель вариативности","0 — исходная дорога в этой точке, 1 — общие настройки."));
+                        }
                     }
                     if (EditorGUI.EndChangeCheck())
                     { serializedObject.ApplyModifiedProperties(); localError = null; LTRoadBakeQueue.Queue(Road); SceneView.RepaintAll(); }
@@ -244,17 +373,19 @@ namespace LocalTerrainPrototype
         {
             var points = serializedObject.FindProperty("points");
             if (points.arraySize >= LTRoadMesh.MaxPoints) return;
-            Vector3 p = Vector3.zero; float bank = 0;
+            Vector3 p = Vector3.zero; float bank = 0,variation=1;
             if (points.arraySize > 0)
             {
                 var before = points.GetArrayElementAtIndex(Math.Max(0, index - 1));
                 p = before.FindPropertyRelative("position").vector3Value;
                 bank = before.FindPropertyRelative("bank").floatValue;
+                variation=before.FindPropertyRelative("overrideVariation").boolValue?before.FindPropertyRelative("variationStrength").floatValue:1;
                 if (index < points.arraySize)
                 {
                     var after = points.GetArrayElementAtIndex(index);
                     p = (p + after.FindPropertyRelative("position").vector3Value) * .5f;
                     bank = (bank + after.FindPropertyRelative("bank").floatValue) * .5f;
+                    variation=(variation+(after.FindPropertyRelative("overrideVariation").boolValue?after.FindPropertyRelative("variationStrength").floatValue:1))*.5f;
                 }
                 else if (points.arraySize > 1)
                 {
@@ -267,6 +398,8 @@ namespace LocalTerrainPrototype
             var added = points.GetArrayElementAtIndex(index);
             added.FindPropertyRelative("position").vector3Value = placedPosition ?? p;
             added.FindPropertyRelative("bank").floatValue = bank;
+            added.FindPropertyRelative("overrideVariation").boolValue=variation!=1;
+            added.FindPropertyRelative("variationStrength").floatValue=variation;
             serializedObject.ApplyModifiedProperties(); selectedPoint = index;
             LTRoadBakeQueue.Queue(Road); SceneView.RepaintAll();
         }
@@ -391,10 +524,11 @@ namespace LocalTerrainPrototype
                     previewCenter = new Vector3[count]; previewLeft = new Vector3[count]; previewRight = new Vector3[count];
                     for (int i = 0; i < count; i++)
                     {
-                        var sample = snapshot.samples[i]; var hit = new LTRoadMath.Hit { position = sample.position, bank = sample.bank };
-                        float half = snapshot.width * .5f;
-                        Vector3 left = sample.position - sample.right * half, right = sample.position + sample.right * half;
-                        left.y = snapshot.SurfaceHeight(hit, -half); right.y = snapshot.SurfaceHeight(hit, half);
+                        var sample = snapshot.samples[i]; var hit = new LTRoadMath.Hit { position = sample.position, bank = sample.bank,
+                            distance=sample.distance,variationStrength=sample.variationStrength,lateral=-snapshot.width*.5f };
+                        float leftHalf=snapshot.HalfWidth(hit);hit.lateral=snapshot.width*.5f;float rightHalf=snapshot.HalfWidth(hit);
+                        Vector3 left = sample.position - sample.right * leftHalf, right = sample.position + sample.right * rightHalf;
+                        left.y = snapshot.SurfaceHeight(hit, -leftHalf); right.y = snapshot.SurfaceHeight(hit, rightHalf);
                         previewCenter[i] = Road.World.transform.TransformPoint(sample.position);
                         previewLeft[i] = Road.World.transform.TransformPoint(left); previewRight[i] = Road.World.transform.TransformPoint(right);
                     }

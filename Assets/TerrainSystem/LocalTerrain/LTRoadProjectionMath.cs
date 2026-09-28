@@ -8,6 +8,8 @@ namespace LocalTerrainPrototype
     // unrelated longitudinal coordinates. Single-owner cells retain old bilinear UVs.
     public static class LTRoadProjectionMath
     {
+        public static bool SameInputs(LTRoadMath.Snapshot a,LTRoadMath.Snapshot b,bool sharedLayer)
+            =>a==null?b==null:b!=null&&a.projectionHash==b.projectionHash&&(!sharedLayer||a.paintHash==b.paintHash);
         public sealed class Map { public Color[] coordinates,derivatives; public int queries; }
         public static int Owner(Color p)=>(int)Math.Round(Math.Sqrt((double)p.b*p.b+(double)p.a*p.a));
         public static Map Bake(IReadOnlyList<LTRoadMath.Snapshot> roads,Rect rect,int size)

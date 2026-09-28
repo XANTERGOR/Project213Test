@@ -97,13 +97,16 @@ namespace LocalTerrainPrototype
             foreach (var stamp in stamps)
             {
                 if (!stamp || !stamp.ActiveForPaint || (!stamp.Road && !stamp.Junction && stamp.strength <= 0)) continue;
-                int slot = layers.IndexOf(stamp.EffectiveLayer);
-                if (slot < 0 || slot >= LayerCapacity) continue;
-                contributors[slot]++;
                 var road = stamp.Road;
-                if (!road || road.projection != LTRoadProjection.Spline) continue;
-                if (sources[slot] == null) { sources[slot] = new List<LTRoadMath.Snapshot>(); count++; }
-                sources[slot].Add(road.Capture(world));
+                void Add(LTSurfaceLayer layer,bool wheels)
+                {
+                    int slot=layers.IndexOf(layer);if(slot<0||slot>=LayerCapacity)return;
+                    contributors[slot]++;
+                    if(!road||road.projection!=LTRoadProjection.Spline)return;
+                    if(sources[slot]==null){sources[slot]=new List<LTRoadMath.Snapshot>();count++;}
+                    var snapshot=road.Capture(world);sources[slot].Add(wheels?snapshot.WheelLayerProjection():snapshot);
+                }
+                Add(stamp.EffectiveLayer,false);Add(stamp.SecondaryLayer,true);
             }
             for (int slot = 0; slot < LayerCapacity; slot++)
                 if (sources[slot] != null && (slot == 0 || contributors[slot] != sources[slot].Count))
@@ -148,7 +151,8 @@ namespace LocalTerrainPrototype
                 {
                     next.sources[slot] = sources[slot]?.ToArray();
                     next.layers[slot] = slot < layers.Count ? layers[slot] : null;
-                    if(sources[slot]!=null)foreach(var source in sources[slot])hash = Mix(hash, source.paintHash);
+                    if(sources[slot]!=null)foreach(var source in sources[slot])
+                    {hash=Mix(hash,source.projectionHash);if(sources[slot].Count>1)hash=Mix(hash,source.paintHash);}
                     hash = Mix(hash, Id(next.layers[slot]));
                     if (sources[slot] == null) continue;
                     var baked=LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize);
@@ -202,7 +206,7 @@ namespace LocalTerrainPrototype
         static bool SameRoadProjections(LTRoadMath.Snapshot[] a,List<LTRoadMath.Snapshot> b)
         {
             if(a==null)return b==null;if(b==null||a.Length!=b.Count)return false;
-            for(int i=0;i<a.Length;i++)if(!SameRoadProjection(a[i],b[i]))return false;return true;
+            for(int i=0;i<a.Length;i++)if(!LTRoadProjectionMath.SameInputs(a[i],b[i],a.Length>1))return false;return true;
         }
         static bool SameRoadProjection(LTRoadMath.Snapshot a, LTRoadMath.Snapshot b)
             => a == null ? b == null : b != null && a.geometryHash == b.geometryHash && a.paintHash == b.paintHash;

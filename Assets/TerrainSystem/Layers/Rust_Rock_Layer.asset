@@ -48,7 +48,7 @@ MonoBehaviour:
     enabled: 1
     prefab: {fileID: 387600614627108884, guid: 627b5945498ec7c498f891d8714cbafc, type: 3}
     category: 2
-    density: 0.3
+    density: 0.5
     probability: 0.8
     densityMaskMode: 0
     maskModeConfigured: 1
@@ -79,7 +79,7 @@ MonoBehaviour:
     enabled: 1
     prefab: {fileID: 4697047626839586244, guid: 02bf3ce088c4cd44691a8d353dbecb08, type: 3}
     category: 2
-    density: 0.3
+    density: 0.5
     probability: 0.8
     densityMaskMode: 0
     maskModeConfigured: 1
@@ -110,7 +110,7 @@ MonoBehaviour:
     enabled: 1
     prefab: {fileID: 3849192596600764344, guid: 7b3368f29c1493241a20833dae27ef24, type: 3}
     category: 2
-    density: 0.3
+    density: 0.5
     probability: 0.8
     densityMaskMode: 0
     maskModeConfigured: 1
@@ -141,7 +141,7 @@ MonoBehaviour:
     enabled: 1
     prefab: {fileID: 2560732552008188974, guid: dc455798303e65e4f8d0b8b8e74340d1, type: 3}
     category: 2
-    density: 0.3
+    density: 0.5
     probability: 0.8
     densityMaskMode: 0
     maskModeConfigured: 1

@@ -336,13 +336,14 @@ void GetSurfaceAndBuiltinData(FragInputs input, float3 V, inout PositionInputs p
     ApplyDebugToSurfaceData(input.tangentToWorld, surfaceData);
 #endif
 
-    // By default we use the ambient occlusion with Tri-ace trick (apply outside) for specular occlusion.
-    // If user provide bent normal then we process a better term
+    // LTApplyLayers supplies AO from our mask array, independently of Lit's _MASKMAP.
+    // HDRP deferred lighting also uses specularOcclusion for Micro Shadows: leaving
+    // it at 1 would disable them even when the layers have AO. Reuse the final
+    // blended surface without sampling another texture; retain explicit Off/bent modes.
 #if defined(_SPECULAR_OCCLUSION_FROM_BENT_NORMAL_MAP)
     // If we have bent normal and ambient occlusion, process a specular occlusion
     surfaceData.specularOcclusion = GetSpecularOcclusionFromBentAO(V, bentNormalWS, surfaceData.normalWS, surfaceData.ambientOcclusion, PerceptualSmoothnessToRoughness(surfaceData.perceptualSmoothness));
-    // Don't do spec occ from Ambient if there is no mask mask
-#elif defined(_MASKMAP) && !defined(_SPECULAR_OCCLUSION_NONE)
+#elif !defined(_SPECULAR_OCCLUSION_NONE)
     surfaceData.specularOcclusion = GetSpecularOcclusionFromAmbientOcclusion(ClampNdotV(dot(surfaceData.normalWS, V)), surfaceData.ambientOcclusion, PerceptualSmoothnessToRoughness(surfaceData.perceptualSmoothness));
 #endif
 

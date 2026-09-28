@@ -416,7 +416,7 @@ namespace LocalTerrainPrototype
         void Bake(LTWorld world,Rect rect,List<LTPaintStamp> stamps,List<LTSurfaceLayer> layers,ChunkState state,List<LTRoadMath.Snapshot> asphaltInputs)
         {
             BakeRoadProjection(world,rect,stamps,layers,state,asphaltInputs);
-            var inverse=new Matrix4x4[stamps.Count];var copies=new Texture2D[stamps.Count];var slots=new int[stamps.Count];
+            var inverse=new Matrix4x4[stamps.Count];var copies=new Texture2D[stamps.Count];var slots=new int[stamps.Count];var wheelSlots=new int[stamps.Count];
             var roads=new LTRoadMath.Snapshot[stamps.Count];
             var junctions=new LTRoadJunctionMath.Snapshot[stamps.Count];
             var terrainFilters=new bool[stamps.Count];
@@ -427,6 +427,7 @@ namespace LocalTerrainPrototype
                 terrainFilters[i]=stamps[i].HasTerrainFilters;
                 Projection(world,stamps[i],out inverse[i]);
                 copies[i]=ReadMask(stamps[i].mask);slots[i]=layers.IndexOf(stamps[i].EffectiveLayer);
+                wheelSlots[i]=layers.IndexOf(stamps[i].SecondaryLayer);
             }
             var first=new Color32[Resolution*Resolution];var second=new Color32[first.Length];var third=new Color32[first.Length];var weights=new float[LayerCapacity];
             var samples=new LTPaintMath.PixelTerrainCache(terrain.Sample,world.source.size.x,world.source.size.z,stamps.Count);
@@ -438,7 +439,11 @@ namespace LocalTerrainPrototype
                 for(int i=0;i<stamps.Count;i++)
                 {
                     if(roads[i]!=null)
-                    {LTPaintMath.Composite(weights,slots[i],roads[i].PaintWeight(point.x,point.z));continue;}
+                    {
+                        if(slots[i]>=0)LTPaintMath.Composite(weights,slots[i],roads[i].PaintWeight(point.x,point.z));
+                        if(wheelSlots[i]>=0)LTPaintMath.Composite(weights,wheelSlots[i],roads[i].WheelPaintWeight(point.x,point.z));
+                        continue;
+                    }
                     if(junctions[i]!=null)
                     {LTPaintMath.Composite(weights,slots[i],junctions[i].Weight(point.x,point.z));continue;}
                     var stamp=stamps[i];var local=inverse[i].MultiplyPoint3x4(point);
@@ -499,8 +504,10 @@ namespace LocalTerrainPrototype
             if((active&1)==0)
             {
                 float x0=rect.xMax,y0=rect.yMax,x1=rect.xMin,y1=rect.yMin;
-                foreach(var stamp in stamps)if((active&(1<<layers.IndexOf(stamp.EffectiveLayer)))!=0)
+                foreach(var stamp in stamps)
                 {
+                    int primary=layers.IndexOf(stamp.EffectiveLayer),secondary=layers.IndexOf(stamp.SecondaryLayer);
+                    if(!(primary>=0&&(active&(1<<primary))!=0)&&!(secondary>=0&&(active&(1<<secondary))!=0))continue;
                     var b=StampBounds(world,stamp);x0=Mathf.Min(x0,b.xMin);y0=Mathf.Min(y0,b.yMin);x1=Mathf.Max(x1,b.xMax);y1=Mathf.Max(y1,b.yMax);
                 }
                 // Weight interpolation can extend a footprint by one source-map cell.
@@ -720,7 +727,7 @@ namespace LocalTerrainPrototype
             // A shared, deterministic palette includes disabled stamps too: toggling
             // visibility or painting weights does not repack textures or shuffle slices.
             var palette=new List<LTSurfaceLayer>{world.baseLayer};
-            foreach(var stamp in all)if(stamp.EffectiveLayer&&!palette.Contains(stamp.EffectiveLayer))palette.Add(stamp.EffectiveLayer);
+            foreach(var stamp in all)stamp.AppendLayers(palette,true);
             int arrayRevision=layerArrays.Revision;
             bool arraysReady=layerArrays.Ensure(world,palette);arrayWorld=world;arraysAvailable=arraysReady;
             world.arrayPackStatus=layerArrays.Status;
@@ -741,7 +748,7 @@ namespace LocalTerrainPrototype
             foreach(var node in world.GetComponentsInChildren<LTRoadJunction>())
                 if(node.isActiveAndEnabled&&node.World==world&&node.surface==LTRoadMode.Asphalt)
                     try{asphaltInputs.Add(node.Suppression());}catch(ArgumentException error){roadErrors.Add(node.name+": "+error.Message);}
-            foreach(var stamp in all)if(stamp.ActiveForPaint&&stamp.EffectiveLayer&&(stamp.Road||stamp.Junction||stamp.strength>0)&&Projection(world,stamp,out _))
+            foreach(var stamp in all)if(stamp.ActiveForPaint&&stamp.HasPaintLayers&&(stamp.Road||stamp.Junction||stamp.strength>0)&&Projection(world,stamp,out _))
             {
                 try {var box=StampBounds(world,stamp);active.Add(stamp);bounds.Add(box);}
                 catch(ArgumentException) { /* Invalid road is reported by its inspector. */ }
@@ -764,7 +771,9 @@ namespace LocalTerrainPrototype
             }
             foreach(var key in new List<LTChunk>(chunks.Keys))if(!key||!live.Contains(key)){Release(chunks[key]);chunks.Remove(key);}
             // Drop CPU mask copies no longer referenced by an active stamp.
-            var usedMasks=new HashSet<Texture2D>();foreach(var stamp in active){if(stamp.mask)usedMasks.Add(stamp.mask);if(stamp.EffectiveLayer.maskMap)usedMasks.Add(stamp.EffectiveLayer.maskMap);}
+            var usedMasks=new HashSet<Texture2D>();foreach(var stamp in active)
+            {if(stamp.mask)usedMasks.Add(stamp.mask);if(stamp.EffectiveLayer&&stamp.EffectiveLayer.maskMap)usedMasks.Add(stamp.EffectiveLayer.maskMap);
+                if(stamp.SecondaryLayer&&stamp.SecondaryLayer.maskMap)usedMasks.Add(stamp.SecondaryLayer.maskMap);}
             if(world.baseLayer.maskMap)usedMasks.Add(world.baseLayer.maskMap);
             foreach(var key in new List<Texture2D>(masks.Keys))if(!key||!usedMasks.Contains(key)){DestroyOwned(masks[key].copy);masks.Remove(key);}
             int painted=0,maxLayers=0,displacedChunks=0,unsupportedDisplacement=0;var overflow=new List<string>();
@@ -782,7 +791,7 @@ namespace LocalTerrainPrototype
                     rect.xMax+2*width/(Resolution-1),rect.yMax+2*depth/(Resolution-1));
                 for(int i=0;i<active.Count;i++)if(Touches(rect,bounds[i])&&
                     (!roadInfluences.TryGetValue(active[i],out var influence)||influence.Intersects(paintGuard)))
-                {local.Add(active[i]);if(!layers.Contains(active[i].EffectiveLayer))layers.Add(active[i].EffectiveLayer);}
+                {local.Add(active[i]);active[i].AppendLayers(layers);}
                 maxLayers=Mathf.Max(maxLayers,layers.Count);
                 if(layers.Count>LayerCapacity)
                 {

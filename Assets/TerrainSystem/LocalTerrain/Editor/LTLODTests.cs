@@ -44,6 +44,8 @@ namespace LocalTerrainPrototype
                 Check(LTWorld.SelectLOD(76,1,settings,5)==1,"hysteresis inward");
                 Check(LTWorld.SelectLOD(74,1,settings,5)==0,"return LOD0");
                 Check(LTWorld.SelectLOD(1000,0,settings,5)==3,"teleport selects LOD3");
+                var four=settings.Concat(new[]{new LTLODSettings(4,2,800)}).ToArray();
+                Check(LTWorld.SelectLOD(1000,0,four,5)==4,"fourth authored terrain LOD is selectable");
                 Debug.Log("Local Terrain LOD tests passed.");
             }
             finally{EditorUtility.ClearProgressBar();}

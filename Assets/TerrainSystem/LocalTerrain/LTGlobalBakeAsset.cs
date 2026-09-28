@@ -65,8 +65,12 @@ namespace LocalTerrainPrototype
                     Number(road.textureRepeatMetres);Number(road.textureOffset.x);Number(road.textureOffset.y);
                     var roadMatrix=world.transform.worldToLocalMatrix*road.transform.localToWorldMatrix;
                     for(int i=0;i<16;i++)Number(roadMatrix[i]);
+                    if(road.startJunction)Number(road.startJunction.EndpointHash);
+                    if(road.endJunction)Number(road.endJunction.EndpointHash);
                     continue;
                 }
+                if(stamp.Junction)
+                {text.Append("junction;");try{Number(stamp.Junction.Capture().hash);}catch(System.ArgumentException){text.Append("invalid;");}continue;}
                 Reference(stamp.mask);Number((int)stamp.shape);Number(stamp.size.x);Number(stamp.size.y);
                 Number(stamp.strength);Number(stamp.edgeFalloff);
                 text.Append(JsonUtility.ToJson(stamp.heightFilter)).Append(';');

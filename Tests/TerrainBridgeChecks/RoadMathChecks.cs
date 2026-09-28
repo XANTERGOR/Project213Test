@@ -33,6 +33,10 @@ public static class RoadMathChecks
     {
         assertions = 0;
         HeightsAndMasks(); TextureCoordinates(); TextureBakeRegions(); CurvesAndNearest(); Validation(); HashesAndCopies(); Allocations();
+#if !ROAD_MATH_STANDALONE
+        RoadOptimizationChecks.Run();
+        NextOptimizationChecks.Run();
+#endif
         Console.WriteLine("PASS RoadMathChecks: " + assertions + " assertions; managed math only, no Unity native runtime.");
     }
 

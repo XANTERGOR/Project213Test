@@ -79,7 +79,66 @@ partial class Checks
         var after=Run();Check(after);
         Require((after[sharedEdge]-unchangedNeighborNormal).sqrMagnitude>1e-8f,"unchanged neighbour seam did not respond");
         var repeated=Run();Require(after.All(p=>repeated[p.Key].Equals(p.Value)),"repeated seam computation drifts");
+        IncrementalSeamChecks();
         Console.WriteLine("PASS shared normals: merged area-weighted reference, four-chunk corner, changed neighbour, repeat without drift.");
     }
+    static void IncrementalSeamChecks()
+    {
+        const int size=8;
+        var points=new Vector3[size*size][];var faces=new int[size*size][];var rects=new Rect[size*size];
+        var cache=new LocalTerrainPrototype.LTPaintMath.SeamContribution[size*size][];
+        for(int z=0;z<size;z++)for(int x=0;x<size;x++)
+        {
+            int id=z*size+x;rects[id]=new Rect(x,z,1,1);points[id]=new Vector3[9];
+            for(int j=0;j<3;j++)for(int i=0;i<3;i++)
+            {float px=x+i*.5f,pz=z+j*.5f;points[id][j*3+i]=new Vector3(px,.2f*px*px+.1f*pz*pz,pz);}
+            var t=new List<int>();
+            for(int j=0;j<2;j++)for(int i=0;i<2;i++){int a=j*3+i;t.AddRange(new[]{a,a+3,a+1,a+1,a+3,a+4});}
+            faces[id]=t.ToArray();cache[id]=LocalTerrainPrototype.LTPaintMath.TerrainSeamContributions(rects[id],points[id],faces[id]);
+        }
+        Dictionary<Vector3Int,Vector3> Full()
+        {
+            var accumulator=new SeamNormalAccumulator();
+            for(int id=0;id<points.Length;id++)accumulator.Add(id,rects[id],points[id],faces[id]);
+            return accumulator.Finish();
+        }
+        Dictionary<Vector3Int,Vector3> Cached()
+        {
+            var sums=new Dictionary<Vector3Int,(int owner,bool shared,Vector3 sum)>();
+            for(int id=0;id<cache.Length;id++)foreach(var item in cache[id])
+            {
+                if(!sums.TryGetValue(item.key,out var v))v=(id,false,Vector3.zero);
+                v.shared|=v.owner!=id;v.sum+=item.normal;sums[item.key]=v;
+            }
+            return sums.Where(p=>p.Value.shared&&p.Value.sum.sqrMagnitude>1e-20f).ToDictionary(p=>p.Key,p=>p.Value.sum.normalized);
+        }
+        for(int iteration=0;iteration<40;iteration++)
+        {
+            var before=Full();int changed=iteration*17%(size*size);
+            // Interior displacement changes all four edge normals without moving
+            // the shared border. Refine/cut variants exercise face count/order too.
+            points[changed][4]+=new Vector3(0,iteration%2==0?.3f:-.2f,0);
+            if(iteration==11)faces[changed]=faces[changed].Skip(3).ToArray();
+            var proposed=LocalTerrainPrototype.LTPaintMath.TerrainSeamContributions(rects[changed],points[changed],faces[changed]);
+            if(iteration==17)
+            {
+                // A discarded proposal must not mutate the old cached arrays.
+                var old=cache[changed];var snapshot=old.Select(c=>(c.key,c.normal)).ToArray();
+                var ignored=LocalTerrainPrototype.LTPaintMath.TerrainSeamContributions(rects[changed],points[changed],faces[changed]);
+                Require(snapshot.SequenceEqual(old.Select(c=>(c.key,c.normal))),"discarded seam proposal mutates cache");
+            }
+            cache[changed]=proposed;
+            var full=Full();var cached=Cached();
+            Require(full.Count==cached.Count&&full.All(p=>cached.TryGetValue(p.Key,out var n)&&n.Equals(p.Value)),
+                "cached per-face contributions differ from exact full area-weighted accumulation");
+            var affected=LocalTerrainPrototype.LTPaintMath.TerrainNeighbours(new[]{changed},size,size);
+            for(int id=0;id<points.Length;id++)if(!affected.Contains(id))foreach(var p in points[id])
+            {
+                var key=BoundaryPointKey(p);
+                bool was=before.TryGetValue(key,out var old),now=full.TryGetValue(key,out var current);
+                Require(was==now&&(!was||old.Equals(current)),"normal writes escaped changed chunk plus one-ring halo");
+            }
+        }
+        Console.WriteLine("PASS incremental seam contributions: 40 edits/cuts, exact full-rebuild normals, four-corner halo, discarded proposal isolation; production math, no native mesh upload.");
+    }
 }
-

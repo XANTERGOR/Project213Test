@@ -16,7 +16,10 @@ namespace LocalTerrainPrototype
             public Vector3[] vertices, normals;
             public Vector4[] tangents;
             public Vector2[] uv;
+            public Vector2[] uv2,uv3,uv4;
+            public Color[] colors;
             public int[] triangles;
+            public int[][] submeshes;
             public string hash;
         }
 
@@ -114,12 +117,12 @@ namespace LocalTerrainPrototype
         }
         static T[] Slice<T>(T[] data, int start, int length)
         { var result = new T[length]; Array.Copy(data, start, result, 0, length); return result; }
-        static string ContentHash(Chunk chunk)
+        public static string ContentHash(Chunk chunk)
         {
             using (var stream = new MemoryStream())
             using (var writer = new BinaryWriter(stream))
             {
-                writer.Write(1); writer.Write(chunk.vertices.Length);
+                writer.Write(2); writer.Write(chunk.vertices.Length);
                 for (int i = 0; i < chunk.vertices.Length; i++)
                 {
                     var p = chunk.vertices[i]; writer.Write(p.x); writer.Write(p.y); writer.Write(p.z);
@@ -128,6 +131,10 @@ namespace LocalTerrainPrototype
                     writer.Write(chunk.uv[i].x); writer.Write(chunk.uv[i].y);
                 }
                 foreach (int index in chunk.triangles) writer.Write(index);
+                foreach(var channel in new[]{chunk.uv2,chunk.uv3,chunk.uv4})
+                {writer.Write(channel?.Length??0);if(channel!=null)foreach(var value in channel){writer.Write(value.x);writer.Write(value.y);}}
+                writer.Write(chunk.colors?.Length??0);if(chunk.colors!=null)foreach(var c in chunk.colors){writer.Write(c.r);writer.Write(c.g);writer.Write(c.b);writer.Write(c.a);}
+                writer.Write(chunk.submeshes?.Length??0);if(chunk.submeshes!=null)foreach(var sub in chunk.submeshes){writer.Write(sub.Length);foreach(int id in sub)writer.Write(id);}
                 writer.Flush();
                 using (var sha = SHA256.Create())
                     return BitConverter.ToString(sha.ComputeHash(stream.ToArray())).Replace("-", "").ToLowerInvariant();

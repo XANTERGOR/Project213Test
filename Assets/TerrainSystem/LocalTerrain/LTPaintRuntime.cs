@@ -8,7 +8,6 @@ namespace LocalTerrainPrototype
     // Cache rebuilds on terrain generator revision, mesh replacement or transform change.
     internal sealed class LTPaintTerrain
     {
-        const int Bins=16;
         sealed class Tile
         {
             public Mesh mesh;
@@ -17,7 +16,8 @@ namespace LocalTerrainPrototype
             public Rect rect;
             public Vector3[] vertices,normals;
             public int[] indices;
-            public readonly List<int>[] bins=new List<int>[Bins*Bins];
+            public int binAxis;
+            public List<int>[] bins;
             public string hash;
         }
         readonly Dictionary<LTChunk,Tile> cache=new Dictionary<LTChunk,Tile>();
@@ -26,7 +26,6 @@ namespace LocalTerrainPrototype
         int countX,countZ;
         public string signature="";
         public void Clear(){cache.Clear();tiles.Clear();signature="";}
-        static int Bin(float position,float min,float size)=>Mathf.Clamp(Mathf.FloorToInt((position-min)/size*Bins),0,Bins-1);
         public void Update(LTWorld world,LTChunk[] chunks)
         {
             sizeX=world.source.size.x;sizeZ=world.source.size.z;countX=world.chunksX;countZ=world.chunksZ;
@@ -44,27 +43,29 @@ namespace LocalTerrainPrototype
                     tile=new Tile{mesh=chunk.mesh,revision=chunk.updatedAt,matrix=matrix,rect=rect,
                         vertices=chunk.mesh.vertices,normals=chunk.mesh.normals,indices=chunk.mesh.triangles};
                     var normalMatrix=matrix.inverse.transpose;
-                    var fingerprint=new System.Text.StringBuilder();
-                    void Hash(float value)=>fingerprint.Append(value.ToString("R",System.Globalization.CultureInfo.InvariantCulture)).Append(',');
+                    var fingerprint=new LTPaintMath.GeometryFingerprint();
+                    fingerprint.Add(tile.vertices.Length);fingerprint.Add(tile.normals.Length==tile.vertices.Length?1:0);
+                    fingerprint.Add(tile.indices.Length);
                     for(int i=0;i<tile.vertices.Length;i++)
                     {
                         tile.vertices[i]=matrix.MultiplyPoint3x4(tile.vertices[i]);
-                        var v=tile.vertices[i];Hash(v.x);Hash(v.y);Hash(v.z);
+                        fingerprint.Add(tile.vertices[i]);
                         if(tile.normals.Length==tile.vertices.Length)
                         {
                             tile.normals[i]=normalMatrix.MultiplyVector(tile.normals[i]).normalized;
-                            var n=tile.normals[i];Hash(n.x);Hash(n.y);Hash(n.z);
+                            fingerprint.Add(tile.normals[i]);
                         }
                     }
-                    foreach(int index in tile.indices)fingerprint.Append(index).Append(',');
-                    tile.hash=Hash128.Compute(fingerprint.ToString()).ToString();
+                    foreach(int index in tile.indices)fingerprint.Add(index);
+                    tile.hash=fingerprint.ToString();
+                    tile.binAxis=LTPaintMath.TerrainBinAxis(tile.indices.Length/3);
+                    tile.bins=new List<int>[tile.binAxis*tile.binAxis];
                     for(int i=0;i+2<tile.indices.Length;i+=3)
                     {
                         var a=tile.vertices[tile.indices[i]];var b=tile.vertices[tile.indices[i+1]];var c=tile.vertices[tile.indices[i+2]];
-                        int x0=Bin(Mathf.Min(a.x,Mathf.Min(b.x,c.x)),rect.xMin,width),x1=Bin(Mathf.Max(a.x,Mathf.Max(b.x,c.x)),rect.xMin,width);
-                        int z0=Bin(Mathf.Min(a.z,Mathf.Min(b.z,c.z)),rect.yMin,depth),z1=Bin(Mathf.Max(a.z,Mathf.Max(b.z,c.z)),rect.yMin,depth);
-                        for(int z=z0;z<=z1;z++)for(int x=x0;x<=x1;x++)
-                        {int id=z*Bins+x;if(tile.bins[id]==null)tile.bins[id]=new List<int>();tile.bins[id].Add(i);}
+                        var range=LTPaintMath.TerrainTriangleBins(rect,a,b,c,tile.binAxis);
+                        for(int z=range.yMin;z<range.yMax;z++)for(int x=range.xMin;x<range.xMax;x++)
+                        {int id=z*tile.binAxis+x;if(tile.bins[id]==null)tile.bins[id]=new List<int>();tile.bins[id].Add(i);}
                     }
                     cache[chunk]=tile;
                 }
@@ -77,12 +78,26 @@ namespace LocalTerrainPrototype
         }
         public bool Sample(float x,float z,out float height,out float slope)
             =>Sample(x,z,out height,out slope,out _);
+        public int RegionSignature(Rect area,float radius)
+        {
+            var range=LTPaintMath.TerrainSampleTileRange(area,radius,width,depth,countX,countZ);
+            int Mix(int a,int b)=>unchecked(a*397^b);
+            int hash=Mix(Mix(countX,countZ),Mix(width.GetHashCode(),depth.GetHashCode()));
+            for(int z=range.yMin;z<range.yMax;z++)for(int x=range.xMin;x<range.xMax;x++)
+            {
+                hash=Mix(Mix(hash,x),z);
+                bool present=tiles.TryGetValue(new Vector2Int(x,z),out var tile);
+                hash=Mix(hash,present?1:0);
+                if(present)hash=Mix(hash,tile.hash.GetHashCode());
+            }
+            return hash;
+        }
         public bool Sample(float x,float z,out float height,out float slope,out Vector3 normal)
         {
             x=Mathf.Clamp(x,0,sizeX);z=Mathf.Clamp(z,0,sizeZ);height=0;slope=0;normal=Vector3.up;
             var key=new Vector2Int(Mathf.Clamp(Mathf.FloorToInt(x/width),0,countX-1),Mathf.Clamp(Mathf.FloorToInt(z/depth),0,countZ-1));
             if(!tiles.TryGetValue(key,out var tile))return false;
-            var bin=tile.bins[Bin(z,tile.rect.yMin,depth)*Bins+Bin(x,tile.rect.xMin,width)];
+            var bin=tile.bins[LTPaintMath.TerrainBin(z,tile.rect.yMin,depth,tile.binAxis)*tile.binAxis+LTPaintMath.TerrainBin(x,tile.rect.xMin,width,tile.binAxis)];
             if(bin==null)return false;
             bool found=false;float top=float.NegativeInfinity;
             foreach(int t in bin)
@@ -256,6 +271,58 @@ namespace LocalTerrainPrototype
         public const int LayerCapacity=12;
         const int Resolution=257;
         static int Mix(int hash,int value)=>unchecked(hash*397^value);
+
+        // Tick-local snapshots: refresh every poll (including Undo/texture imports),
+        // but serialize each stamp and read each texture hash only once, not per chunk.
+        static int[] CoverageInputs(LTWorld world,LTPaintStamp stamp)
+        {
+            var values=new List<int>(16){Id(stamp),Id(stamp.EffectiveLayer)};
+            var road=stamp.Road;
+            if(road)values.Add(road.Capture(world).paintHash);
+            else if(stamp.Junction)values.Add(stamp.Junction.Capture().hash);
+            else
+            {
+                values.Add(stamp.transform.localToWorldMatrix.GetHashCode());values.Add(stamp.size.GetHashCode());
+                values.Add((int)stamp.shape);values.Add(stamp.strength.GetHashCode());values.Add(stamp.edgeFalloff.GetHashCode());
+                values.Add(Id(stamp.mask));if(stamp.mask)values.Add(stamp.mask.imageContentsHash.GetHashCode());
+                values.Add(JsonUtility.ToJson(stamp.heightFilter).GetHashCode());
+                values.Add(JsonUtility.ToJson(stamp.slopeFilter).GetHashCode());
+                values.Add(JsonUtility.ToJson(stamp.curveFilter).GetHashCode());
+                values.Add(stamp.curveRadius.GetHashCode());values.Add(stamp.noise.CoverageHash());
+            }
+            return values.ToArray();
+        }
+        readonly struct LayerChangeInput
+        {
+            readonly int surface,color,normal,mask;
+            readonly bool hasColor,hasNormal,hasMask;
+            public LayerChangeInput(LTSurfaceLayer layer)
+            {
+                surface=layer.SurfaceHash();hasColor=layer.baseColorMap;hasNormal=layer.normalMap;hasMask=layer.maskMap;
+                color=hasColor?layer.baseColorMap.imageContentsHash.GetHashCode():0;
+                normal=hasNormal?layer.normalMap.imageContentsHash.GetHashCode():0;
+                mask=hasMask?layer.maskMap.imageContentsHash.GetHashCode():0;
+            }
+            public int AppendSurface(int hash)
+            {
+                hash=Mix(hash,surface);
+                if(hasColor)hash=Mix(hash,color);if(hasNormal)hash=Mix(hash,normal);if(hasMask)hash=Mix(hash,mask);
+                return hash;
+            }
+            public int AppendDensity(int hash)
+            {
+                hash=Mix(hash,surface);return hasMask?Mix(hash,mask):hash;
+            }
+        }
+        static float TerrainFilterRadius(List<LTPaintStamp> stamps)
+        {
+            float radius=0;
+            foreach(var stamp in stamps)if(stamp.HasTerrainFilters&&stamp.curveFilter.enabled)
+                radius=Mathf.Max(radius,Mathf.Max(.1f,stamp.curveRadius));
+            return radius;
+        }
+        int TerrainFilterSignature(Rect rect,List<LTPaintStamp> stamps)
+            =>terrain.RegionSignature(rect,TerrainFilterRadius(stamps));
         static int Id(UnityEngine.Object obj)=>obj?obj.GetInstanceID():0;
         static void DestroyOwned(UnityEngine.Object obj)
         {
@@ -302,6 +369,7 @@ namespace LocalTerrainPrototype
         public static Rect StampBounds(LTWorld world,LTPaintStamp stamp)
         {
             var road=stamp.Road;if(road)return road.Capture(world).bounds;
+            if(stamp.Junction)return stamp.Junction.Capture().bounds;
             var matrix=world.transform.worldToLocalMatrix*stamp.transform.localToWorldMatrix;
             Vector2 min=new Vector2(float.PositiveInfinity,float.PositiveInfinity),max=-min;
             for(int z=-1;z<=1;z+=2)for(int x=-1;x<=1;x+=2)
@@ -345,31 +413,34 @@ namespace LocalTerrainPrototype
         }
         static Texture2D NewWeights(string name)=>new Texture2D(Resolution,Resolution,TextureFormat.RGBA32,false,true)
             {name=name,hideFlags=HideFlags.HideAndDontSave,wrapMode=TextureWrapMode.Clamp,filterMode=FilterMode.Bilinear};
-        void Bake(LTWorld world,Rect rect,List<LTPaintStamp> stamps,List<LTSurfaceLayer> layers,ChunkState state)
+        void Bake(LTWorld world,Rect rect,List<LTPaintStamp> stamps,List<LTSurfaceLayer> layers,ChunkState state,List<LTRoadMath.Snapshot> asphaltInputs)
         {
-            BakeRoadProjection(world,rect,stamps,layers,state);
+            BakeRoadProjection(world,rect,stamps,layers,state,asphaltInputs);
             var inverse=new Matrix4x4[stamps.Count];var copies=new Texture2D[stamps.Count];var slots=new int[stamps.Count];
             var roads=new LTRoadMath.Snapshot[stamps.Count];
+            var junctions=new LTRoadJunctionMath.Snapshot[stamps.Count];
             var terrainFilters=new bool[stamps.Count];
             for(int i=0;i<stamps.Count;i++)
             {
                 var road=stamps[i].Road;if(road)roads[i]=road.Capture(world);
+                if(stamps[i].Junction)junctions[i]=stamps[i].Junction.Capture();
                 terrainFilters[i]=stamps[i].HasTerrainFilters;
                 Projection(world,stamps[i],out inverse[i]);
                 copies[i]=ReadMask(stamps[i].mask);slots[i]=layers.IndexOf(stamps[i].EffectiveLayer);
             }
             var first=new Color32[Resolution*Resolution];var second=new Color32[first.Length];var third=new Color32[first.Length];var weights=new float[LayerCapacity];
-            bool filtered=stamps.Exists(s=>s.HasTerrainFilters);
+            var samples=new LTPaintMath.PixelTerrainCache(terrain.Sample,world.source.size.x,world.source.size.z,stamps.Count);
             for(int y=0;y<Resolution;y++)for(int x=0;x<Resolution;x++)
             {
                 Array.Clear(weights,0,weights.Length);weights[0]=1;
                 var point=new Vector3(rect.xMin+rect.width*x/(Resolution-1),0,rect.yMin+rect.height*y/(Resolution-1));
-                float height=0,slope=0;
-                bool sampled=filtered&&terrain.Sample(point.x,point.z,out height,out slope);
+                samples.Begin(point.x,point.z);
                 for(int i=0;i<stamps.Count;i++)
                 {
                     if(roads[i]!=null)
                     {LTPaintMath.Composite(weights,slots[i],roads[i].PaintWeight(point.x,point.z));continue;}
+                    if(junctions[i]!=null)
+                    {LTPaintMath.Composite(weights,slots[i],junctions[i].Weight(point.x,point.z));continue;}
                     var stamp=stamps[i];var local=inverse[i].MultiplyPoint3x4(point);
                     var p=new Vector2(local.x/Mathf.Max(.01f,stamp.size.x)*2,local.z/Mathf.Max(.01f,stamp.size.y)*2);
                     float alpha=LTPaintMath.Coverage(p,stamp.shape==LTStampShape.Rectangle,stamp.edgeFalloff,stamp.strength);
@@ -381,22 +452,11 @@ namespace LocalTerrainPrototype
                     if(alpha<=0)continue;
                     if(terrainFilters[i])
                     {
-                        if(!sampled)continue;
+                        if(!samples.Surface(out float height,out float slope))continue;
                         alpha*=stamp.heightFilter.Evaluate(height)*stamp.slopeFilter.Evaluate(slope);
                         if(alpha>0&&stamp.curveFilter.enabled)
                         {
-                            float radius=Mathf.Max(.1f,stamp.curveRadius);
-                            // Shrink only at the outer world edge, never at internal chunk borders.
-                            radius=Mathf.Min(radius,Mathf.Min(Mathf.Min(point.x,world.source.size.x-point.x),Mathf.Min(point.z,world.source.size.z-point.z)));
-                            float curvature=0;
-                            if(radius>=.1f)
-                            {
-                                if(!terrain.Sample(point.x-radius,point.z,out float left,out _)||
-                                   !terrain.Sample(point.x+radius,point.z,out float right,out _)||
-                                   !terrain.Sample(point.x,point.z-radius,out float back,out _)||
-                                   !terrain.Sample(point.x,point.z+radius,out float front,out _))continue;
-                                curvature=LTPaintMath.Curvature(height,left,right,back,front,radius);
-                            }
+                            if(!samples.Curvature(stamp.curveRadius,out float curvature))continue;
                             alpha*=stamp.curveFilter.Evaluate(curvature);
                         }
                     }
@@ -414,7 +474,24 @@ namespace LocalTerrainPrototype
             state.weights1.SetPixels32(second);state.weights1.Apply(false,false);
             state.weights2.SetPixels32(third);state.weights2.Apply(false,false);
         }
-        List<Color32[]> BakeDisplacementCoverage(LTWorld world,Rect rect,List<LTPaintStamp> stamps,List<LTSurfaceLayer> layers,ChunkState state,int active)
+        sealed class MaskReadbackCache
+        {
+            const long Budget=64L*1024*1024;
+            readonly Dictionary<Texture2D,Color32[]> images=new Dictionary<Texture2D,Color32[]>();
+            long bytes;
+            public Color32[] Read(Texture2D texture)
+            {
+                if(images.TryGetValue(texture,out var pixels))return pixels;
+                pixels=texture.GetPixels32();
+                long size=(long)pixels.Length*4;
+                // Cache is tick-local AND bounded; oversized/overflow images still
+                // work but are retained only by their current chunk's bake.
+                if(size<=Budget-bytes){images.Add(texture,pixels);bytes+=size;}
+                return pixels;
+            }
+        }
+        List<Color32[]> BakeDisplacementCoverage(LTWorld world,Rect rect,List<LTPaintStamp> stamps,List<LTSurfaceLayer> layers,ChunkState state,int active,
+            MaskReadbackCache maskReadbacks)
         {
             // Crop to displaced footprints, rather than spending 256 cells on an entire
             // large terrain chunk. Sample the very same interpolated weights as the GPU.
@@ -441,7 +518,11 @@ namespace LocalTerrainPrototype
             var maskPixels=new Color32[LayerCapacity][];
             var maskSizes=new Vector2Int[LayerCapacity];
             for(int i=0;i<layers.Count;i++)if(maps[i])
-            {maskPixels[i]=maps[i].GetPixels32();maskSizes[i]=new Vector2Int(maps[i].width,maps[i].height);}
+            {
+                // These immutable copies are shared only within this Tick, keyed by
+                // the actual ReadMask result. Reimports/replacements get a new key.
+                maskPixels[i]=maskReadbacks.Read(maps[i]);maskSizes[i]=new Vector2Int(maps[i].width,maps[i].height);
+            }
             var first=new Color32[res*res];var second=new Color32[first.Length];
             var ordinaryFirst=state.deformation!=null?new Color32[first.Length]:null;
             int ordinaryLayers=0;
@@ -461,12 +542,14 @@ namespace LocalTerrainPrototype
                     weights[i]=i<4?a[i]:i<8?b[i-4]:c[i-8];heights[i]=.5f;
                     if(i>=layers.Count)continue;
                     var layer=layers[i];float h=.5f;
-                    var textureUV=new Vector2((px+layer.tileOffsetMetres.x)/Mathf.Max(.001f,layer.tileSizeMetres.x),
-                        (pz+layer.tileOffsetMetres.y)/Mathf.Max(.001f,layer.tileSizeMetres.y));
-                    if(TryRoadProjectionUV(state,i,px,pz,out var roadUV))textureUV=roadUV;
-                    if(maps[i]&&weights[i]>.00001f)
+                    if(maskPixels[i]!=null&&weights[i]>.00001f)
+                    {
+                        var textureUV=new Vector2((px+layer.tileOffsetMetres.x)/Mathf.Max(.001f,layer.tileSizeMetres.x),
+                            (pz+layer.tileOffsetMetres.y)/Mathf.Max(.001f,layer.tileSizeMetres.y));
+                        if(TryRoadProjectionUV(state,i,px,pz,out var roadUV))textureUV=roadUV;
                         h=LTPaintMath.SampleGpuBilinear(maskPixels[i],maskSizes[i].x,maskSizes[i].y,
                             textureUV.x,textureUV.y,true).g;
+                    }
                     if(!(i==0&&world.lightweightBackground))heights[i]=Mathf.Clamp01((h-.5f)*layer.heightStrength+.5f+layer.heightOffset);
                 }
                 float roadDisplacement=RoadDisplacementMultiplier(state,px,pz);
@@ -619,11 +702,12 @@ namespace LocalTerrainPrototype
             }
         }
         static float DisplacementEnd(LTWorld world)=>LTPaintMath.DisplacementDistances(world.displacementFadeStart,world.displacementFadeEnd,world.enableGlobalLayerMaps,world.globalLayerStart).y;
-        public void Tick(LTWorld world)
+        public void Tick(LTWorld world)=>Tick(world,false);
+        public void Tick(LTWorld world,bool force)
         {
             TickDeformation(world);
-            double now=Time.realtimeSinceStartupAsDouble;if(now<nextUpdate)return;nextUpdate=now+.15;
-            using var cpuTick=world.paintCpu.BeginTick();
+            double now=Time.realtimeSinceStartupAsDouble;if(!force&&now<nextUpdate)return;nextUpdate=now+.15;
+            using var cpuTick=world.paintCpu.BeginTick(force);
             if(!world.enableLayerPainting||!world.baseLayer||!world.source||!world.generatedRoot)
             {
                 Dispose();world.paintStatus=world.enableLayerPainting?"Назначьте базовый слой и создайте чанки.":"Покраска выключена.";return;
@@ -654,10 +738,22 @@ namespace LocalTerrainPrototype
                 try {asphaltInputs.Add(road.Capture(world));}
                 catch(ArgumentException error){roadErrors.Add(road.name+": "+error.Message);}
             }
-            foreach(var stamp in all)if(stamp.ActiveForPaint&&stamp.EffectiveLayer&&(stamp.Road||stamp.strength>0)&&Projection(world,stamp,out _))
+            foreach(var node in world.GetComponentsInChildren<LTRoadJunction>())
+                if(node.isActiveAndEnabled&&node.World==world&&node.surface==LTRoadMode.Asphalt)
+                    try{asphaltInputs.Add(node.Suppression());}catch(ArgumentException error){roadErrors.Add(node.name+": "+error.Message);}
+            foreach(var stamp in all)if(stamp.ActiveForPaint&&stamp.EffectiveLayer&&(stamp.Road||stamp.Junction||stamp.strength>0)&&Projection(world,stamp,out _))
             {
                 try {var box=StampBounds(world,stamp);active.Add(stamp);bounds.Add(box);}
                 catch(ArgumentException) { /* Invalid road is reported by its inspector. */ }
+            }
+            var coverageInputs=new Dictionary<LTPaintStamp,int[]>(active.Count);
+            var roadInfluences=new Dictionary<LTPaintStamp,LTRoadMath.Snapshot>();
+            foreach(var stamp in active)if(stamp.Road)roadInfluences.Add(stamp,stamp.Road.Capture(world));
+            var layerInputs=new Dictionary<LTSurfaceLayer,LayerChangeInput>(palette.Count);
+            using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.ChangeChecks))
+            {
+                foreach(var stamp in active)coverageInputs.Add(stamp,CoverageInputs(world,stamp));
+                foreach(var layer in palette)layerInputs.Add(layer,new LayerChangeInput(layer));
             }
             var current=world.generatedRoot.GetComponentsInChildren<LTChunk>();var live=new HashSet<LTChunk>(current);
             bool filtered=active.Exists(s=>s.HasTerrainFilters);
@@ -672,6 +768,7 @@ namespace LocalTerrainPrototype
             if(world.baseLayer.maskMap)usedMasks.Add(world.baseLayer.maskMap);
             foreach(var key in new List<Texture2D>(masks.Keys))if(!key||!usedMasks.Contains(key)){DestroyOwned(masks[key].copy);masks.Remove(key);}
             int painted=0,maxLayers=0,displacedChunks=0,unsupportedDisplacement=0;var overflow=new List<string>();
+            var displacementMaskReadbacks=new MaskReadbackCache();
             foreach(var chunk in current)
             {
                 if(!chunk.mesh)continue;
@@ -679,7 +776,12 @@ namespace LocalTerrainPrototype
                 float width=world.source.size.x/world.chunksX,depth=world.source.size.z/world.chunksZ;
                 var rect=new Rect(chunk.x*width,chunk.z*depth,width,depth);
                 var local=new List<LTPaintStamp>();var layers=new List<LTSurfaceLayer>{world.baseLayer};
-                for(int i=0;i<active.Count;i++)if(Touches(rect,bounds[i]))
+                // Keep the bilinear/road UV guard, but reject empty space inside a
+                // bent road's large AABB. Removed old road slots still trigger Bake.
+                var paintGuard=Rect.MinMaxRect(rect.xMin-2*width/(Resolution-1),rect.yMin-2*depth/(Resolution-1),
+                    rect.xMax+2*width/(Resolution-1),rect.yMax+2*depth/(Resolution-1));
+                for(int i=0;i<active.Count;i++)if(Touches(rect,bounds[i])&&
+                    (!roadInfluences.TryGetValue(active[i],out var influence)||influence.Intersects(paintGuard)))
                 {local.Add(active[i]);if(!layers.Contains(active[i].EffectiveLayer))layers.Add(active[i].EffectiveLayer);}
                 maxLayers=Mathf.Max(maxLayers,layers.Count);
                 if(layers.Count>LayerCapacity)
@@ -717,20 +819,9 @@ namespace LocalTerrainPrototype
                 // Asphalt suppresses visual displacement even without a paint layer.
                 foreach(var road in asphaltInputs)if(road.Intersects(rect))coverage=Mix(coverage,road.geometryHash);
                 foreach(var stamp in local)
-                {
-                    coverage=Mix(coverage,Id(stamp));coverage=Mix(coverage,Id(stamp.EffectiveLayer));
-                    var road=stamp.Road;if(road){coverage=Mix(coverage,road.Capture(world).paintHash);continue;}
-                    coverage=Mix(coverage,stamp.transform.localToWorldMatrix.GetHashCode());coverage=Mix(coverage,stamp.size.GetHashCode());
-                    coverage=Mix(coverage,(int)stamp.shape);coverage=Mix(coverage,stamp.strength.GetHashCode());coverage=Mix(coverage,stamp.edgeFalloff.GetHashCode());
-                    coverage=Mix(coverage,Id(stamp.mask));if(stamp.mask)coverage=Mix(coverage,stamp.mask.imageContentsHash.GetHashCode());
-                    coverage=Mix(coverage,JsonUtility.ToJson(stamp.heightFilter).GetHashCode());
-                    coverage=Mix(coverage,JsonUtility.ToJson(stamp.slopeFilter).GetHashCode());
-                    coverage=Mix(coverage,JsonUtility.ToJson(stamp.curveFilter).GetHashCode());
-                    coverage=Mix(coverage,stamp.curveRadius.GetHashCode());
-                    coverage=Mix(coverage,stamp.noise.CoverageHash());
-                }
-                densityInput=Mix(coverage,world.displacementGeometryKey.GetHashCode());
-                if(local.Exists(s=>s.HasTerrainFilters))coverage=Mix(coverage,terrain.signature.GetHashCode());
+                    foreach(int input in coverageInputs[stamp])coverage=Mix(coverage,input);
+                densityInput=Mix(coverage,world.displacementGeometry.RegionSignature(rect,TerrainFilterRadius(local)));
+                if(local.Exists(s=>s.HasTerrainFilters))coverage=Mix(coverage,TerrainFilterSignature(rect,local));
                 surface=Mix(world.layerHeightBlend.GetHashCode(),world.lightweightBackground?1:0);
                 surface=Mix(surface,world.enableLayerDisplacement?1:0);
                 surface=Mix(surface,world.triplanarTexturing?1:0);
@@ -744,19 +835,13 @@ namespace LocalTerrainPrototype
                 surface=Mix(surface,world.displacementFadeStart.GetHashCode());surface=Mix(surface,DisplacementEnd(world).GetHashCode());
                 surface=Mix(surface,world.displacementSeamFade.GetHashCode());
                 surface=Mix(surface,state.sourceBounds.GetHashCode());
-                foreach(var layer in layers)
-                {
-                    surface=Mix(surface,layer.SurfaceHash());
-                    if(layer.baseColorMap)surface=Mix(surface,layer.baseColorMap.imageContentsHash.GetHashCode());
-                    if(layer.normalMap)surface=Mix(surface,layer.normalMap.imageContentsHash.GetHashCode());
-                    if(layer.maskMap)surface=Mix(surface,layer.maskMap.imageContentsHash.GetHashCode());
-                }
+                foreach(var layer in layers)surface=layerInputs[layer].AppendSurface(surface);
                 }
                 if(!state.ready||state.coverageHash!=coverage)
                 {
                     try
                     {
-                        using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.WeightBake))Bake(world,rect,local,layers,state);
+                        using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.WeightBake))Bake(world,rect,local,layers,state,asphaltInputs);
                     }
                     catch(InvalidOperationException error)
                     {
@@ -774,16 +859,14 @@ namespace LocalTerrainPrototype
                 densityInput=Mix(densityInput,world.transform.TransformVector(Vector3.right).magnitude.GetHashCode());
                 densityInput=Mix(densityInput,world.transform.TransformVector(Vector3.forward).magnitude.GetHashCode());
                 densityInput=Mix(densityInput,world.layerHeightBlend.GetHashCode());
-                foreach(var layer in layers)
-                {
-                    densityInput=Mix(densityInput,layer.SurfaceHash());
-                    if(layer.maskMap)densityInput=Mix(densityInput,layer.maskMap.imageContentsHash.GetHashCode());
-                }
+                foreach(var layer in layers)densityInput=layerInputs[layer].AppendDensity(densityInput);
                 bool coverageRebuilt=false;
                 if(needCoverage&&(!state.ready||state.coverageHash!=coverage||state.occupancyLayers!=occupancyLayers||!state.displacementOccupancy||!state.displacementEdgeDistance||state.densityInputHash!=densityInput))
                 {
                     coverageRebuilt=true;
-                    var pyramid=BakeDisplacementCoverage(world,rect,local,layers,state,occupancyLayers);
+                    List<Color32[]> pyramid;
+                    using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.DisplacementBake))
+                        pyramid=BakeDisplacementCoverage(world,rect,local,layers,state,occupancyLayers,displacementMaskReadbacks);
                     int cells=Mathf.RoundToInt(Mathf.Sqrt(pyramid[0].Length));
                     // A density rebuild can slightly shift slope/curve filters. Within one
                     // authoring revision only grow coverage; never oscillate refine/coarsen.
@@ -821,7 +904,8 @@ namespace LocalTerrainPrototype
             PrepareDeformationRegions(world,active);
             FinishGlobals(world,painted==world.chunksX*world.chunksZ&&overflow.Count==0&&roadErrors.Count==0);
             PrepareDeformationTerrain(world,current);
-            TickRockMaterials(world,shader,active,bounds);
+            using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RockMaterials))
+                TickRockMaterials(world,shader,active,bounds,asphaltInputs,layerInputs);
             SetHullOneDiagnostic(world.forceHullOneDiagnostic);
             SetUniformHullDiagnostic(world);
             SetCoverageDebug(world.showDisplacementCoverage,world.displacementCoverageControlColor,world.displacementCoverageFixedProjection,world.displacementCoverageCoordinateProbe,world.displacementHullReasons,world.displacementSurfaceProbe);

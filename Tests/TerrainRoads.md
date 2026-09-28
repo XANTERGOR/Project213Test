@@ -1,4 +1,4 @@
-# Spline roads — first implementation
+# Spline roads and explicit junctions
 
 ## Authoring
 
@@ -51,23 +51,74 @@ or **Road (Asphalt)**. No scene objects are created until this command is used.
 ## Deliberate first-version limits
 
 - An affected chunk supports twelve terrain layer slots including the base layer.
-  A spline-directed layer must belong to **one road per chunk**, and cannot also
-  be the base layer or an ordinary/world-projected paint stamp in that chunk.
-  Duplicate the **layer asset**, reusing its texture assets, for another road.
+  Multiple spline roads may share a layer; it cannot also be the base layer or
+  an ordinary/world-projected paint stamp in that chunk. The neutral junction
+  centre uses a separate layer asset (which may reuse the same texture assets).
   Conflicts are shown in LTWorld paint status, without repeated Console exceptions.
-- No junction solving, bridges, tunnels, closed loops or self-intersection solver.
+- Junctions are explicit nodes, not automatically inferred spline crossings.
+  No bridge, tunnel, closed-loop or self-intersection solver.
   Use gentle turns: wide asphalt ribbons that fold are rejected. Road transform
   supports translation/yaw and unit scale; point heights and banks remain editable.
 - Coverage and coordinate maps are 257×257 per affected terrain chunk. Very narrow
   ruts and tight curves are limited by that spacing. Spline UV maps use float32
-  and cost about 1 MiB GPU + 1 MiB managed CPU per road layer/chunk. They are
-  rebuilt only on relevant edits. Asphalt suppression uses an additional RGBA8 map.
+  and cost about 1 MiB GPU + 1 MiB managed CPU per single-road layer/chunk;
+  multiple roads share two slices (about 2 + 2 MiB), not one slot per road.
+  They are rebuilt only on relevant edits. Asphalt suppression uses an additional RGBA8 map.
 - Runtime consumes editor-baked road geometry; it is not a runtime spline editor.
 - Generated mesh assets live in `Assets/LocalTerrainRoads/<bakeId>`, separate from
   terrain mesh cleanup. Old immutable mesh versions remain for Undo/reuse; there
   is no automatic deletion of authored files or old mesh assets.
 
-## Verification
+## Explicit junction authoring — 2026-09-26
+
+1. Select LTWorld or a child, then **GameObject → Local Terrain → Road Junction**.
+   Position the node at the desired centre; its Y is the common entrance height.
+2. In its inspector assign a road and **Начало / Конец**, then **Подключить к узлу**.
+   T junctions need three road ends, X junctions four. A crossing of two unbroken
+   roads is deliberately not cut automatically. Supported: 2–8 ends, non-overlapping
+   mouths whose convex outline contains the node centre.
+3. The second/penultimate authored point determines the entrance direction and
+   must lie beyond **Радиус въездов + Прямой въезд**. Endpoints and flat necks are
+   derived without changing the saved authored points. Disconnect/Undo restores
+   the ordinary road path. Connected endpoint handles show the actual derived port.
+4. Assign **Слой центрального грунта**: a separate, non-directed layer without
+   wheel tracks. All directed branches can share one Spline layer. Central paint
+   overlays branch caps and feathers out; it consumes one of the existing 12 slots.
+5. If any entrance is asphalt, choose **Asphalt** on the node, assign its material,
+   and match **Surface Offset** with the asphalt branches. Offroad endpoints rise
+   to the asphalt surface and their rut depth fades out at the entrance. No lane
+   markings are generated or matched automatically; use an unmarked centre material.
+6. **Перестроить / запечь перекрёсток** updates connected asphalt, terrain and details
+   explicitly, including when terrain auto-update is off. Ordinary edits are debounced
+   after releasing a handle and use existing scoped terrain dirty-region detection.
+   Save the scene normally; the tool never calls SaveScene or global SaveAssets.
+
+Asphalt centres are flat convex meshes with fixed entrance boundaries at all LODs;
+only interior rings simplify. Distance selection follows LTWorld's camera/preview/
+force-LOD settings; the collider stays at LOD0. Immutable meshes are saved under
+`Assets/LocalTerrainRoads/Junction_<bakeId>` and retained for Undo.
+
+Current module compatibility: a planar end at the configured surface height and
+exact road width at every supplied/generated LOD. Raised kerbs, a thick end cap,
+or differing LOD end widths are rejected with an inspector message. Use a separate
+flat-ended transition road; automatic kerb/cross-section junction construction is
+not implemented. The centre does not yet round corners or create turn lanes.
+
+The shared UV map stores a dominant branch per texel and a local UV Jacobian at
+ownership seams. CPU coverage/displacement sampling and HLSL use matching selection;
+they never bilinearly blend unrelated longitudinal UV phases. Single-owner cells
+keep the previous bilinear path. Outside a neutral junction centre, overlapping
+directed branches can still have a hard ownership seam; this is not a texture
+cross-fade or an automatic intersection. Very narrow features remain grid-limited.
+
+Validation for this change: managed regression suite passed (8,708 ownership samples,
+shared chunk boundaries, 4 node layouts × 4 LODs, flat entries, bounded influence),
+and six reduced HLSL compiler cases passed, with existing displacement X4000 warnings.
+These do not establish live appearance, collision driving or scene performance.
+Native follow-up: T/X/Y and asphalt/offroad joins, module rejection, moving/disable/
+delete/Undo, saved-scene reopen, camera LOD switching and shared-layer chunk borders.
+
+### Existing verification commands
 
 - Compiler-only: `dotnet build Assembly-CSharp-Editor.csproj --no-restore -v:q
   /clp:ErrorsOnly /p:CustomAfterMicrosoftCommonTargets=G:/UnityProjects/Project213-Testing/Tests/LocalTerrainCompile.targets`.

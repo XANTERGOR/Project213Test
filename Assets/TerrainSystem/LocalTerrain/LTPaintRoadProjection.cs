@@ -7,10 +7,9 @@ namespace LocalTerrainPrototype
 {
     public sealed partial class LTPaintRuntime
     {
-        // V1: one exclusive spline owner per layer/slot within a chunk. In particular,
-        // the base layer and ordinary stamps must not share that layer with a spline.
-        // Different slots retain the usual ordered coverage and smooth height blend.
-        // Float UVs are intentionally unwrapped; half precision loses long-road detail.
+        // Shared spline-layer network. Negative slot values select a two-slice
+        // owner/frame map; a single road retains its original one-slice fast path.
+        // Base/world stamps still require a separate layer asset.
         const int RoadProjectionSize = 257;
         static readonly ConditionalWeakTable<ChunkState, RoadProjection> roadProjections =
             new ConditionalWeakTable<ChunkState, RoadProjection>();
@@ -21,8 +20,8 @@ namespace LocalTerrainPrototype
             public Texture2DArray texture;
             public Texture2D suppression;
             public LTRoadMath.Snapshot[] asphalt = Array.Empty<LTRoadMath.Snapshot>();
-            public Vector4 slots0, slots1, slots2; // 0 = world, otherwise slice + 1
-            public readonly LTRoadMath.Snapshot[] sources = new LTRoadMath.Snapshot[LayerCapacity];
+            public Vector4 slots0, slots1, slots2; // 0 = world; abs(value)-1 = slice; negative = network + Jacobian
+            public readonly LTRoadMath.Snapshot[][] sources = new LTRoadMath.Snapshot[LayerCapacity][];
             public readonly LTSurfaceLayer[] layers = new LTSurfaceLayer[LayerCapacity];
         }
 
@@ -31,12 +30,12 @@ namespace LocalTerrainPrototype
         internal sealed class RoadProjectionSnapshot
         {
             readonly Rect rect;
-            readonly Color[][] maps;
+            readonly Color[][] maps, derivatives;
             readonly Color32[] suppression;
             public readonly int hash;
             internal Rect Rect => rect;
-            internal RoadProjectionSnapshot(Rect rect, Color[][] maps, Color32[] suppression, int hash)
-            { this.rect = rect; this.maps = maps; this.suppression = suppression; this.hash = hash; }
+            internal RoadProjectionSnapshot(Rect rect, Color[][] maps, Color[][] derivatives, Color32[] suppression, int hash)
+            { this.rect = rect; this.maps = maps; this.derivatives = derivatives; this.suppression = suppression; this.hash = hash; }
 
             internal float DisplacementSuppression(float x, float z)
             {
@@ -53,15 +52,7 @@ namespace LocalTerrainPrototype
             {
                 uv = default; right = Vector2.right;
                 if (slot < 0 || slot >= maps.Length || maps[slot] == null) return false;
-                float px = Mathf.Clamp01((x - rect.xMin) / rect.width) * (RoadProjectionSize - 1);
-                float pz = Mathf.Clamp01((z - rect.yMin) / rect.height) * (RoadProjectionSize - 1);
-                int ix = Mathf.Min(Mathf.FloorToInt(px), RoadProjectionSize - 2);
-                int iz = Mathf.Min(Mathf.FloorToInt(pz), RoadProjectionSize - 2);
-                int at = iz * RoadProjectionSize + ix;
-                var map = maps[slot];
-                var value = Color.LerpUnclamped(
-                    Color.LerpUnclamped(map[at], map[at + 1], px - ix),
-                    Color.LerpUnclamped(map[at + RoadProjectionSize], map[at + RoadProjectionSize + 1], px - ix), pz - iz);
+                var value = LTRoadProjectionMath.Sample(maps[slot], derivatives[slot], rect, RoadProjectionSize, x, z, out _, out _);
                 uv = new Vector2(value.r, value.g);
                 right = new Vector2(value.b, value.a);
                 right = right.sqrMagnitude > 1e-12f ? right.normalized : Vector2.right;
@@ -98,36 +89,31 @@ namespace LocalTerrainPrototype
         // baking. Returns true when mapping changed, including removal. Validation
         // precedes replacement so invalid authoring never publishes a partial map.
         static bool BakeRoadProjection(LTWorld world, Rect rect, List<LTPaintStamp> stamps,
-            List<LTSurfaceLayer> layers, ChunkState state)
+            List<LTSurfaceLayer> layers, ChunkState state, List<LTRoadMath.Snapshot> asphaltInputs)
         {
-            var sources = new LTRoadMath.Snapshot[LayerCapacity];
+            var sources = new List<LTRoadMath.Snapshot>[LayerCapacity];
             var contributors = new int[LayerCapacity];
             int count = 0;
             foreach (var stamp in stamps)
             {
-                if (!stamp || !stamp.ActiveForPaint || (!stamp.Road && stamp.strength <= 0)) continue;
+                if (!stamp || !stamp.ActiveForPaint || (!stamp.Road && !stamp.Junction && stamp.strength <= 0)) continue;
                 int slot = layers.IndexOf(stamp.EffectiveLayer);
                 if (slot < 0 || slot >= LayerCapacity) continue;
                 contributors[slot]++;
                 var road = stamp.Road;
                 if (!road || road.projection != LTRoadProjection.Spline) continue;
-                if (sources[slot] != null) throw ProjectionConflict(layers[slot]);
-                sources[slot] = road.Capture(world); count++;
+                if (sources[slot] == null) { sources[slot] = new List<LTRoadMath.Snapshot>(); count++; }
+                sources[slot].Add(road.Capture(world));
             }
             for (int slot = 0; slot < LayerCapacity; slot++)
-                if (sources[slot] != null && (slot == 0 || contributors[slot] != 1))
+                if (sources[slot] != null && (slot == 0 || contributors[slot] != sources[slot].Count))
                     throw ProjectionConflict(layers[slot]);
             // Asphalt exists independently of paint strength/layer assignment.
             // Do not derive this from only the active local paint contributors.
             var asphalt = new List<LTRoadMath.Snapshot>();
-            foreach (var road in world.GetComponentsInChildren<LTRoad>())
-            {
-                if (!road.isActiveAndEnabled || road.World != world || road.mode != LTRoadMode.Asphalt) continue;
-                LTRoadMath.Snapshot snapshot;
-                try { snapshot = road.Capture(world); }
-                catch (ArgumentException) { continue; } // Main authoring validation reports invalid paths.
+            // Captured once per paint tick; do not traverse the hierarchy per chunk/rock.
+            foreach (var snapshot in asphaltInputs)
                 if (Touches(rect, snapshot.bounds)) asphalt.Add(snapshot);
-            }
             if (count == 0 && asphalt.Count == 0)
             {
                 bool existed = roadProjections.TryGetValue(state, out _);
@@ -140,48 +126,41 @@ namespace LocalTerrainPrototype
             same = same && old.asphalt.Length == asphalt.Count;
             for (int i = 0; same && i < asphalt.Count; i++) same = SameRoadProjection(old.asphalt[i], asphalt[i]);
             for (int slot = 0; same && slot < LayerCapacity; slot++)
-                same = SameRoadProjection(old.sources[slot], sources[slot]) &&
+                same = SameRoadProjections(old.sources[slot], sources[slot]) &&
                     old.layers[slot] == (slot < layers.Count ? layers[slot] : null);
             if (same) return false; // No texture allocation, upload or material mutation.
             if (count > 0 && (!SystemInfo.supports2DArrayTextures || !SystemInfo.SupportsTextureFormat(TextureFormat.RGBAFloat)))
                 throw new InvalidOperationException("Spline terrain projection requires RGBAFloat texture arrays.");
 
             var next = new RoadProjection { asphalt = asphalt.ToArray() };
-            var maps = new Color[LayerCapacity][];
+            var maps = new Color[LayerCapacity][];var derivatives = new Color[LayerCapacity][];
+            int slices=0;foreach(var group in sources)if(group!=null)slices+=group.Count>1?2:1;
             Color32[] suppression = null;
             int hash = Mix(rect.GetHashCode(), RoadProjectionSize);
             try
             {
-                if (count > 0) next.texture = new Texture2DArray(RoadProjectionSize, RoadProjectionSize, count,
+                if (count > 0) next.texture = new Texture2DArray(RoadProjectionSize, RoadProjectionSize, slices,
                     TextureFormat.RGBAFloat, false, true)
                 { name = "Terrain spline UV + orientation", hideFlags = HideFlags.HideAndDontSave,
                     filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
                 int slice = 0;
                 for (int slot = 0; slot < LayerCapacity; slot++)
                 {
-                    next.sources[slot] = sources[slot];
+                    next.sources[slot] = sources[slot]?.ToArray();
                     next.layers[slot] = slot < layers.Count ? layers[slot] : null;
-                    hash = Mix(hash, sources[slot]?.paintHash ?? 0);
+                    if(sources[slot]!=null)foreach(var source in sources[slot])hash = Mix(hash, source.paintHash);
                     hash = Mix(hash, Id(next.layers[slot]));
                     if (sources[slot] == null) continue;
-                    var pixels = maps[slot] = new Color[RoadProjectionSize * RoadProjectionSize];
-                    // No road coverage can read the zero-filled remainder. Keep a
-                    // two-texel guard so bilinear UVs remain exact along mask edges.
-                    var region = sources[slot].TextureBakeRegion(rect, RoadProjectionSize);
-                    for (int z = region.yMin; z < region.yMax; z++)
-                    for (int x = region.xMin; x < region.xMax; x++)
-                    {
-                        float px = rect.xMin + rect.width * x / (RoadProjectionSize - 1);
-                        float pz = rect.yMin + rect.height * z / (RoadProjectionSize - 1);
-                        if (!TryRoadCoordinates(sources[slot], px, pz, out var uv, out var right))
-                            throw new InvalidOperationException("Invalid spline coordinate while baking road projection.");
-                        pixels[z * RoadProjectionSize + x] = new Color(uv.x, uv.y, right.x, right.y);
-                    }
-                    next.texture.SetPixels(pixels, slice, 0);
-                    if (slot < 4) next.slots0[slot] = slice + 1;
-                    else if (slot < 8) next.slots1[slot - 4] = slice + 1;
-                    else next.slots2[slot - 8] = slice + 1;
+                    var baked=LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize);
+                    maps[slot]=baked.coordinates;derivatives[slot]=baked.derivatives;
+                    next.texture.SetPixels(baked.coordinates,slice,0);
+                    bool network=baked.derivatives!=null;
+                    float slotValue=(slice+1)*(network?-1:1);
+                    if (slot < 4) next.slots0[slot] = slotValue;
+                    else if (slot < 8) next.slots1[slot - 4] = slotValue;
+                    else next.slots2[slot - 8] = slotValue;
                     slice++;
+                    if(network){next.texture.SetPixels(baked.derivatives,slice,0);slice++;}
                 }
                 if (next.texture) next.texture.Apply(false, true); // Retain only the explicit managed CPU snapshot.
                 if (asphalt.Count > 0)
@@ -199,12 +178,7 @@ namespace LocalTerrainPrototype
                         float pz = rect.yMin + rect.height * z / (RoadProjectionSize - 1);
                         float weight = 0;
                         foreach (var road in asphalt)
-                            if (road.TrySample(px, pz, out var hit))
-                            {
-                                float distance = hit.radialDistance - road.width * .5f - guard;
-                                float fade = 1 - Mathf.SmoothStep(0, 1, distance / Mathf.Max(.0001f, road.shoulderWidth));
-                                weight = Mathf.Max(weight, fade);
-                            }
+                            weight = Mathf.Max(weight, road.DisplacementSuppression(px, pz, guard));
                         byte value = (byte)Mathf.RoundToInt(Mathf.Clamp01(weight) * 255);
                         suppression[z * RoadProjectionSize + x] = new Color32(value, 0, 0, 255);
                     }
@@ -213,7 +187,7 @@ namespace LocalTerrainPrototype
                         filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
                     next.suppression.SetPixels32(suppression); next.suppression.Apply(false, true);
                 }
-                next.cpu = new RoadProjectionSnapshot(rect, maps, suppression, hash);
+                next.cpu = new RoadProjectionSnapshot(rect, maps, derivatives, suppression, hash);
             }
             catch { DestroyOwned(next.texture); DestroyOwned(next.suppression); throw; }
             ReleaseRoadProjection(state);
@@ -223,8 +197,13 @@ namespace LocalTerrainPrototype
 
         static InvalidOperationException ProjectionConflict(LTSurfaceLayer layer)
             => new InvalidOperationException("Spline UV layer '" + (layer ? layer.name : "null") +
-                "' must belong to one road per chunk and cannot also be the base layer or an ordinary/world-projected stamp. Use a separate layer asset.");
+                "' may be shared by spline roads, but cannot also be the base layer or an ordinary/world-projected stamp. Use a separate layer for the junction centre/world painting.");
 
+        static bool SameRoadProjections(LTRoadMath.Snapshot[] a,List<LTRoadMath.Snapshot> b)
+        {
+            if(a==null)return b==null;if(b==null||a.Length!=b.Count)return false;
+            for(int i=0;i<a.Length;i++)if(!SameRoadProjection(a[i],b[i]))return false;return true;
+        }
         static bool SameRoadProjection(LTRoadMath.Snapshot a, LTRoadMath.Snapshot b)
             => a == null ? b == null : b != null && a.geometryHash == b.geometryHash && a.paintHash == b.paintHash;
 

@@ -6,6 +6,9 @@ partial class Checks
 {
     static void PaintChecks()
     {
+        PaintChangeScopeChecks();
+        RoadUpdateCycleChecks();
+        PaintingWorkChecks();
         HullCoverageChecks();
         RegularMaskGridChecks();
         BoundaryCoverageChecks();

@@ -5,13 +5,15 @@ using UnityEngine;
 
 namespace LocalTerrainPrototype
 {
-    // Opt-in CPU wall time, not GPU time or FPS. No clock reads when disabled.
+    // Opt-in reports plus a bounded last-tick sample for coordinated editor updates.
+    // CPU wall time, not GPU time or FPS. Runtime remains opt-in.
     public sealed class LTPaintCpuCapture
     {
-        public enum Stage { Total, TerrainCache, ChangeChecks, WeightBake, LayerBind, SavedSignature, GlobalMaterials, GlobalBake }
+        public enum Stage { Total, TerrainCache, ChangeChecks, WeightBake, LayerBind, SavedSignature, GlobalMaterials, GlobalBake, DisplacementBake, RockMaterials }
+        static readonly int StageCount=Enum.GetValues(typeof(Stage)).Length;
         [Serializable] public sealed class Sample
         {
-            public double[] milliseconds=new double[8];
+            public double[] milliseconds=new double[StageCount];
             public int weightBakes,layerBinds,globalMaterialUpdates,farMaterialCopies;
         }
         [Serializable] public sealed class Report
@@ -28,6 +30,18 @@ namespace LocalTerrainPrototype
         public string Status="CPU-замер ещё не запускался.";
         Report report;
         Sample current;
+        public Sample LastTick {get;private set;}
+        public string LastTickStatus
+        {
+            get
+            {
+                if(LastTick==null)return "";
+                var text=new System.Text.StringBuilder("Последний рабочий проход покраски (CPU):\n");
+                for(int i=0;i<StageCount;i++)text.AppendLine($"{(Stage)i}: {LastTick.milliseconds[i]:F1} мс");
+                text.Append($"Масок пересчитано: {LastTick.weightBakes}. Этапы входят в Total; WeightBake включает маски скал внутри RockMaterials.");
+                return text.ToString();
+            }
+        }
         long start,allocatedStart;
         public void Start(string worldName)
         {
@@ -36,17 +50,17 @@ namespace LocalTerrainPrototype
             current=null;start=Stopwatch.GetTimestamp();allocatedStart=GC.GetAllocatedBytesForCurrentThread();
             Running=true;Status="CPU-замер: 10 секунд. Не двигайте камеру и не меняйте штампы.";
         }
-        public Scope BeginTick()
+        public Scope BeginTick(bool captureLast=false)
         {
-            if(!Running)return default;
-            current=new Sample();report.samples.Add(current);return Measure(Stage.Total);
+            if(!Running&&!captureLast)return default;
+            current=new Sample();if(Running)report.samples.Add(current);return Measure(Stage.Total);
         }
-        public Scope Measure(Stage stage)=>Running&&current!=null?new Scope(this,current,(int)stage):default;
+        public Scope Measure(Stage stage)=>current!=null?new Scope(this,current,(int)stage):default;
         public Scope CameraScope()=>Running?new Scope(this,null,-1):default;
-        public void WeightBaked(){if(Running&&current!=null)current.weightBakes++;}
-        public void LayerBound(){if(Running&&current!=null)current.layerBinds++;}
+        public void WeightBaked(){if(current!=null)current.weightBakes++;}
+        public void LayerBound(){if(current!=null)current.layerBinds++;}
         public void GlobalUpdated(bool copied)
-        {if(Running&&current!=null){current.globalMaterialUpdates++;if(copied)current.farMaterialCopies++;}}
+        {if(current!=null){current.globalMaterialUpdates++;if(copied)current.farMaterialCopies++;}}
         public readonly struct Scope : IDisposable
         {
             readonly LTPaintCpuCapture owner;
@@ -61,7 +75,7 @@ namespace LocalTerrainPrototype
                 double ms=(Stopwatch.GetTimestamp()-time)*1000.0/Stopwatch.Frequency;
                 if(stage<0){owner.report.cameraSelectionMs+=ms;owner.report.cameraCalls++;}
                 else sample.milliseconds[stage]+=ms;
-                if(stage==0)owner.current=null;
+                if(stage==0){owner.LastTick=sample;owner.current=null;}
             }
         }
         public void Poll()
@@ -72,7 +86,7 @@ namespace LocalTerrainPrototype
             report.allocatedBytes=GC.GetAllocatedBytesForCurrentThread()-allocatedStart;
             var text=new System.Text.StringBuilder();
             text.AppendLine($"CPU: {report.samples.Count} проходов за {report.elapsedSeconds:F1} с. Время на проход, не на кадр:");
-            for(int stage=0;stage<8;stage++)
+            for(int stage=0;stage<report.stages.Length;stage++)
             {
                 var values=new List<double>();double sum=0;
                 foreach(var sample in report.samples){double ms=sample.milliseconds[stage];sum+=ms;values.Add(ms);}
@@ -87,7 +101,7 @@ namespace LocalTerrainPrototype
 #if UNITY_EDITOR
             try
             {
-                string folder=System.IO.Path.GetFullPath("Temp/LocalTerrainCpuBenchmarks");
+                string folder=System.IO.Path.GetFullPath("Logs/LocalTerrainCpuBenchmarks");
                 System.IO.Directory.CreateDirectory(folder);
                 string path=System.IO.Path.Combine(folder,DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff")+"-"+Guid.NewGuid().ToString("N")+".json");
                 System.IO.File.WriteAllText(path,JsonUtility.ToJson(report,true));text.AppendLine(path);

@@ -41,6 +41,8 @@ namespace LocalTerrainPrototype
                 DrawPathToolbar();
                 EditorGUI.BeginChangeCheck();
                 Field("mode", "Тип дороги", "Offroad изменяет terrain. Asphalt дополнительно создаёт отдельную ленту с коллайдером.");
+                Field("startJunction", "Перекрёсток в начале", "Явный узел управляет первым торцом; исходная точка сохраняется для отключения.");
+                Field("endJunction", "Перекрёсток в конце", "Явный узел управляет последним торцом. Вторая/предпоследняя точка задаёт направление въезда.");
                 shapeOpen = EditorGUILayout.Foldout(shapeOpen, "Форма и рельеф", true);
                 if (shapeOpen)
                 {
@@ -63,8 +65,8 @@ namespace LocalTerrainPrototype
                         Field("projection", "Проекция текстуры", "World — мировая проекция; Spline — текстура следует вдоль дороги на поверхности terrain.");
                         if (serializedObject.FindProperty("projection").enumValueIndex == (int)LTRoadProjection.Spline)
                         {
-                            EditorGUILayout.HelpBox("Ограничение первой версии Spline: в каждом чанке слой LTSurfaceLayer должен принадлежать только одной дороге. Нельзя использовать baseLayer, слой обычной кисти или другой дороги в том же чанке. Создайте отдельную копию ассета LTSurfaceLayer; ссылки на те же текстуры допустимы. При конфликте проверка потребует отдельный ассет.", MessageType.Warning);
-                            EditorGUILayout.HelpBox("Карта проекции 257 × 257 Float расходует примерно 1 МиБ GPU и 1 МиБ CPU на каждый слой дороги в каждом затронутом чанке. Расход памяти растёт с числом слоёв и чанков.", MessageType.Info);
+                            EditorGUILayout.HelpBox("Несколько дорог Spline могут использовать один слой в чанке. Этот слой нельзя одновременно использовать как фоновый или обычную кисть. Площадке перекрёстка назначьте отдельный слой без направленных колей.", MessageType.Info);
+                            EditorGUILayout.HelpBox("Карта проекции: около 1 МиБ GPU + 1 МиБ CPU на слой/чанк для одной дороги; 2 + 2 МиБ для нескольких. Дополнительные дороги не занимают отдельные слоты слоёв.", MessageType.Info);
                             Field("textureRepeatMetres", "Повтор вдоль пути, м", "Расстояние вдоль сплайна на один повтор текстуры.");
                             Field("textureOffset", "Смещение текстуры", "Смещение UV текстуры вдоль и поперёк дороги.");
                         }
@@ -99,7 +101,24 @@ namespace LocalTerrainPrototype
                     {
                         Field("meshChunkLength", "Длина чанка, м", "Приблизительная длина меша; границы проходят по образцам сплайна.");
                         Field("surfaceOffset", "Над поверхностью, м", "Лента располагается на SurfaceHeight плюс это смещение, с учётом крена.");
-                        EditorGUILayout.HelpBox("Меши создаются только в редакторе. Изменённые чанки сохраняются отдельными ассетами; старые версии сохраняются для Undo. Перекрёстки и мосты не поддерживаются.", MessageType.None);
+                        Field("asphaltSource","Источник меша","ProceduralRibbon — прежняя лента; Module — повтор и изгиб своего модуля.");
+                        bool module=serializedObject.FindProperty("asphaltSource").enumValueIndex==1;
+                        if(module)
+                        {
+                            Field("asphaltModulePrefab","Префаб модуля","Статические MeshRenderer. Если назначен, используется вместо отдельного Mesh. Масштаб корня префаба не применяется.");
+                            Field("asphaltModule","Меш модуля","Используется, когда префаб не назначен. Исходный ассет не изменяется.");
+                            Field("moduleMaterials","Материалы модуля","Для отдельного Mesh — по submesh. Для префаба берутся его материалы. Материал асфальта выше переопределяет все слоты, если задан.");
+                            Field("moduleAxis","Продольная ось","Z или X исходного модуля; Y — вверх.");
+                            Field("moduleLength","Длина повтора, м","0 — исходная длина. Все повторы равномерно подгоняются к общей длине сплайна, без обрезанного хвоста.");
+                            Field("moduleFitWidth","Подогнать ширину","Масштабировать поперёк до ширины дороги. UV и цвета сохраняются.");
+                            Field("moduleBaseY","Уровень покрытия в модуле","Локальный Y, совпадающий с поверхностью дороги. Обычно 0; толщина/бордюры сохраняются.");
+                        }
+                        Field("asphaltLODMode","Подготовка LOD","Automatic — упрощение; Authored — готовые меши/LODGroup; Disabled — только LOD0. Для процедурной ленты уровни всегда генерируются.");
+                        if(module&&serializedObject.FindProperty("asphaltLODMode").enumValueIndex==2)
+                            Field("moduleLODMeshes","Меши LOD1–LOD3","Для отдельного Mesh; при назначенном префабе используются уровни его LODGroup. Торцы всех уровней должны совпадать.");
+                        Field("asphaltLODs","Уровни и дистанции","Start Distance — метры; Max Height Error — допуск к исходным плоскостям при автоупрощении. Цели LOD1/2/3 — 50/25/12.5% треугольников, если позволяют защищённые швы. Simplification Steps для асфальта не используется.");
+                        EditorGUILayout.HelpBox("Авто-LOD закрепляет торцы, открытые края, UV- и материальные швы. Простые/полностью разрезанные меши могут не упрощаться — фактическое число треугольников показано ниже. В меше нужны продольные сегменты для плавного изгиба; генератор не добавляет их автоматически. Коллайдер всегда LOD0.",MessageType.Info);
+                        EditorGUILayout.HelpBox("Меши создаются в редакторе; старые версии сохраняются для Undo. Для перекрёстков используйте Road Junction. Его въезды пока требуют плоского торца без бордюров. Мосты не создаются автоматически.", MessageType.None);
                     }
                 }
                 if (EditorGUI.EndChangeCheck())
@@ -122,6 +141,7 @@ namespace LocalTerrainPrototype
             if (!Road.World) EditorGUILayout.HelpBox("Поместите дорогу внутрь нужного LTWorld.", MessageType.Warning);
             if (Road.generatedRoot)
                 using (new EditorGUI.DisabledScope(true)) EditorGUILayout.ObjectField("Созданные меши", Road.generatedRoot, typeof(Transform), true);
+            if(!string.IsNullOrEmpty(Road.meshLODStatus))EditorGUILayout.HelpBox(Road.meshLODStatus,MessageType.Info);
         }
 
         void DrawPathToolbar()
@@ -173,6 +193,7 @@ namespace LocalTerrainPrototype
 
         void DrawPoints()
         {
+            if(Road.startJunction||Road.endJunction)EditorGUILayout.HelpBox("Подключённый торец управляется узлом. Его исходная точка сохранена, но не используется до отключения. Направление въезда меняется второй/предпоследней точкой.",MessageType.Info);
             var points = serializedObject.FindProperty("points");
             if (points.arraySize > LTRoadMesh.MaxPoints)
                 EditorGUILayout.HelpBox($"Лимит точек: {LTRoadMesh.MaxPoints}. Удалите лишние точки перед запеканием.", MessageType.Error);
@@ -206,8 +227,11 @@ namespace LocalTerrainPrototype
                         }
                     }
                     EditorGUI.BeginChangeCheck();
-                    EditorGUILayout.PropertyField(point.FindPropertyRelative("position"), Label("Позиция", "Координаты относительно объекта дороги."));
-                    EditorGUILayout.PropertyField(point.FindPropertyRelative("bank"), Label("Крен, °", "Поперечный наклон дороги в этой точке; интерполируется вдоль пути."));
+                    using(new EditorGUI.DisabledScope(ConnectedNode(i)))
+                    {
+                        EditorGUILayout.PropertyField(point.FindPropertyRelative("position"), Label("Позиция", "Координаты относительно объекта дороги."));
+                        EditorGUILayout.PropertyField(point.FindPropertyRelative("bank"), Label("Крен, °", "Поперечный наклон дороги в этой точке; интерполируется вдоль пути."));
+                    }
                     if (EditorGUI.EndChangeCheck())
                     { serializedObject.ApplyModifiedProperties(); localError = null; LTRoadBakeQueue.Queue(Road); SceneView.RepaintAll(); }
                 }
@@ -275,6 +299,11 @@ namespace LocalTerrainPrototype
             serializedObject.ApplyModifiedProperties(); LTRoadBakeQueue.Queue(Road); SceneView.RepaintAll();
         }
 
+        LTRoadJunction ConnectedNode(int index)
+        {
+            var node=index==0?Road.startJunction:index==Road.points.Count-1?Road.endJunction:null;
+            return node&&node.isActiveAndEnabled?node:null;
+        }
         void OnSceneGUI()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode || !editPath || Selection.activeGameObject != Road.gameObject)
@@ -290,6 +319,12 @@ namespace LocalTerrainPrototype
             selectedPoint = Mathf.Clamp(selectedPoint, 0, count - 1);
             var positions = new Vector3[count];
             for (int i = 0; i < count; i++) positions[i] = Road.transform.TransformPoint(points.GetArrayElementAtIndex(i).FindPropertyRelative("position").vector3Value);
+            for(int i=0;i<count;i++)
+            {
+                var node=ConnectedNode(i);if(!node)continue;
+                try{node.Endpoint(Road,i==0,out var point,out _);positions[i]=Road.transform.TransformPoint(point.position);}
+                catch(ArgumentException){} // The inspector displays invalid connection diagnostics.
+            }
             var previousDepth = Handles.zTest;
             try
             {
@@ -306,7 +341,9 @@ namespace LocalTerrainPrototype
                         Handles.Label(positions[i] + Vector3.up * size * 2, (i + 1).ToString());
                     }
                     EditorGUI.BeginChangeCheck();
-                    Vector3 moved = Handles.PositionHandle(positions[selectedPoint], Tools.pivotRotation == PivotRotation.Local ? Road.transform.rotation : Quaternion.identity);
+                    var linked=ConnectedNode(selectedPoint);
+                    if(linked)Handles.Label(positions[selectedPoint]+Vector3.up,"Торец → "+linked.name+" (перемещайте узел)");
+                    Vector3 moved = linked?positions[selectedPoint]:Handles.PositionHandle(positions[selectedPoint], Tools.pivotRotation == PivotRotation.Local ? Road.transform.rotation : Quaternion.identity);
                     if (EditorGUI.EndChangeCheck())
                     {
                         points.GetArrayElementAtIndex(selectedPoint).FindPropertyRelative("position").vector3Value = Road.transform.InverseTransformPoint(moved);
@@ -442,7 +479,9 @@ namespace LocalTerrainPrototype
         static bool Editable(LTRoad road) => road && road.gameObject.scene.IsValid() && road.gameObject.scene.isLoaded
             && !EditorUtility.IsPersistent(road) && PrefabStageUtility.GetPrefabStage(road.gameObject) == null;
         static string Input(LTRoad road) => EditorJsonUtility.ToJson(road) + "|" + road.transform.localToWorldMatrix.ToString("R")
-            + "|" + (road.World ? road.World.transform.localToWorldMatrix.ToString("R") : "no-world");
+            + "|" + (road.World ? road.World.transform.localToWorldMatrix.ToString("R") : "no-world")
+            + "|" + LTRoadModuleSource.DependencyKey(road)
+            + "|" + (road.startJunction?road.startJunction.EndpointHash:0)+"|"+(road.endJunction?road.endJunction.EndpointHash:0);
         static State Get(LTRoad road)
         { if (!states.TryGetValue(road, out var state)) states.Add(road, state = new State { input = Input(road) }); return state; }
         static bool NeedsBake(LTRoad road)
@@ -514,13 +553,14 @@ namespace LocalTerrainPrototype
             if (road.mode != LTRoadMode.Asphalt) { SetVisible(road, false, allowDefaultMaterial); return; }
             if (road.generatedRoot && !Owned(road.generatedRoot, road))
                 throw new InvalidOperationException("Ссылка generatedRoot не принадлежит этой дороге. Чужой объект не изменён.");
-            if (!road.asphaltMaterial && !allowDefaultMaterial)
+            if (road.asphaltSource==LTRoadMeshSource.ProceduralRibbon && !road.asphaltMaterial && !allowDefaultMaterial)
                 throw new InvalidOperationException("Назначьте материал асфальта или нажмите «Перестроить / запечь» для создания собственного HDRP/Lit.");
-            var chunks = LTRoadMesh.Build(snapshot, road.meshChunkLength, road.textureRepeatMetres, road.surfaceOffset,
-                road.transform.worldToLocalMatrix * world.transform.localToWorldMatrix);
+            var prepared=LTRoadModuleSource.Build(road,snapshot);
+            LTRoadJunctionMesh.ValidateRoadEnds(road,prepared);
+            var chunks=prepared.levels[0];
             // Fully validate and prepare the geometry before creating any assets or scene objects.
             string folder = EnsureFolder(road);
-            if (!road.asphaltMaterial)
+            if (road.asphaltSource==LTRoadMeshSource.ProceduralRibbon && !road.asphaltMaterial)
             {
                 var shader = Shader.Find("HDRP/Lit");
                 if (!shader) throw new InvalidOperationException("HDRP/Lit недоступен. Назначьте подходящий материал вручную.");
@@ -529,6 +569,7 @@ namespace LocalTerrainPrototype
                 if (material.HasProperty("_Smoothness")) material.SetFloat("_Smoothness", .25f);
                 AssetDatabase.CreateAsset(material, AssetDatabase.GenerateUniqueAssetPath(folder + "/Asphalt.mat"));
                 road.asphaltMaterial = material; AssetDatabase.SaveAssetIfDirty(material);
+                prepared.materials[0]=material;
             }
             if (!road.generatedRoot)
             {
@@ -551,26 +592,17 @@ namespace LocalTerrainPrototype
                 var filter = Component<MeshFilter>(segment, allowDefaultMaterial);
                 var renderer = Component<MeshRenderer>(segment, allowDefaultMaterial);
                 var collider = Component<MeshCollider>(segment, allowDefaultMaterial);
+                var lod=Component<LTRoadLOD>(segment,allowDefaultMaterial);Record(lod,allowDefaultMaterial);
                 Record(filter, allowDefaultMaterial); Record(renderer, allowDefaultMaterial); Record(collider, allowDefaultMaterial);
-                string meshName = "RoadChunk_" + data.hash;
-                Mesh mesh = filter.sharedMesh;
-                if (!mesh || mesh.name != meshName || !AssetDatabase.GetAssetPath(mesh).StartsWith(folder + "/", StringComparison.Ordinal))
-                {
-                    string path = folder + "/" + meshName + ".asset";
-                    mesh = AssetDatabase.LoadAssetAtPath<Mesh>(path);
-                    if (!mesh || mesh.name != meshName)
-                    {
-                        mesh = new Mesh { name = meshName, indexFormat = data.vertices.Length > 65535 ? UnityEngine.Rendering.IndexFormat.UInt32 : UnityEngine.Rendering.IndexFormat.UInt16 };
-                        mesh.vertices = data.vertices; mesh.normals = data.normals; mesh.tangents = data.tangents;
-                        mesh.uv = data.uv; mesh.triangles = data.triangles; mesh.RecalculateBounds();
-                        AssetDatabase.CreateAsset(mesh, AssetDatabase.GenerateUniqueAssetPath(path)); AssetDatabase.SaveAssetIfDirty(mesh);
-                    }
-                    filter.sharedMesh = mesh;
-                }
+                var meshes=new Mesh[prepared.levels.Length];
+                for(int level=0;level<meshes.Length;level++)meshes[level]=SaveChunk(prepared.levels[level][i],folder);
+                Mesh mesh=meshes[0];filter.sharedMesh=mesh;lod.owner=road;lod.meshes=meshes;lod.bounds=mesh.bounds;lod.current=0;
+                foreach(var other in meshes)lod.bounds.Encapsulate(other.bounds);
                 if (collider.sharedMesh != mesh) { collider.sharedMesh = null; collider.sharedMesh = mesh; }
-                if (renderer.sharedMaterial != road.asphaltMaterial) renderer.sharedMaterial = road.asphaltMaterial;
+                renderer.sharedMaterials=prepared.materials;
                 renderer.enabled = true; collider.enabled = true; segment.gameObject.SetActive(true);
                 EditorUtility.SetDirty(filter); EditorUtility.SetDirty(renderer); EditorUtility.SetDirty(collider);
+                EditorUtility.SetDirty(lod);PrefabUtility.RecordPrefabInstancePropertyModifications(lod);
                 PrefabUtility.RecordPrefabInstancePropertyModifications(filter);
                 PrefabUtility.RecordPrefabInstancePropertyModifications(renderer);
                 PrefabUtility.RecordPrefabInstancePropertyModifications(collider);
@@ -580,8 +612,20 @@ namespace LocalTerrainPrototype
                 if (Owned(child, road) && !used.Contains(child) && child.gameObject.activeSelf)
                 { Record(child.gameObject, allowDefaultMaterial); child.gameObject.SetActive(false); }
             road.bakedGeometryHash = snapshot.geometryHash; SetVisible(road, true, allowDefaultMaterial);
+            road.meshLODStatus=prepared.status;world.RefreshLODCache();
             EditorUtility.SetDirty(road); PrefabUtility.RecordPrefabInstancePropertyModifications(road);
             EditorSceneManager.MarkSceneDirty(road.gameObject.scene);
+        }
+        internal static Mesh SaveChunk(LTRoadMesh.Chunk data,string folder)
+        {
+            string meshName="RoadChunk_"+data.hash,path=folder+"/"+meshName+".asset";
+            var mesh=AssetDatabase.LoadAssetAtPath<Mesh>(path);if(mesh&&mesh.name==meshName)return mesh;
+            mesh=new Mesh{name=meshName,indexFormat=data.vertices.Length>65535?UnityEngine.Rendering.IndexFormat.UInt32:UnityEngine.Rendering.IndexFormat.UInt16};
+            mesh.vertices=data.vertices;mesh.normals=data.normals;mesh.tangents=data.tangents;mesh.uv=data.uv;
+            if(data.uv2!=null)mesh.uv2=data.uv2;if(data.uv3!=null)mesh.uv3=data.uv3;if(data.uv4!=null)mesh.uv4=data.uv4;if(data.colors!=null)mesh.colors=data.colors;
+            if(data.submeshes==null)mesh.triangles=data.triangles;
+            else{mesh.subMeshCount=data.submeshes.Length;for(int s=0;s<data.submeshes.Length;s++)mesh.SetTriangles(data.submeshes[s],s,false);}
+            mesh.RecalculateBounds();AssetDatabase.CreateAsset(mesh,AssetDatabase.GenerateUniqueAssetPath(path));AssetDatabase.SaveAssetIfDirty(mesh);return mesh;
         }
         static T Component<T>(Transform transform, bool undo) where T : UnityEngine.Component
         {

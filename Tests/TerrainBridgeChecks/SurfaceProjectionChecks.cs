@@ -42,7 +42,7 @@ partial class Checks
         Require(!rocks.Contains("filter.sharedMesh=")&&!rocks.Contains(".vertices="),"material projection must not edit rock geometry");
         Require(rocks.Contains("_LTRockProjection\",1")&&rocks.Contains("_LTGlobalParams\",Vector4.zero"),"rock must use world coordinates and no planar far atlas");
         var runtime=File.ReadAllText(root+"LTPaintRuntime.cs");
-        Require(runtime.Contains("RestoreRockMaterialsForSave();")&&runtime.Contains("ReleaseRockMaterials();")&&runtime.Contains("TickRockMaterials(world,shader,active,bounds);"),"rock lifecycle not connected");
+        Require(runtime.Contains("RestoreRockMaterialsForSave();")&&runtime.Contains("ReleaseRockMaterials();")&&runtime.Contains("TickRockMaterials(world,shader,active,bounds,asphaltInputs,layerInputs);"),"rock lifecycle not connected");
         var sampling=File.ReadAllText(root+"Shaders/LTEightLayerSampling.hlsl");
         var projection=File.ReadAllText(root+"Shaders/LTProjectedLayers.hlsl");
         Require(projection.Contains("LTSampleLayersMappedFrame(p.xz,dx.xz,dy.xz,uv,ux,uy,axis")&&sampling.Contains("GetAbsolutePositionWS(sourcePositionRWS)"),"paint coverage and world texture coordinates must stay separate");

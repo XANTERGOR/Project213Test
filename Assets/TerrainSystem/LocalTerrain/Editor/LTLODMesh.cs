@@ -13,9 +13,9 @@ namespace LocalTerrainPrototype
             public Vector3Int p;public float a,sx,sz;public double error;public int generation;
             public float Height(float x,float z)=>a+(x-p.x)*sx+(z-p.y)*sz;
         }
-        // Collapse complete sibling groups. Boundary leaves are immutable across every LOD.
+        // Whole-chunk legacy meshes retain their border; spatial LOD stitches adaptive borders at runtime.
         // Error is a conservative plane bound over LOD0's vertices (corners/midpoints/centres).
-        public static List<Vector3Int> Coarsen(List<Vector3Int> fine,Rect rect,int steps,float tolerance,Func<float,float,float> evaluate,List<Rect> protectedRegions=null,Func<Rect,bool> protectedArea=null)
+        public static List<Vector3Int> Coarsen(List<Vector3Int> fine,Rect rect,int steps,float tolerance,Func<float,float,float> evaluate,List<Rect> protectedRegions=null,Func<Rect,bool> protectedArea=null,int patchDivisions=1,bool lockBoundary=true)
         {
             if(steps<0||steps>12||float.IsNaN(tolerance)||float.IsInfinity(tolerance)||tolerance<0)
                 throw new InvalidOperationException("LOD: use 0..12 simplification steps and a finite non-negative height error.");
@@ -55,7 +55,8 @@ namespace LocalTerrainPrototype
                 {if(p.z>=N)continue;int w=p.z*2;parents.Add(new Vector3Int(p.x/w*w,p.y/w*w,w));}
                 foreach(var p in parents.OrderBy(p=>p.z).ThenBy(p=>p.y).ThenBy(p=>p.x))
                 {
-                    Poll();if(p.x==0||p.y==0||p.x+p.z==N||p.y+p.z==N)continue;
+                    Poll();if(lockBoundary&&(p.x==0||p.y==0||p.x+p.z==N||p.y+p.z==N))continue;
+                    if(p.z>N/LTSpatialLODMath.Divisions(patchDivisions))continue;
                     var area=new Rect(rect.xMin+p.x/(float)N*rect.width,rect.yMin+p.y/(float)N*rect.height,p.z/(float)N*rect.width,p.z/(float)N*rect.height);
                     // Preserve the contact cells: the same rock bridge is used by all LODs.
                     if(protectedRegions!=null&&protectedRegions.Any(region=>LTStampMesh.Overlap(region,area)))continue;

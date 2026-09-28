@@ -49,7 +49,8 @@ namespace LocalTerrainPrototype
             foreach(var state in rocks.Values){RestoreRock(state);Release(state.paint);}
             rocks.Clear();
         }
-        void TickRockMaterials(LTWorld world,Shader shader,List<LTPaintStamp> active,List<Rect> bounds)
+        void TickRockMaterials(LTWorld world,Shader shader,List<LTPaintStamp> active,List<Rect> bounds,List<LTRoadMath.Snapshot> asphaltInputs,
+            Dictionary<LTSurfaceLayer,LayerChangeInput> layerInputs)
         {
             var live=new HashSet<LTMeshStamp>();int painted=0;
             var warnings=new List<string>();
@@ -96,19 +97,17 @@ namespace LocalTerrainPrototype
                     coverage=Mix(coverage,s.transform.localToWorldMatrix.GetHashCode());
                     if(s.mask)coverage=Mix(coverage,s.mask.imageContentsHash.GetHashCode());
                 }
-                if(local.Exists(s=>s.HasTerrainFilters))coverage=Mix(coverage,terrain.signature.GetHashCode());
+                if(local.Exists(s=>s.HasTerrainFilters))coverage=Mix(coverage,TerrainFilterSignature(rect,local));
                 int surface=Mix(world.triplanarTexturing?1:0,world.lightweightBackground?1:0);
                 surface=Mix(surface,world.layerHeightBlend.GetHashCode());
-                foreach(var layer in layers)
-                {
-                    surface=Mix(surface,layer.SurfaceHash());
-                    if(layer.baseColorMap)surface=Mix(surface,layer.baseColorMap.imageContentsHash.GetHashCode());
-                    if(layer.normalMap)surface=Mix(surface,layer.normalMap.imageContentsHash.GetHashCode());
-                    if(layer.maskMap)surface=Mix(surface,layer.maskMap.imageContentsHash.GetHashCode());
-                }
+                foreach(var layer in layers)surface=layerInputs[layer].AppendSurface(surface);
                 var state=rock.paint;
                 // Base-only shader never samples weights; avoid a 257x257 bake per plain rock.
-                if(layers.Count>1 && (!state.ready||state.coverageHash!=coverage))Bake(world,rect,local,layers,state);
+                if(layers.Count>1 && (!state.ready||state.coverageHash!=coverage))
+                {
+                    using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.WeightBake))Bake(world,rect,local,layers,state,asphaltInputs);
+                    world.paintCpu.WeightBaked();
+                }
                 if(!state.ready||state.coverageHash!=coverage||state.surfaceHash!=surface)
                 {
                     Bind(state.material,world,rect,layers,state);

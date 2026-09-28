@@ -22,6 +22,7 @@ namespace LocalTerrainPrototype
     {
         public const int MaxPoints = 1024;
         public const int MaxSamples = 32768;
+        public const int TextureBakeBlockSize = 8;
         const float MinSpan = .001f;
 
         public struct Sample
@@ -56,6 +57,8 @@ namespace LocalTerrainPrototype
             public int seed;
             public float sampleSpacing, terrainCellSize, meshChunkLength, textureRepeatMetres, surfaceOffset;
             public bool clearVegetation, clearStones;
+            public bool straightStart,straightEnd;
+            public float junctionStartLength,junctionEndLength;
             // Coverage multiplier, not a widening of the track mask: the centre strip stays intact.
             public float vegetationFade;
             public int groundLayerId;
@@ -97,6 +100,7 @@ namespace LocalTerrainPrototype
                 Range(textureRepeatMetres, .01f, 100000, "textureRepeatMetres");
                 Range(surfaceOffset, 0, 1000, "surfaceOffset");
                 Range(vegetationFade, 0, 1, "vegetationFade");
+                Range(junctionStartLength,0,100000,"junctionStartLength");Range(junctionEndLength,0,100000,"junctionEndLength");
                 if (mode == LTRoadMode.Offroad && pattern == LTRoadPattern.Tracks &&
                     (rutSeparation <= rutWidth || rutSeparation + rutWidth > width))
                     throw Invalid("Tracks need rutSeparation > rutWidth and rutSeparation + rutWidth <= width. Increase road width or reduce the ruts.");
@@ -178,10 +182,14 @@ namespace LocalTerrainPrototype
 
             /// <summary>Nearest clamped XZ segment, including outside the influence bounds. False for non-finite input.</summary>
             public bool TrySample(float x, float z, out Hit hit)
+                => TrySampleWithin(x, z, float.PositiveInfinity, out hit);
+
+            // Limit height/mask searches, but never the endpoint-extending UV query.
+            bool TrySampleWithin(float x, float z, float maxDistanceSquared, out Hit hit)
             {
                 hit = default;
                 if (!Finite(x) || !Finite(z) || Math.Abs(x) > 1e7f || Math.Abs(z) > 1e7f) return false;
-                float best = float.PositiveInfinity, t = 0;
+                float best = maxDistanceSquared, t = 0;
                 int segment = -1;
                 Nearest(0, x, z, ref best, ref segment, ref t);
                 if (segment < 0) return false;
@@ -194,6 +202,27 @@ namespace LocalTerrainPrototype
                     distance = a.distance + (b.distance - a.distance) * t,
                     bank = a.bank + (b.bank - a.bank) * t };
                 return true;
+            }
+
+            bool TryInfluenceSample(float x, float z, out Hit hit)
+            {
+                float radius = width * .5f + shoulderWidth + blendWidth;
+                // Conservative guard for squared-distance rounding at the outer edge.
+                radius += Math.Max(.001f, radius * .00001f);
+                return TrySampleWithin(x, z, radius * radius, out hit);
+            }
+
+            // Same suppression formula as the map baker, but with a bounded nearest
+            // search. Padding is the baker's bilinear cell-diagonal guard, not blendWidth.
+            public float DisplacementSuppression(float x,float z,float padding)
+            {
+                if(!Finite(padding)||padding<0)throw Invalid("Suppression padding must be finite and non-negative.");
+                float feather=Math.Max(.0001f,shoulderWidth);
+                float radius=width*.5f+padding+feather;
+                radius+=Math.Max(.001f,radius*.00001f);
+                if(!TrySampleWithin(x,z,radius*radius,out var hit))return 0;
+                float distance=hit.radialDistance-width*.5f-padding;
+                return 1-Mathf.SmoothStep(0,1,distance/feather);
             }
 
             /// <summary>Unwrapped texture frame. Unlike geometry queries, UVs extend
@@ -237,6 +266,18 @@ namespace LocalTerrainPrototype
                 return new RectInt(x0, z0, x1 - x0, z1 - z0);
             }
 
+            /// <summary>Conservative sparse UV block selection. Two texels retain
+            /// weight interpolation support and the UV/Jacobian's four-corner footprint.</summary>
+            public bool TextureBakeBlockIntersects(Rect chunk,int resolution,RectInt block)
+            {
+                if(resolution<2||chunk.width<=0||chunk.height<=0)throw Invalid("Invalid UV block grid.");
+                if(block.width<=0||block.height<=0)return false;
+                float dx=chunk.width/(resolution-1),dz=chunk.height/(resolution-1);
+                var area=Rect.MinMaxRect(chunk.xMin+(block.xMin-2)*dx,chunk.yMin+(block.yMin-2)*dz,
+                    chunk.xMin+(block.xMax+1)*dx,chunk.yMin+(block.yMax+1)*dz);
+                return Intersects(area);
+            }
+
             void Nearest(int index, float x, float z, ref float best, ref int segment, ref float fraction)
             {
                 var node = nodes[index];
@@ -273,20 +314,28 @@ namespace LocalTerrainPrototype
             public float ApplyHeight(float x, float z, float originalHeight)
             {
                 if (!Finite(originalHeight)) throw Invalid("originalHeight must be finite.");
-                if (!InsideBounds(x, z) || !TrySample(x, z, out var hit)) return originalHeight;
+                if (mode == LTRoadMode.Offroad && flatten <= 0 && !settings.straightStart&&!settings.straightEnd) return originalHeight;
+                if (!InsideBounds(x, z) || !TryInfluenceSample(x, z, out var hit)) return originalHeight;
+                // Connected endpoints have a cut plane, not a rounded height cap.
+                // In particular an offroad ramp must not lift terrain through the asphalt centre.
+                if(settings.straightStart&&hit.distance<=0&&Vector3.Dot(new Vector3(x-hit.position.x,0,z-hit.position.z),new Vector3(-data[0].right.z,0,data[0].right.x))<-.00001f)return originalHeight;
+                if(settings.straightEnd&&hit.distance>=length&&Vector3.Dot(new Vector3(x-hit.position.x,0,z-hit.position.z),new Vector3(-data[data.Length-1].right.z,0,data[data.Length-1].right.x))>.00001f)return originalHeight;
+                float rutFade=1;
+                if(settings.straightStart)rutFade=Math.Min(rutFade,Mathf.SmoothStep(0,1,hit.distance/Math.Max(.001f,settings.junctionStartLength)));
+                if(settings.straightEnd)rutFade=Math.Min(rutFade,Mathf.SmoothStep(0,1,(length-hit.distance)/Math.Max(.001f,settings.junctionEndLength)));
                 float weight = Fade(hit.radialDistance, width * .5f, shoulderWidth + blendWidth);
-                weight *= mode == LTRoadMode.Asphalt ? 1 : flatten;
+                weight *= mode == LTRoadMode.Asphalt ? 1 : Math.Max(flatten,1-rutFade);
                 if (weight <= 0) return originalHeight;
                 float target = SurfaceHeight(hit, hit.lateral);
                 if (mode == LTRoadMode.Offroad && pattern == LTRoadPattern.Tracks)
-                    target -= rutDepth * TrackWeight(hit, x, z);
+                    target -= rutDepth * TrackWeight(hit, x, z)*rutFade;
                 // Offset never subtracts from originalHeight: repeat evaluation cannot accumulate an asphalt offset.
                 return originalHeight + (target - originalHeight) * weight;
             }
 
             public float PaintWeight(float x, float z)
             {
-                if (!InsideBounds(x, z) || !TrySample(x, z, out var hit)) return 0;
+                if (!InsideBounds(x, z) || !TryInfluenceSample(x, z, out var hit)) return 0;
                 return mode == LTRoadMode.Offroad && pattern == LTRoadPattern.Tracks
                     ? TrackWeight(hit, x, z) : Fade(hit.radialDistance, width * .5f, shoulderWidth);
             }
@@ -353,6 +402,9 @@ namespace LocalTerrainPrototype
                 throw Invalid("Use 2 to " + MaxPoints + " road points; split longer roads into separate components.");
             var source = new LTRoadPoint[points.Count];
             int hash = Mix(17, settings.sourceTransformHash);
+            if(settings.straightStart||settings.straightEnd)hash=Mix(hash,(settings.straightStart?1:0)|(settings.straightEnd?2:0));
+            if(settings.straightStart)hash=Add(hash,settings.junctionStartLength);
+            if(settings.straightEnd)hash=Add(hash,settings.junctionEndLength);
             hash = Mix(hash, TransformHash(terrainFromRoad));
             hash = Mix(hash, points.Count);
             for (int i = 0; i < source.Length; i++)
@@ -384,6 +436,12 @@ namespace LocalTerrainPrototype
                 float d2 = (float)Math.Sqrt(HorizontalLength(p3 - p2));
                 var m1 = d1 * ((p1 - p0) / d0 - (p2 - p0) / (d0 + d1) + (p2 - p1) / d1);
                 var m2 = d1 * ((p2 - p1) / d1 - (p3 - p1) / (d1 + d2) + (p3 - p2) / d2);
+                if(settings.straightStart&&i==0||settings.straightEnd&&i==source.Length-2)m1=m2=p2-p1;
+                else
+                {
+                    if(settings.straightStart&&i==1)m1.y=0;
+                    if(settings.straightEnd&&i==source.Length-3)m2.y=0;
+                }
                 Subdivide(result, p1, p1 + m1 / 3, p2 - m2 / 3, p2,
                     source[i].bank, source[i + 1].bank, settings.sampleSpacing, 0, p2 - p1);
             }

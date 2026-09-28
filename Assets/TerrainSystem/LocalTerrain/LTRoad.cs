@@ -4,6 +4,9 @@ using UnityEngine;
 
 namespace LocalTerrainPrototype
 {
+    public enum LTRoadMeshSource { ProceduralRibbon, Module }
+    public enum LTRoadLODMode { Disabled, Automatic, Authored }
+    public enum LTRoadModuleAxis { Z, X }
     [ExecuteAlways, DisallowMultipleComponent, RequireComponent(typeof(LTPaintStamp))]
     [AddComponentMenu("Local Terrain/Road")]
     public sealed class LTRoad : MonoBehaviour
@@ -17,6 +20,7 @@ namespace LocalTerrainPrototype
         public LTRoadMode mode;
         public LTRoadPattern pattern;
         public LTRoadProjection projection = LTRoadProjection.World;
+        public LTRoadJunction startJunction,endJunction;
         public Vector2 textureOffset;
         [Min(.01f)] public float width = 6;
         [Min(0)] public float shoulderWidth = 1;
@@ -30,6 +34,19 @@ namespace LocalTerrainPrototype
         public int seed = 12345;
         public LTSurfaceLayer groundLayer;
         public Material asphaltMaterial;
+        public LTRoadMeshSource asphaltSource;
+        public Mesh asphaltModule;
+        public GameObject asphaltModulePrefab;
+        public LTRoadModuleAxis moduleAxis;
+        public Material[] moduleMaterials=Array.Empty<Material>();
+        [Min(0), Tooltip("0 uses the module's original length; the last repeat is fitted to the spline.")]
+        public float moduleLength;
+        public bool moduleFitWidth=true;
+        public float moduleBaseY;
+        public LTRoadLODMode asphaltLODMode=LTRoadLODMode.Automatic;
+        public Mesh[] moduleLODMeshes=Array.Empty<Mesh>();
+        public LTLODSettings[] asphaltLODs={new LTLODSettings(1,.05f,50),new LTLODSettings(2,.1f,120),new LTLODSettings(3,.2f,250)};
+        [HideInInspector] public string meshLODStatus;
         [Min(.01f)] public float sampleSpacing = 1;
         [Min(.01f)] public float terrainCellSize = .5f;
         [Min(.01f)] public float meshChunkLength = 32;
@@ -55,6 +72,9 @@ namespace LocalTerrainPrototype
         public LTRoadMath.Snapshot Capture(LTWorld world)
         {
             if (world == null) throw new ArgumentNullException(nameof(world), "LTRoad.Capture requires its terrain world.");
+            if(points==null||points.Count<2)throw new ArgumentException("Дороге нужны минимум две точки.");
+            if(startJunction&&startJunction.isActiveAndEnabled&&endJunction&&endJunction.isActiveAndEnabled&&points.Count<3)
+                throw new ArgumentException("Между двумя перекрёстками нужна хотя бы одна промежуточная точка для направления въездов.");
             Matrix4x4 roadMatrix = transform.localToWorldMatrix, worldMatrix = world.transform.localToWorldMatrix;
             LTRoadMath.ValidateTransform(worldMatrix, true, "Terrain world transform");
             LTRoadMath.ValidateTransform(roadMatrix, false, "Road transform");
@@ -68,13 +88,21 @@ namespace LocalTerrainPrototype
                 terrainCellSize = terrainCellSize, meshChunkLength = meshChunkLength,
                 textureRepeatMetres = textureRepeatMetres, surfaceOffset = surfaceOffset,
                 clearVegetation = clearVegetation, clearStones = clearStones, vegetationFade = vegetationFade,
+                straightStart=startJunction&&startJunction.isActiveAndEnabled,straightEnd=endJunction&&endJunction.isActiveAndEnabled,
+                junctionStartLength=startJunction?startJunction.neckLength:0,junctionEndLength=endJunction?endJunction.neckLength:0,
                 groundLayerId = groundLayer != null ? groundLayer.GetInstanceID() : 0,
-                sourceTransformHash = unchecked(LTRoadMath.TransformHash(worldMatrix) * 397 ^ LTRoadMath.TransformHash(roadMatrix))
+                sourceTransformHash = unchecked(LTRoadMath.TransformHash(worldMatrix) * 397 ^ LTRoadMath.TransformHash(roadMatrix) ^
+                    (startJunction?startJunction.EndpointHash:0)*17^(endJunction?endJunction.EndpointHash:0)*31)
             };
             if (cached != null && cachedSettings.Equals(settings) && cachedRoadMatrix.Equals(roadMatrix) &&
                 cachedWorldMatrix.Equals(worldMatrix) && SamePoints()) return cached;
             // Build first: an invalid edit never returns the previous, stale snapshot as if it were valid.
-            var snapshot = LTRoadMath.Build(points, world.transform.worldToLocalMatrix * roadMatrix, settings);
+            var effective=new List<LTRoadPoint>(points);
+            if(startJunction&&startJunction.isActiveAndEnabled)
+            {startJunction.Endpoint(this,true,out var port,out var neck);effective[0]=port;effective.Insert(1,neck);}
+            if(endJunction&&endJunction.isActiveAndEnabled)
+            {endJunction.Endpoint(this,false,out var port,out var neck);effective[effective.Count-1]=port;effective.Insert(effective.Count-1,neck);}
+            var snapshot = LTRoadMath.Build(effective, world.transform.worldToLocalMatrix * roadMatrix, settings);
             cachedPoints = points.ToArray();
             cachedSettings = settings; cachedRoadMatrix = roadMatrix; cachedWorldMatrix = worldMatrix;
             cached = snapshot;
@@ -113,6 +141,7 @@ namespace LocalTerrainPrototype
             sampleSpacing = Clamp(sampleSpacing, .01f, 10000, 1);
             terrainCellSize = Clamp(terrainCellSize, .01f, 10000, .5f);
             meshChunkLength = Clamp(meshChunkLength, .01f, 100000, 32);
+            moduleLength=Clamp(moduleLength,0,100000,0);moduleBaseY=Clamp(moduleBaseY,-10000,10000,0);
             textureRepeatMetres = Clamp(textureRepeatMetres, .01f, 100000, 4);
             surfaceOffset = Clamp(surfaceOffset, 0, 1000, .06f);
             vegetationFade = Clamp(vegetationFade, 0, 1, 1);

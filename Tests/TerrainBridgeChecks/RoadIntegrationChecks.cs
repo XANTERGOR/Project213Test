@@ -31,7 +31,7 @@ partial class Checks
 
         const string root="Assets/TerrainSystem/LocalTerrain/";
         var runtime=File.ReadAllText(root+"LTPaintRuntime.cs");
-        foreach(var hook in new[]{"BakeRoadProjection(world,rect,stamps,layers,state);","ReleaseRoadProjection(state);",
+        foreach(var hook in new[]{"BakeRoadProjection(world,rect,stamps,layers,state,asphaltInputs);","ReleaseRoadProjection(state);",
             "BindRoadProjection(material,state);","TryRoadProjectionUV(state,i,px,pz","roads[i].PaintWeight(point.x,point.z)",
             "asphaltInputs","RoadDisplacementMultiplier(state,px,pz)"})Require(runtime.Contains(hook),"road painter integration missing "+hook);
         var details=File.ReadAllText(root+"LTDetailRenderer.cs");
@@ -46,10 +46,18 @@ partial class Checks
         var editor=File.ReadAllText(root+"Editor/LTRoadEditor.cs");
         var mapping=File.ReadAllText(root+"Shaders/LTRoadProjection.hlsl");
         var roadProjection=File.ReadAllText(root+"LTPaintRoadProjection.cs");
+        Require(!roadProjection.Contains("GetComponentsInChildren<LTRoad>")&&roadProjection.Contains("foreach (var snapshot in asphaltInputs)"),
+            "road projection reuses the tick's validated asphalt snapshots rather than recapturing per chunk");
+        var terrainEditor=File.ReadAllText(root+"Editor/LTEditor.cs");
+        foreach(var hook in new[]{"Mark(w,s,a.bounds,a.road)","Mark(w,s,b.bounds,b.road)",
+            "MarkDensity(w,state,a.bounds,a.road)","MarkDensity(w,state,b.bounds,b.road)",
+            "road.Intersects(Expanded(chunk,hx,hz))","id=stamp.id,road=road"})
+            Require(terrainEditor.Contains(hook),"old/new road dirty-region/normal halo integration missing "+hook);
         Require(roadProjection.Contains("road.TryTextureCoordinates(x, z, out uv, out right)"),"road texture bake uses the endpoint-extending UV query");
-        Require(roadProjection.Contains("sources[slot].TextureBakeRegion(rect, RoadProjectionSize)")&&
-            roadProjection.Contains("z = region.yMin; z < region.yMax; z++")&&
-            roadProjection.Contains("x = region.xMin; x < region.xMax; x++"),"UV baker evaluates only the half-open guarded road region");
+        var projectionMath=File.ReadAllText(root+"LTRoadProjectionMath.cs");
+        Require(roadProjection.Contains("LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize)")&&
+            projectionMath.Contains("TextureBakeRegion(rect,size)")&&projectionMath.Contains("TextureBakeBlockIntersects(rect,size,block)")&&
+            projectionMath.Contains("z=block.yMin;z<block.yMax;z++")&&projectionMath.Contains("x=block.xMin;x<block.xMax;x++"),"UV baker evaluates only intersecting guarded blocks in the road region");
         Require(mapping.Contains("slots[slot&3]")&&mapping.Contains("_LTRoadProjectionSlots2"),"all twelve slot indices must stay inside float4 bounds");
         Require(mapping.Contains("256/_LTRect.z")&&mapping.Contains("256/_LTRect.w"),"road gradients must account for non-square chunks");
         Require(editor.Contains("Assets/LocalTerrainRoads")&&!editor.Contains("DeleteAsset("),"road mesh assets must be separate and recoverable");

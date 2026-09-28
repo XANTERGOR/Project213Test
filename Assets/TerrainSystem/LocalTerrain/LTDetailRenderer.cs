@@ -486,6 +486,20 @@ namespace LocalTerrainPrototype
                 }
             }
             foreach(var layer in surface.layers.Keys)AddEntries(layer.details,layer,null,0,1,-1,layer.detailDensityMask);
+            var junctionRemovals=new List<Stamp>();
+            // Junction removal is an immutable snapshot, not a hidden editable stamp.
+            foreach(var node in world.GetComponentsInChildren<LTRoadJunction>())
+            {
+                if(!node.isActiveAndEnabled||node.World!=world)continue;
+                LTRoadJunctionMath.Snapshot data;
+                try{data=node.Capture();}catch(ArgumentException){continue;}
+                float radius=data.coreRadius+data.blend;
+                var removal=new Stamp{id="junction:"+node.GetInstanceID(),rect=data.bounds,
+                    inverse=Matrix4x4.Translate(-data.centre)*world.transform.worldToLocalMatrix,
+                    size=Vector2.one*(2*radius),ellipse=true,falloff=data.blend/radius,allLayers=true,
+                    categories=(node.clearVegetation?LTDetailCategory.Vegetation:0)|(node.clearStones?LTDetailCategory.Stones:0),mode=LTDetailStampMode.Remove};
+                removal.hash=Mix(data.hash,(int)removal.categories);junctionRemovals.Add(removal);
+            }
             var active=new List<LTDetailStamp>();
             foreach(var s in FindObjectsByType<LTDetailStamp>(FindObjectsInactive.Exclude,FindObjectsSortMode.None))
                 if(s.isActiveAndEnabled&&s.world==world)active.Add(s);
@@ -509,6 +523,8 @@ namespace LocalTerrainPrototype
                 stamps.Add(stamp);
                 if(s.mode!=LTDetailStampMode.Remove)AddEntries(s.details,null,stamp,s.seed,s.densityMultiplier,stamps.Count-1,s.detailDensityMask);
             }
+            // Apply after Add/Replace too, matching road clearing semantics.
+            stamps.AddRange(junctionRemovals);
             sources.Sort((a,b)=>string.CompareOrdinal(a.owner+":"+a.entry.Id,b.owner+":"+b.entry.Id));
             var worldMatrix=world.transform.localToWorldMatrix;
             int common=Mix(Mix(seed,densityMultiplier.GetHashCode()),cellSize);common=Mix(common,worldMatrix.GetHashCode());

@@ -3,6 +3,190 @@ namespace LocalTerrainPrototype
 {
     public static class LTPaintMath
     {
+        // A bake owns this cache. Values are reused only within the same pixel and
+        // effective radius; failures are cached too (holes/absent terrain).
+        public delegate bool HeightSampler(float x,float z,out float height,out float slope);
+        public sealed class PixelTerrainCache
+        {
+            readonly HeightSampler sample;
+            readonly float sizeX,sizeZ;
+            readonly float[] radii,values;
+            readonly bool[] valid;
+            int count;
+            float x,z,height,slope;
+            bool sampled,found;
+            public PixelTerrainCache(HeightSampler sample,float sizeX,float sizeZ,int capacity)
+            {this.sample=sample;this.sizeX=sizeX;this.sizeZ=sizeZ;radii=new float[capacity];values=new float[capacity];valid=new bool[capacity];}
+            public void Begin(float px,float pz){x=px;z=pz;count=0;sampled=false;}
+            public bool Surface(out float h,out float s)
+            {
+                if(!sampled){found=sample(x,z,out height,out slope);sampled=true;}
+                h=height;s=slope;return found;
+            }
+            public bool Curvature(float radius,out float value)
+            {
+                radius=Mathf.Max(.1f,radius);
+                radius=Mathf.Min(radius,Mathf.Min(Mathf.Min(x,sizeX-x),Mathf.Min(z,sizeZ-z)));
+                for(int i=0;i<count;i++)if(radii[i]==radius){value=values[i];return valid[i];}
+                value=0;bool ok=Surface(out float center,out _);
+                if(ok&&radius>=.1f)
+                {
+                    float left=0,right=0,back=0,front=0;
+                    ok=sample(x-radius,z,out left,out _)&&sample(x+radius,z,out right,out _)&&
+                        sample(x,z-radius,out back,out _)&&sample(x,z+radius,out front,out _);
+                    if(ok)value=LTPaintMath.Curvature(center,left,right,back,front,radius);
+                }
+                if(count<radii.Length){radii[count]=radius;values[count]=value;valid[count]=ok;count++;}
+                return ok;
+            }
+        }
+
+        // Bounded adaptive bins: dense road tiles need finer lookup than empty
+        // terrain tiles. The triangle order in each bin remains unchanged.
+        public static int TerrainBinAxis(int triangleCount)
+            =>Mathf.Clamp(Mathf.NextPowerOfTwo(Mathf.CeilToInt(Mathf.Sqrt(Mathf.Max(1,triangleCount)/8f))),16,128);
+        public static int TerrainBin(float position,float min,float size,int axis)
+            =>Mathf.Clamp(Mathf.FloorToInt((position-min)/size*axis),0,axis-1);
+        public static RectInt TerrainTriangleBins(Rect rect,Vector3 a,Vector3 b,Vector3 c,int axis)
+        {
+            float x0=Mathf.Min(a.x,Mathf.Min(b.x,c.x)),x1=Mathf.Max(a.x,Mathf.Max(b.x,c.x));
+            float z0=Mathf.Min(a.z,Mathf.Min(b.z,c.z)),z1=Mathf.Max(a.z,Mathf.Max(b.z,c.z));
+            // TriangleWeights accepts a small negative barycentric coordinate.
+            // Retain that support across NEW bin edges, but preserve the previous
+            // 16x16 lookup footprint at old edges (including its tie ordering).
+            float px=(x1-x0)*.00002f+.00001f,pz=(z1-z0)*.00002f+.00001f;
+            int factor=axis/16;
+            int loX=Mathf.Max(TerrainBin(x0-px,rect.xMin,rect.width,axis),TerrainBin(x0,rect.xMin,rect.width,16)*factor);
+            int hiX=Mathf.Min(TerrainBin(x1+px,rect.xMin,rect.width,axis),(TerrainBin(x1,rect.xMin,rect.width,16)+1)*factor-1);
+            int loZ=Mathf.Max(TerrainBin(z0-pz,rect.yMin,rect.height,axis),TerrainBin(z0,rect.yMin,rect.height,16)*factor);
+            int hiZ=Mathf.Min(TerrainBin(z1+pz,rect.yMin,rect.height,axis),(TerrainBin(z1,rect.yMin,rect.height,16)+1)*factor-1);
+            return new RectInt(loX,loZ,hiX-loX+1,hiZ-loZ+1);
+        }
+
+        public struct SeamContribution {public Vector3Int key;public Vector3 normal;}
+        public static SeamContribution[] TerrainSeamContributions(Rect rect,Vector3[] points,int[] triangles)
+        {
+            var border=new bool[points.Length];
+            for(int i=0;i<points.Length;i++)
+            {
+                var p=points[i];border[i]=Mathf.Abs(p.x-rect.xMin)<=.0001f||Mathf.Abs(p.x-rect.xMax)<=.0001f||
+                    Mathf.Abs(p.z-rect.yMin)<=.0001f||Mathf.Abs(p.z-rect.yMax)<=.0001f;
+            }
+            var result=new System.Collections.Generic.List<SeamContribution>();
+            for(int i=0;i+2<triangles.Length;i+=3)
+            {
+                int a=triangles[i],b=triangles[i+1],c=triangles[i+2];
+                if(!border[a]&&!border[b]&&!border[c])continue;
+                var normal=Vector3.Cross(points[b]-points[a],points[c]-points[a]);
+                for(int k=0;k<3;k++)
+                {
+                    int vertex=triangles[i+k];if(!border[vertex])continue;var p=points[vertex];
+                    result.Add(new SeamContribution{key=new Vector3Int(Mathf.RoundToInt(p.x*1000),Mathf.RoundToInt(p.y*1000),Mathf.RoundToInt(p.z*1000)),normal=normal});
+                }
+            }
+            return result.ToArray();
+        }
+        public static System.Collections.Generic.HashSet<int> TerrainNeighbours(System.Collections.Generic.IEnumerable<int> ids,int countX,int countZ)
+        {
+            var result=new System.Collections.Generic.HashSet<int>();
+            foreach(int id in ids)
+                for(int z=Mathf.Max(0,id/countX-1);z<=Mathf.Min(countZ-1,id/countX+1);z++)
+                for(int x=Mathf.Max(0,id%countX-1);x<=Mathf.Min(countX-1,id%countX+1);x++)result.Add(z*countX+x);
+            return result;
+        }
+
+        // Authoring revisions are separate from generated mesh revisions. A density
+        // refinement must not reset its own conservative coverage union. Old AND new
+        // stamp footprints are touched by the editor, including on removal and Undo.
+        public sealed class TerrainAuthoringRevisions
+        {
+            int[] tiles=System.Array.Empty<int>();
+            int countX,countZ,epoch,revision;
+            float width,depth;
+            string config;
+            public void Configure(int x,int z,float tileWidth,float tileDepth,string key)
+            {
+                if(x==countX&&z==countZ&&tileWidth==width&&tileDepth==depth&&config==key)return;
+                countX=x;countZ=z;width=tileWidth;depth=tileDepth;config=key;
+                tiles=new int[System.Math.Max(0,x)*System.Math.Max(0,z)];
+                unchecked{epoch++;}revision=0;
+            }
+            public void Touch(int id)
+            {
+                if(id<0||id>=tiles.Length)throw new System.ArgumentOutOfRangeException(nameof(id));
+                unchecked{tiles[id]=++revision;}
+            }
+            public int RegionSignature(Rect area,float radius)
+            {
+                var range=TerrainSampleTileRange(area,radius,width,depth,countX,countZ);
+                int hash=epoch;
+                unchecked
+                {
+                    for(int z=range.yMin;z<range.yMax;z++)for(int x=range.xMin;x<range.xMax;x++)
+                        hash=hash*397^tiles[z*countX+x];
+                }
+                return hash;
+            }
+        }
+
+        // Streaming content key for non-adversarial geometry caches. Two independent
+        // 64-bit accumulators; no per-number strings, buffers, native calls or boxing.
+        // Not a cryptographic hash. A new instance with the same words gives the same key.
+        public struct GeometryFingerprint
+        {
+            ulong a,b,count;
+            public void Add(int value)
+            {
+                unchecked
+                {
+                    if(count==0){a=14695981039346656037UL;b=0x9e3779b185ebca87UL;}
+                    uint word=(uint)value;
+                    a=(a^word)*1099511628211UL;
+                    b^=word+0x9e3779b97f4a7c15UL;
+                    b=((b<<27)|(b>>37))*0xc2b2ae3d27d4eb4fUL+0x165667b19e3779f9UL;
+                    count++;
+                }
+            }
+            public void Add(float value)=>Add(new FloatBits{value=value}.bits);
+            public void Add(Vector3 value){Add(value.x);Add(value.y);Add(value.z);}
+            static ulong Finish(ulong value)
+            {
+                unchecked
+                {
+                    value^=value>>33;value*=0xff51afd7ed558ccdUL;
+                    value^=value>>33;value*=0xc4ceb9fe1a85ec53UL;return value^(value>>33);
+                }
+            }
+            public override string ToString()=>"g2:"+
+                Finish(a^count).ToString("x16",System.Globalization.CultureInfo.InvariantCulture)+
+                Finish(b^count).ToString("x16",System.Globalization.CultureInfo.InvariantCulture);
+            [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
+            struct FloatBits
+            {
+                [System.Runtime.InteropServices.FieldOffset(0)]public float value;
+                [System.Runtime.InteropServices.FieldOffset(0)]public int bits;
+            }
+        }
+
+        // Conservative dependencies for height/slope and four curvature probes.
+        // Sampling clamps to the world and chooses floor(position / tile size).
+        // One extra tile protects endpoint rounding and shared-edge normal changes.
+        public static RectInt TerrainSampleTileRange(Rect area,float radius,float width,float depth,int countX,int countZ)
+        {
+            if(countX<=0||countZ<=0)return new RectInt(0,0,0,0);
+            bool Finite(float v)=>!float.IsNaN(v)&&!float.IsInfinity(v);
+            if(!Finite(radius)||!Finite(width)||!Finite(depth)||width<=0||depth<=0||
+                !Finite(area.xMin)||!Finite(area.xMax)||!Finite(area.yMin)||!Finite(area.yMax))
+                return new RectInt(0,0,countX,countZ);
+            radius=Mathf.Max(0,radius);
+            int Index(float value,float size,int count)=>Mathf.FloorToInt(Mathf.Clamp(value/size,0,count-1));
+            int x0=Mathf.Max(0,Index(Mathf.Min(area.xMin,area.xMax)-radius,width,countX)-1);
+            int z0=Mathf.Max(0,Index(Mathf.Min(area.yMin,area.yMax)-radius,depth,countZ)-1);
+            int x1=Mathf.Min(countX,Index(Mathf.Max(area.xMin,area.xMax)+radius,width,countX)+2);
+            int z1=Mathf.Min(countZ,Index(Mathf.Max(area.yMin,area.yMax)+radius,depth,countZ)+2);
+            return new RectInt(x0,z0,x1-x0,z1-z0);
+        }
+
         // Transfer four subdivisions per axis from the GPU to the source mesh.
         // Approximate density only: quadtree rounding, odd partitioning and fades
         // mean this is not an equal-triangle-count or equal-cost guarantee.

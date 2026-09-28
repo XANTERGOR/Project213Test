@@ -81,6 +81,9 @@ partial class Checks
     static void Main()
     {
         RoadMathChecks.Run();
+        RoadNetworkChecks();
+        SpatialLODChecks();
+        RoadModuleChecks();
         RoadIntegrationChecks();
         PaintChecks();
         EdgeBenchmark();

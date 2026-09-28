@@ -94,6 +94,8 @@ namespace LocalTerrainPrototype
             public Func<float,float,float> evaluate;
             public Func<float,float,bool> cut;
             public Func<Rect,bool> transitionDiagonals;
+            public int forcedMask=-1;
+            bool Midpoint(Vector3Int p,int side)=>forcedMask>=0?(forcedMask&(1<<side))!=0:forest.Midpoint(chunk,p,side);
             public readonly List<Vector3> vertices=new List<Vector3>(),normals=new List<Vector3>();
             public readonly List<Vector2> uv=new List<Vector2>();public readonly List<int> triangles=new List<int>();
             readonly List<Leaf> leaves=new List<Leaf>();
@@ -238,13 +240,13 @@ namespace LocalTerrainPrototype
                     int x=p.x,z=p.y,w=p.z;
                     // Clockwise boundary with at most one midpoint per edge.
                     var edge=new List<int>(8){Vertex(x,z)};
-                    if(forest.Midpoint(chunk,p,0))edge.Add(Vertex(x,z+w*.5f));
+                    if(Midpoint(p,0))edge.Add(Vertex(x,z+w*.5f));
                     edge.Add(Vertex(x,z+w));
-                    if(forest.Midpoint(chunk,p,3))edge.Add(Vertex(x+w*.5f,z+w));
+                    if(Midpoint(p,3))edge.Add(Vertex(x+w*.5f,z+w));
                     edge.Add(Vertex(x+w,z+w));
-                    if(forest.Midpoint(chunk,p,1))edge.Add(Vertex(x+w,z+w*.5f));
+                    if(Midpoint(p,1))edge.Add(Vertex(x+w,z+w*.5f));
                     edge.Add(Vertex(x+w,z));
-                    if(forest.Midpoint(chunk,p,2))edge.Add(Vertex(x+w*.5f,z));
+                    if(Midpoint(p,2))edge.Add(Vertex(x+w*.5f,z));
                     var region=new Rect(X(x),Z(z),w/(float)N*rect.width,w/(float)N*rect.height);
                     bool regularTopology=transitionDiagonals!=null&&transitionDiagonals(region);
                     if(edge.Count==4)
@@ -312,6 +314,62 @@ namespace LocalTerrainPrototype
         {
             var b=new Builder{rect=rect,worldSize=worldSize,vertexBudget=budget,evaluate=evaluate,cut=cut,forest=forest,chunk=chunk,transitionDiagonals=transitionDiagonals};
             b.Emit(plan);b.CompactCutVertices();v=b.vertices.ToArray();normals=b.normals.ToArray();uv=b.uv.ToArray();triangles=b.triangles.ToArray();
+        }
+        public static void EmitSpatialVariants(LTSpatialLODMath.Output data,Rect rect,Vector2 worldSize,int budget,
+            Func<float,float,float> evaluate,Func<float,float,bool> cut,Func<Rect,bool> transitionDiagonals=null)
+        {
+            var b=new Builder{rect=rect,worldSize=worldSize,vertexBudget=budget,evaluate=evaluate,cut=cut,transitionDiagonals=transitionDiagonals};
+            var single=new List<Vector3Int>(1){default};long indexCount=0;
+            // Seed shared cut intersections in precisely LOD0's emission order. Unused
+            // coarse variants must not win a quantized vertex-cache collision at a rim.
+            foreach(int id in data.baseCellOrder)
+            {
+                var c=data.cells[id];single[0]=new Vector3Int(c.x,c.z,c.size);
+                b.forcedMask=c.possibleMask;b.Emit(single);
+            }
+            var baseIndices=b.triangles.ToArray();
+            for(int id=0;id<data.cells.Length;id++)
+            {
+                // Ancestors above every requested level are search-only nodes. In
+                // particular, never bake unreachable coarse triangles through cut rims.
+                if(!data.renderable[id])continue;
+                var c=data.cells[id];single[0]=new Vector3Int(c.x,c.z,c.size);
+                c.variants=new LTSpatialLODVariant[LTSpatialLODMath.VariantIndex(c.possibleMask,c.possibleMask)+1];
+                for(int mask=0;mask<16;mask++)if((mask&~c.possibleMask)==0)
+                {
+                    b.forcedMask=mask;b.triangles.Clear();b.Emit(single);
+                    indexCount+=b.triangles.Count;
+                    if(indexCount>budget*192L)throw new InvalidOperationException("Spatial LOD index budget exceeded. Previous meshes preserved.");
+                    c.variants[LTSpatialLODMath.VariantIndex(mask,c.possibleMask)]=new LTSpatialLODVariant{indices=b.triangles.ToArray()};
+                }
+                data.cells[id]=c;
+            }
+            var initial=new List<int>();
+            for(int p=0;p<data.patches.Length;p++)
+            {
+                float minY=float.PositiveInfinity,maxY=float.NegativeInfinity;
+                foreach(int id in data.patches[p].levels[0].cells)
+                {
+                    var c=data.cells[id];var indices=c.variants[LTSpatialLODMath.VariantIndex(c.possibleMask,c.possibleMask)].indices;
+                    initial.AddRange(indices);
+                    foreach(int v in indices){minY=Math.Min(minY,b.vertices[v].y);maxY=Math.Max(maxY,b.vertices[v].y);}
+                }
+                if(float.IsInfinity(minY))minY=maxY=0;
+                float width=rect.width/data.divisions,depth=rect.height/data.divisions;
+                data.patches[p].bounds=new Bounds(new Vector3((p%data.divisions+.5f)*width,(minY+maxY)*.5f,(p/data.divisions+.5f)*depth),new Vector3(width,maxY-minY,depth));
+            }
+            data.vertices=b.vertices.ToArray();data.uv=b.uv.ToArray();data.baseIndices=baseIndices;
+            // LOD-independent normals from LOD0, including future coarse-cell corners.
+            // The upload step overlays the world's authoritative seam/bridge normals.
+            var normals=new Vector3[data.vertices.Length];
+            for(int i=0;i<initial.Count;i+=3)
+            {
+                int a=initial[i],d=initial[i+1],c=initial[i+2];
+                var n=Vector3.Cross(data.vertices[d]-data.vertices[a],data.vertices[c]-data.vertices[a]);
+                normals[a]+=n;normals[d]+=n;normals[c]+=n;
+            }
+            for(int i=0;i<normals.Length;i++)normals[i]=normals[i].sqrMagnitude>1e-20f?normals[i].normalized:Vector3.up;
+            data.normals=normals;
         }
         public static void Build(Rect rect,Vector2 worldSize,int baseCells,bool adaptive,float error,int budget,List<Zone> zones,int[] edges,
             Func<float,float,float> evaluate,out Vector3[] v,out Vector3[] normals,out Vector2[] uv,out int[] triangles)

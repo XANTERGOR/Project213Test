@@ -1,6 +1,8 @@
 <Project>
   <!-- Unity may not regenerate its csproj until the Editor next gains focus. -->
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'Assembly-CSharp'">
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\LTSpatial*.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTSpatial*.cs" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\LTLayerArrayBakeAsset.cs" />
     <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTLayerArrayBakeAsset.cs" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\LTLayerTextureArrays.cs" />
@@ -35,6 +37,8 @@
     <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTGlobalBakeAsset.cs" />
   </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'Assembly-CSharp-Editor'">
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTSpatial*.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTSpatial*.cs" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTLayerArraySaving.cs" />
     <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTLayerArraySaving.cs" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTRoad*.cs" />

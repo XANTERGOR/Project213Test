@@ -1,6 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><DefineConstants>$(DefineConstants);ROAD_MATH_CHECKS</DefineConstants></PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadProjectionMath.cs" Link="Production/LTRoadProjectionMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadJunctionMath.cs" Link="Production/LTRoadJunctionMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionMesh.cs" Link="Production/LTRoadJunctionMesh.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTSpatialLODMath.cs" Link="Production/LTSpatialLODMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTSpatialLODTopology.cs" Link="Production/LTSpatialLODTopology.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTLODMesh.cs" Link="Production/LTLODMesh.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadMesh.cs" Link="Production/LTRoadMesh.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadModuleMath.cs" Link="Production/LTRoadModuleMath.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadMath.cs" Link="Production/LTRoadMath.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailUploadBudget.cs" Link="Production/LTDetailUploadBudget.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailGpuData.cs" Link="Production/LTDetailGpuData.cs" />

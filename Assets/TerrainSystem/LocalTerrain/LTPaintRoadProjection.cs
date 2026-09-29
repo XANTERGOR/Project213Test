@@ -142,10 +142,11 @@ namespace LocalTerrainPrototype
             int hash = Mix(rect.GetHashCode(), RoadProjectionSize);
             try
             {
-                if (count > 0) next.texture = new Texture2DArray(RoadProjectionSize, RoadProjectionSize, slices,
-                    TextureFormat.RGBAFloat, false, true)
-                { name = "Terrain spline UV + orientation", hideFlags = HideFlags.HideAndDontSave,
-                    filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
+                using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVUpload))
+                    if (count > 0) next.texture = new Texture2DArray(RoadProjectionSize, RoadProjectionSize, slices,
+                        TextureFormat.RGBAFloat, false, true)
+                    { name = "Terrain spline UV + orientation", hideFlags = HideFlags.HideAndDontSave,
+                        filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
                 int slice = 0;
                 for (int slot = 0; slot < LayerCapacity; slot++)
                 {
@@ -155,20 +156,31 @@ namespace LocalTerrainPrototype
                     {hash=Mix(hash,source.projectionHash);if(sources[slot].Count>1)hash=Mix(hash,source.paintHash);}
                     hash = Mix(hash, Id(next.layers[slot]));
                     if (sources[slot] == null) continue;
-                    var baked=LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize);
+                    LTRoadProjectionMath.Map baked;
+                    using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVCompute))
+                        baked=LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize);
                     maps[slot]=baked.coordinates;derivatives[slot]=baked.derivatives;
-                    next.texture.SetPixels(baked.coordinates,slice,0);
+                    using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVUpload))
+                        next.texture.SetPixels(baked.coordinates,slice,0);
                     bool network=baked.derivatives!=null;
                     float slotValue=(slice+1)*(network?-1:1);
                     if (slot < 4) next.slots0[slot] = slotValue;
                     else if (slot < 8) next.slots1[slot - 4] = slotValue;
                     else next.slots2[slot - 8] = slotValue;
                     slice++;
-                    if(network){next.texture.SetPixels(baked.derivatives,slice,0);slice++;}
+                    if(network)
+                    {
+                        using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVUpload))
+                            next.texture.SetPixels(baked.derivatives,slice,0);
+                        slice++;
+                    }
                 }
-                if (next.texture) next.texture.Apply(false, true); // Retain only the explicit managed CPU snapshot.
+                using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVUpload))
+                    if (next.texture) next.texture.Apply(false, true); // Retain only the explicit managed CPU snapshot.
                 if (asphalt.Count > 0)
                 {
+                    using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVCompute))
+                    {
                     suppression = new Color32[RoadProjectionSize * RoadProjectionSize];
                     foreach (var road in asphalt) hash = Mix(hash, road.paintHash);
                     // Pad the full-strength core by one cell diagonal. Every corner
@@ -186,10 +198,14 @@ namespace LocalTerrainPrototype
                         byte value = (byte)Mathf.RoundToInt(Mathf.Clamp01(weight) * 255);
                         suppression[z * RoadProjectionSize + x] = new Color32(value, 0, 0, 255);
                     }
+                    }
+                    using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVUpload))
+                    {
                     next.suppression = new Texture2D(RoadProjectionSize, RoadProjectionSize, TextureFormat.RGBA32, false, true)
                     { name = "Asphalt displacement suppression", hideFlags = HideFlags.HideAndDontSave,
                         filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
                     next.suppression.SetPixels32(suppression); next.suppression.Apply(false, true);
+                    }
                 }
                 next.cpu = new RoadProjectionSnapshot(rect, maps, derivatives, suppression, hash);
             }

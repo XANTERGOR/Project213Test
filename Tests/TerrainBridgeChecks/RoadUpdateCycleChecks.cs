@@ -53,7 +53,7 @@ partial class Checks
         const string root="Assets/TerrainSystem/LocalTerrain/";
         string editor=File.ReadAllText(root+"Editor/LTEditor.cs"),world=File.ReadAllText(root+"LTWorld.cs"),runtime=File.ReadAllText(root+"LTPaintRuntime.cs");
         Check(!editor.Contains("displacementGeometryKey")&&!runtime.Contains("displacementGeometryKey"),"global stamp key is no longer mixed into every chunk");
-        Check(editor.Contains("w.displacementGeometry.Touch(id)")&&editor.Contains("Mark(w,s,a.bounds,a.road)")&&editor.Contains("Mark(w,s,b.bounds,b.road)"),
+        Check(editor.Contains("w.displacementGeometry.Touch(id)")&&editor.Contains("Mark(w,s,a.bounds,a.road,b?.road)")&&editor.Contains("Mark(w,s,b.bounds,b.road,a?.road)"),
             "authoring diff touches old and new path including deletion; density-only invalidation remains separate");
         var markDensity=editor.Substring(editor.IndexOf("static void MarkDensity("));
         markDensity=markDensity.Substring(0,markDensity.IndexOf("static void DetectDensity("));
@@ -64,7 +64,8 @@ partial class Checks
         Check(world.Contains("if(!Application.isPlaying&&!afterGeometryUpdate")&&editor.Contains("w.autoUpdate&&w.source&&w.generatedRoot"),
             "runtime/manual/non-generated worlds are not gated by automatic editor ownership");
         var tick=editor.Substring(editor.IndexOf("static void Tick()"));tick=tick.Substring(0,tick.IndexOf("public static void Refresh("));
-        Check(tick.IndexOf("Rebuild(w,state)")<tick.IndexOf("w.UpdatePainting(true)"),"coordinated paint runs after geometry");
+        int advance=tick.IndexOf("state.build.Advance(state.revision,state.dirty)");
+        Check(advance>=0&&advance<tick.IndexOf("w.UpdatePainting(true)"),"coordinated paint runs after geometry advances");
         Check(tick.Contains("if(state.dirty.Count==0&&!isEditing)"),"paint cannot run while geometry is still dirty or dragging");
         Check(tick.Contains("if(rebuilt||EditorApplication.timeSinceStartup-state.lastPaint>=.15)")&&
             world.Contains("paintRuntime.Tick(this,afterGeometryUpdate)")&&runtime.Contains("if(!force&&now<nextUpdate)return"),

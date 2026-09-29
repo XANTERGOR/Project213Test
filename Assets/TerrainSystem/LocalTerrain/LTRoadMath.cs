@@ -212,6 +212,21 @@ namespace LocalTerrainPrototype
             bool Varied=>mode==LTRoadMode.Offroad&&settings.variation.enabled&&settings.variation.strength>0;
             public float MaxHalfWidth=>width*.5f*(1+(Varied?settings.variation.strength*settings.variation.widthAmount:0));
 
+            // Append immutable numeric worker data; never expose mutable source arrays.
+            public LTRoadHeightKernel.Road CopyHeightData(List<Sample> samples,List<LTRoadHeightKernel.Node> tree)
+            {
+                int sampleOffset=samples.Count,nodeOffset=tree.Count;samples.AddRange(data);
+                void Copy(int index,int escape)
+                {
+                    var n=nodes[index];tree.Add(new LTRoadHeightKernel.Node{start=n.start+sampleOffset,end=n.end+sampleOffset,
+                        left=n.left<0?-1:n.left+nodeOffset,escape=escape+nodeOffset,minX=n.minX,minZ=n.minZ,maxX=n.maxX,maxZ=n.maxZ});
+                    if(n.left>=0){Copy(n.left,n.right);Copy(n.right,escape);}
+                }
+                Copy(0,nodes.Length);
+                return new LTRoadHeightKernel.Road{settings=settings,bounds=bounds,firstNode=nodeOffset,endNode=tree.Count,
+                    firstSample=sampleOffset,lastSample=samples.Count-1,length=length,maxHalfWidth=MaxHalfWidth};
+            }
+
             internal Snapshot(Sample[] source, Settings settings, int inputHash, int profileHash)
             {
                 data = (Sample[])source.Clone();
@@ -462,6 +477,21 @@ namespace LocalTerrainPrototype
             {
                 if(wheelLayerView)return WheelPaintWeight(x,z);
                 if (!InsideBounds(x, z) || !TryInfluenceSample(x, z, out var hit)) return 0;
+                return PaintWeight(hit,x,z);
+            }
+
+            // One nearest-segment query for the two layers of a road. Keep the
+            // original individual entry points as the reference/other consumers.
+            public void PaintWeights(float x,float z,out float ground,out float wheels)
+            {
+                ground=wheels=0;
+                if(!InsideBounds(x,z)||!TryInfluenceSample(x,z,out var hit))return;
+                if(HasWheelPaint)wheels=WheelCoverage(hit,x,z)*settings.wheelTracks.strength;
+                ground=wheelLayerView?wheels:PaintWeight(hit,x,z);
+            }
+
+            float PaintWeight(Hit hit,float x,float z)
+            {
                 float coverage=Coverage(hit,x,z);
                 if(coverage<=0||!Varied||settings.variation.patchStrength<=0)return coverage;
                 var v=settings.variation;
@@ -502,10 +532,10 @@ namespace LocalTerrainPrototype
 
             public float WheelPaintWeight(float x,float z)
             {
-                if(mode!=LTRoadMode.Offroad||!settings.wheelTracks.enabled||settings.wheelLayerId==0||settings.wheelTracks.strength<=0||
-                    !InsideBounds(x,z)||!TryInfluenceSample(x,z,out var hit))return 0;
+                if(!HasWheelPaint||!InsideBounds(x,z)||!TryInfluenceSample(x,z,out var hit))return 0;
                 return WheelCoverage(hit,x,z)*settings.wheelTracks.strength;
             }
+            bool HasWheelPaint=>mode==LTRoadMode.Offroad&&settings.wheelTracks.enabled&&settings.wheelLayerId!=0&&settings.wheelTracks.strength>0;
             float WheelCoverage(Hit hit,float x,float z)
             {
                 var w=settings.wheelTracks;
@@ -588,6 +618,100 @@ namespace LocalTerrainPrototype
                 float minZ = Math.Min(rect.yMin, rect.yMax), maxZ = Math.Max(rect.yMin, rect.yMax);
                 float radius = MaxHalfWidth + shoulderWidth + blendWidth;
                 return IntersectsNode(0, minX - radius, minZ - radius, maxX + radius, maxZ + radius);
+            }
+
+            // Exact conservative input comparison for chunk geometry/density.
+            // Compare BVH LEAVES, not only segments: Intersects itself uses leaf
+            // bounds for density queries. No quantization/hash collision or sparse
+            // height probes can accidentally hide a changed rut between samples.
+            public bool SameTerrainRegion(Snapshot other,Rect rect)
+            {
+                if(other==null)return false;
+                var a=new List<int>();var b=new List<int>();
+                RegionLeaves(0,rect,a);other.RegionLeaves(0,rect,b);
+                if(a.Count==0&&b.Count==0)return true;
+                if(a.Count!=b.Count||!settings.Equals(other.settings))return false;
+                bool along=Varied||settings.straightStart||settings.straightEnd;
+                if((Varied||settings.straightEnd)&&length!=other.length)return false;
+                for(int k=0;k<a.Count;k++)
+                {
+                    var left=nodes[a[k]];var right=other.nodes[b[k]];
+                    if(left.end-left.start!=right.end-right.start)return false;
+                    for(int i=0;i<=left.end-left.start;i++)
+                    {
+                        var x=data[left.start+i];var y=other.data[right.start+i];
+                        if(!x.position.Equals(y.position)||!x.right.Equals(y.right)||x.bank!=y.bank||
+                            along&&x.distance!=y.distance||Varied&&x.variationStrength!=y.variationStrength)return false;
+                    }
+                }
+                return true;
+            }
+
+            // Weight masks are local; UVs are NOT. A change before this region can
+            // shift longitudinal UVs without changing these weights. Do not use
+            // this predicate for UV/projection, density or geometry invalidation.
+            public bool SamePaintRegion(Snapshot other,Rect rect)
+            {
+                if(ReferenceEquals(this,other))return true;
+                if(other==null||wheelLayerView!=other.wheelLayerView||!WeightSettings().Equals(other.WeightSettings()))return false;
+                if(!Finite(rect.xMin)||!Finite(rect.xMax)||!Finite(rect.yMin)||!Finite(rect.yMax)||rect.width<0||rect.height<0)return false;
+                // Preserve the explicit InsideBounds gate, including exact edges.
+                if(Math.Max(rect.xMin,bounds.xMin)!=Math.Max(rect.xMin,other.bounds.xMin)||
+                    Math.Min(rect.xMax,bounds.xMax)!=Math.Min(rect.xMax,other.bounds.xMax)||
+                    Math.Max(rect.yMin,bounds.yMin)!=Math.Max(rect.yMin,other.bounds.yMin)||
+                    Math.Min(rect.yMax,bounds.yMax)!=Math.Min(rect.yMax,other.bounds.yMax))return false;
+                var a=new List<int>();var b=new List<int>();
+                PaintSegments(0,rect,a);other.PaintSegments(0,rect,b);
+                if(a.Count!=b.Count)return false;
+                bool along=Varied||settings.straightStart||settings.straightEnd;
+                float end=settings.straightEnd?settings.junctionEndLength:0;
+                float endFade=Varied?end+Math.Max(2,end):Math.Max(2,end);
+                for(int k=0;k<a.Count;k++)for(int j=0;j<2;j++)
+                {
+                    var x=data[a[k]+j];var y=other.data[b[k]+j];
+                    if(!x.position.Equals(y.position)||!x.right.Equals(y.right)||x.bank!=y.bank||
+                        along&&x.distance!=y.distance||Varied&&x.variationStrength!=y.variationStrength)return false;
+                    // A moved far endpoint is irrelevant where both end envelopes
+                    // are saturated. Near either old/new cap, refresh conservatively.
+                    if((Varied||settings.straightEnd)&&length!=other.length&&
+                        (length-x.distance<endFade||other.length-y.distance<endFade))return false;
+                }
+                return true;
+            }
+            Settings WeightSettings()
+            {
+                // Texture coordinates never enter PaintWeight/WheelPaintWeight.
+                // Preserve every other field conservatively, including endpoint
+                // fades, layer assignment, profile and all noise/width controls.
+                var s=settings;s.textureRepeatMetres=0;s.textureAcrossMetres=0;s.textureOffset=Vector2.zero;
+                s.wheelTracks.independentTiling=false;s.wheelTracks.tileSizeMetres=Vector2.zero;s.wheelTracks.textureOffset=Vector2.zero;
+                return s;
+            }
+            void PaintSegments(int index,Rect rect,List<int> result)
+            {
+                float radius=MaxHalfWidth+shoulderWidth+blendWidth;
+                radius+=Math.Max(.001f,radius*.00001f);
+                var n=nodes[index];
+                bool Outside(float minX,float minZ,float maxX,float maxZ)=>
+                    maxX<rect.xMin-radius||minX>rect.xMax+radius||maxZ<rect.yMin-radius||minZ>rect.yMax+radius;
+                if(Outside(n.minX,n.minZ,n.maxX,n.maxZ))return;
+                if(n.left>=0){PaintSegments(n.left,rect,result);PaintSegments(n.right,rect,result);return;}
+                // Compare ordered segments, not BVH leaf grouping: resampling a
+                // distant span can repartition the tree without changing this span.
+                for(int i=n.start;i<n.end;i++)
+                {
+                    var a=data[i].position;var b=data[i+1].position;
+                    if(!Outside(Math.Min(a.x,b.x),Math.Min(a.z,b.z),Math.Max(a.x,b.x),Math.Max(a.z,b.z)))result.Add(i);
+                }
+            }
+            void RegionLeaves(int index,Rect rect,List<int> result)
+            {
+                float radius=MaxHalfWidth+shoulderWidth+blendWidth;
+                radius+=Math.Max(.001f,radius*.00001f); // same guard as height queries
+                var n=nodes[index];
+                if(n.maxX<rect.xMin-radius||n.minX>rect.xMax+radius||n.maxZ<rect.yMin-radius||n.minZ>rect.yMax+radius)return;
+                if(n.left<0){result.Add(index);return;}
+                RegionLeaves(n.left,rect,result);RegionLeaves(n.right,rect,result);
             }
 
             bool IntersectsNode(int index, float minX, float minZ, float maxX, float maxZ)

@@ -8,7 +8,8 @@ namespace UnityEditor
 {
     public static class EditorUtility
     {
-        public static bool DisplayCancelableProgressBar(string title,string message,float progress)=>false;
+        public static int ProgressCalls;
+        public static bool DisplayCancelableProgressBar(string title,string message,float progress){ProgressCalls++;return false;}
         public static void ClearProgressBar(){}
     }
 }

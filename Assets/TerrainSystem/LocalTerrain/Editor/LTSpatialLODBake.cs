@@ -12,7 +12,11 @@ namespace LocalTerrainPrototype
         {
             foreach(var root in scene.GetRootGameObjects())
             {
-                foreach(var chunk in root.GetComponentsInChildren<LTChunk>(true))chunk.ShowLOD(0);
+                foreach(var chunk in root.GetComponentsInChildren<LTChunk>(true))
+                {
+                    if(chunk.lodsPending)throw new UnityEditor.Build.BuildFailedException("Local Terrain: finish rebuilding chunk LODs before building the player.");
+                    chunk.ShowLOD(0);
+                }
                 foreach(var road in root.GetComponentsInChildren<LTRoadLOD>(true))road.Show(0);
             }
         }
@@ -28,26 +32,46 @@ namespace LocalTerrainPrototype
                     if(chunk.gameObject.scene==scene)chunk.ReleaseSpatialLOD();
             };
             AssemblyReloadEvents.beforeAssemblyReload+=()=>
-            {foreach(var chunk in UnityEngine.Object.FindObjectsByType<LTChunk>(FindObjectsInactive.Include,FindObjectsSortMode.None))chunk.ReleaseSpatialLOD();};
+            {foreach(var chunk in UnityEngine.Object.FindObjectsByType<LTChunk>(FindObjectsInactive.Include,FindObjectsSortMode.None))chunk.ReleaseLODPreview();};
         }
         public static void Apply(LTChunk chunk,LTSpatialLODMath.Output data)
         {
-            chunk.ReleaseSpatialLOD();
             string path=AssetDatabase.GetAssetPath(chunk.mesh);
             path=path.Substring(0,path.Length-6)+"_SpatialLOD.asset";
             var asset=AssetDatabase.LoadAssetAtPath<LTSpatialLODAsset>(path);
             if(!asset){asset=ScriptableObject.CreateInstance<LTSpatialLODAsset>();asset.name=chunk.name+" Spatial LOD";AssetDatabase.CreateAsset(asset,path);}
             if(!asset.vertexBank){asset.vertexBank=new Mesh{name="Vertex bank"};AssetDatabase.AddObjectToAsset(asset.vertexBank,asset);}
+            Fill(asset,data);
+            chunk.ReleaseLODPreview();chunk.spatialLOD=asset;chunk.lodsPending=false;
+            UpdateNormals(chunk);EditorUtility.SetDirty(chunk);
+        }
+        public static void ApplyPreview(LTChunk chunk,LTSpatialLODMath.Output data)
+        {
+            var asset=ScriptableObject.CreateInstance<LTSpatialLODAsset>();
+            asset.name=chunk.name+" LOD0 staging";asset.hideFlags=HideFlags.HideAndDontSave;
+            try
+            {
+                asset.vertexBank=new Mesh{name=asset.name,hideFlags=HideFlags.HideAndDontSave};
+                Fill(asset,data);chunk.SetLODPreview(asset);UpdateNormals(chunk);
+            }
+            catch
+            {
+                if(chunk.ActiveSpatialLOD==asset)chunk.ReleaseLODPreview();
+                else{if(asset.vertexBank)UnityEngine.Object.DestroyImmediate(asset.vertexBank);UnityEngine.Object.DestroyImmediate(asset);}
+                throw;
+            }
+        }
+        static void Fill(LTSpatialLODAsset asset,LTSpatialLODMath.Output data)
+        {
             var mesh=asset.vertexBank;mesh.Clear();mesh.indexFormat=data.vertices.Length>65535?UnityEngine.Rendering.IndexFormat.UInt32:UnityEngine.Rendering.IndexFormat.UInt16;
             mesh.vertices=data.vertices;mesh.normals=data.normals;mesh.uv=data.uv;mesh.triangles=data.baseIndices;mesh.RecalculateBounds();
             // LOD0 bounds must not cull a coarser level's raised vertices.
             if(data.vertices.Length>0){var bounds=new Bounds(data.vertices[0],Vector3.zero);foreach(var v in data.vertices)bounds.Encapsulate(v);mesh.bounds=bounds;}
-            asset.patches=data.patches;asset.cells=data.cells;asset.divisions=data.divisions;asset.formatVersion=LTSpatialLODMath.Version;chunk.spatialLOD=asset;
-            UpdateNormals(chunk);EditorUtility.SetDirty(chunk);
+            asset.patches=data.patches;asset.cells=data.cells;asset.divisions=data.divisions;asset.formatVersion=LTSpatialLODMath.Version;
         }
         public static void UpdateNormals(LTChunk chunk)
         {
-            var asset=chunk.spatialLOD;if(!asset||!asset.vertexBank||asset.formatVersion!=LTSpatialLODMath.Version)return;
+            var asset=chunk.ActiveSpatialLOD;if(!asset||!asset.vertexBank||asset.formatVersion!=LTSpatialLODMath.Version)return;
             chunk.ReleaseSpatialLOD();
             var normals=asset.vertexBank.normals;var vertices=asset.vertexBank.vertices;
             var fine=new Dictionary<Vector3,Vector3>();var baseVertices=chunk.mesh.vertices;var baseNormals=chunk.mesh.normals;

@@ -89,7 +89,7 @@ partial class Checks
         }
         const string root="Assets/TerrainSystem/LocalTerrain/";
         string runtime=File.ReadAllText(root+"LTPaintRuntime.cs"),stamp=File.ReadAllText(root+"LTPaintStamp.cs"),editor=File.ReadAllText(root+"Editor/LTRoadEditor.cs");
-        Require(runtime.Contains("roads[i].WheelPaintWeight(point.x,point.z)")&&runtime.Contains("wheelSlots[i]=layers.IndexOf(stamps[i].SecondaryLayer)"),"production painter composites secondary road layer");
+        Require(runtime.Contains("roads[i].PaintWeights(point.x,point.z,out float ground,out float wheel)")&&runtime.Contains("LTPaintMath.Composite(weights,wheelSlots[i],wheel)")&&runtime.Contains("wheelSlots[i]=layers.IndexOf(stamps[i].SecondaryLayer)"),"production painter composites secondary road layer from shared query");
         Require(stamp.Contains("includeDisabled&&road?road.wheelLayer:SecondaryLayer")&&runtime.Contains("stamp.AppendLayers(palette,true)")&&runtime.Contains("active[i].AppendLayers(layers)"),"full palette preserves disabled wheel assignment; live palette filters it");
         Require(File.ReadAllText(root+"LTLayerArrayBakeAsset.cs").Contains("stamp.AppendLayers(result,true)"),"saved arrays include assigned wheel layers");
         Require(File.ReadAllText(root+"LTPaintRocks.cs").Contains("!active[i].Road&&Touches(rect,bounds[i])"),"road overlays remain excluded from rock-stamp painting");

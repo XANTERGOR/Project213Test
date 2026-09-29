@@ -14,6 +14,24 @@ namespace LocalTerrainPrototype
         [HideInInspector] public LTLODPlan[] lodPlans = new LTLODPlan[0];
         [System.NonSerialized] public int currentLOD;
         [HideInInspector] public LTSpatialLODAsset spatialLOD;
+        // Persist the guard, not the temporary meshes: reload must never expose
+        // old coarse geometry after an early LOD0 publication.
+        [HideInInspector] public bool lodsPending;
+        [System.NonSerialized] LTSpatialLODAsset previewSpatialLOD;
+        public LTSpatialLODAsset ActiveSpatialLOD => previewSpatialLOD ? previewSpatialLOD : lodsPending ? null : spatialLOD;
+        public void SetLODPreview(LTSpatialLODAsset preview)
+        {
+            ReleaseLODPreview();previewSpatialLOD=preview;lodsPending=true;
+        }
+        public void ReleaseLODPreview()
+        {
+            ReleaseSpatialLOD();
+            if(!previewSpatialLOD)return;
+            var bank=previewSpatialLOD.vertexBank;
+            if(Application.isPlaying){if(bank)Destroy(bank);Destroy(previewSpatialLOD);}
+            else{if(bank)DestroyImmediate(bank);DestroyImmediate(previewSpatialLOD);}
+            previewSpatialLOD=null;
+        }
         Mesh spatialMesh;
         LTSpatialLODAsset activeSpatial;
         int spatialRevision;
@@ -21,6 +39,7 @@ namespace LocalTerrainPrototype
         MeshFilter cachedFilter;
         public void ShowSpatialLOD(LTSpatialLODTopology topology,int chunk,bool dirty)
         {
+            var spatialLOD=ActiveSpatialLOD;
             if(!spatialLOD||!spatialLOD.vertexBank||spatialLOD.formatVersion!=LTSpatialLODMath.Version){ShowLOD(0);return;}
             if(!cachedFilter)cachedFilter=GetComponent<MeshFilter>();
             if(!cachedFilter)return;
@@ -47,14 +66,14 @@ namespace LocalTerrainPrototype
             if(spatialMesh){if(Application.isPlaying)Destroy(spatialMesh);else DestroyImmediate(spatialMesh);}
             spatialMesh=null;activeSpatial=null;
         }
-        void OnDisable(){ReleaseSpatialLOD();}
-        void OnDestroy(){ReleaseSpatialLOD();}
+        void OnDisable(){ReleaseLODPreview();}
+        void OnDestroy(){ReleaseLODPreview();}
         public void ShowLOD(int level)
         {
             if(spatialMesh)ReleaseSpatialLOD();
             if(!cachedFilter)cachedFilter=GetComponent<MeshFilter>();
             if(!cachedFilter)return;
-            level=Mathf.Clamp(level,0,lodMeshes==null?0:lodMeshes.Length);
+            level=lodsPending?0:Mathf.Clamp(level,0,lodMeshes==null?0:lodMeshes.Length);
             Mesh selected=level==0?mesh:lodMeshes[level-1];
             if(!selected){level=0;selected=mesh;}
             if(cachedFilter.sharedMesh!=selected)cachedFilter.sharedMesh=selected;

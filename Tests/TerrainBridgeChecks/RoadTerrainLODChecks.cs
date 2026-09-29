@@ -139,7 +139,7 @@ partial class Checks
         }
         var source=File.ReadAllText("Assets/TerrainSystem/LocalTerrain/Editor/LTEditor.cs");
         Require(source.Contains("fixedRoadSurface=LTLODMesh.RequiresFixedRoadSurface(node.surface)")&&source.Contains("fixedRoadSurface=LTLODMesh.RequiresFixedRoadSurface(snapshot.mode)"),"production roads/nodes capture the tested policy");
-        Require(source.Split("s.fixedRoadSurface&&s.road!=null").Length==3&&source.Split("s.fixedRoadSurface&&s.junction!=null").Length==3,"both terrain LOD paths filter protected roads and junctions");
+        Require(source.Split("s.fixedRoadSurface&&s.road!=null").Length==4&&source.Split("s.fixedRoadSurface&&s.junction!=null").Length==4,"manual and per-chunk deferred LOD paths filter protected roads and junctions");
         Require(source.Contains("return protectedRegions.Any(")&&source.Contains("||roads.Any(road=>road.Intersects(area))"),"spatial fixed masks use the filtered protection too");
         Require(source.Contains("offroad-height-error-lod-v1")&&source.Contains("snapshot.hash+\":\"+node.surface"),"LOD policy and node surface changes invalidate old plans");
         Require(source.Contains("GetComponent<MeshCollider>().sharedMesh=c.mesh;"),"colliders remain on terrain LOD0");

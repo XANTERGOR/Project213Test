@@ -40,7 +40,7 @@ partial class Checks
         const string root="Assets/TerrainSystem/LocalTerrain/";
         var runtime=File.ReadAllText(root+"LTPaintRuntime.cs");
         var rocks=File.ReadAllText(root+"LTPaintRocks.cs");
-        Require(runtime.Contains("coverage=Mix(coverage,TerrainFilterSignature(rect,local))")&&
+        Require(runtime.Contains("int filterSignature=TerrainFilterSignature(rect,local)")&&runtime.Contains("coverage=Mix(coverage,filterSignature);weightInput=Mix(weightInput,filterSignature)")&&
             rocks.Contains("coverage=Mix(coverage,TerrainFilterSignature(rect,local))"),"terrain and rocks use local filter dependencies");
         Require(!runtime.Contains("coverage=Mix(coverage,terrain.signature.GetHashCode())")&&
             !rocks.Contains("coverage=Mix(coverage,terrain.signature.GetHashCode())"),"distant terrain edits must not invalidate local paint through a global filter signature");

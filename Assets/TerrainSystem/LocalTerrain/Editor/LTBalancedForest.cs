@@ -21,27 +21,38 @@ namespace LocalTerrainPrototype
             public int Reused {get;private set;}
             public int Rebuilt {get;private set;}
             public int ProcessedCells {get;private set;}
-            public Dictionary<int,List<Vector3Int>> Prepare(Dictionary<int,List<Vector3Int>> raw,int budget)
+            public Dictionary<int,List<Vector3Int>> Prepare(Dictionary<int,List<Vector3Int>> raw,int budget,LTLODMesh.BuildProgress progress=null)
             {
-                Reused=Rebuilt=ProcessedCells=0;
                 var result=new Dictionary<int,List<Vector3Int>>();
+                progress=progress??new LTLODMesh.BuildProgress();
+                foreach(int step in PrepareSteps(raw,budget,result))
+                    progress.Report("Balancing local transitions; Cancel preserves old meshes.",.5f);
+                return result;
+            }
+            // result stays private to the owning build until this iterator finishes.
+            // Completed cache entries are pure and reusable; partial ones never enter it.
+            public IEnumerable<int> PrepareSteps(Dictionary<int,List<Vector3Int>> raw,int budget,
+                Dictionary<int,List<Vector3Int>> result,int workPerStep=1024)
+            {
+                if(workPerStep<1)throw new ArgumentOutOfRangeException(nameof(workPerStep));
+                Reused=Rebuilt=ProcessedCells=0;result.Clear();
                 foreach(int id in entries.Keys.Where(id=>!raw.ContainsKey(id)).ToArray())entries.Remove(id);
                 foreach(var pair in raw)
                 {
                     if(entries.TryGetValue(pair.Key,out var cached)&&cached.source.Count==pair.Value.Count&&cached.source.SetEquals(pair.Value))
                     {
                         if(cached.balanced.Count>budget)throw new InvalidOperationException("Topology budget exceeded during balancing. Previous meshes were preserved.");
-                        result[pair.Key]=cached.balanced;Reused++;continue;
+                        result[pair.Key]=cached.balanced;Reused++;yield return ProcessedCells;continue;
                     }
                     var local=new LTBalancedForest(1,1,budget,new Dictionary<int,List<Vector3Int>>{{0,pair.Value}});
-                    local.Balance();
+                    foreach(int step in local.BalanceSteps(workPerStep))yield return ProcessedCells+step;
                     var entry=new Entry{source=new HashSet<Vector3Int>(pair.Value),balanced=local.Plan(0)};
                     // Only publish a completed pure calculation; aborted scene
                     // rebuilds can safely retain it. Source lists are never aliased.
                     entries[pair.Key]=entry;result[pair.Key]=entry.balanced;
                     Rebuilt++;ProcessedCells+=local.ProcessedCells;
+                    yield return ProcessedCells;
                 }
-                return result;
             }
         }
         public sealed class Cell
@@ -96,11 +107,22 @@ namespace LocalTerrainPrototype
             cells.Remove(c.key);byChunk[c.chunk].Remove(new Vector3Int(c.x,c.z,c.w));int h=c.w/2;
             Add(c.chunk,c.x,c.z,h);Add(c.chunk,c.x+h,c.z,h);Add(c.chunk,c.x,c.z+h,h);Add(c.chunk,c.x+h,c.z+h,h);
         }
-        public void Balance()
+        public void Balance(LTLODMesh.BuildProgress progress=null)
         {
-            int processed=0;
+            progress=progress??new LTLODMesh.BuildProgress();
+            foreach(int step in BalanceSteps())
+                progress.Report("Balancing local transitions; Cancel preserves old meshes.",.5f);
+        }
+        // Counts queue visits, including obsolete entries. A disposed iterator has
+        // no global effects: only its privately owned forest has partial topology.
+        public IEnumerable<int> BalanceSteps(int workPerStep=1024)
+        {
+            if(workPerStep<1)throw new ArgumentOutOfRangeException(nameof(workPerStep));
+            int visited=0;
             while(queue.Count>0)
             {
+                if(visited==workPerStep){visited=0;yield return ProcessedCells;}
+                visited++;
                 var c=queue.Dequeue();if(!cells.TryGetValue(c.key,out var live)||!ReferenceEquals(c,live))continue;
                 ProcessedCells++;
                 for(int side=0;side<4;side++)
@@ -108,9 +130,8 @@ namespace LocalTerrainPrototype
                     var neighbour=Neighbour(c,side);
                     if(neighbour!=null&&neighbour.w>2*c.w){Split(neighbour);queue.Enqueue(c);}
                 }
-                if((++processed&16383)==0&&UnityEditor.EditorUtility.DisplayCancelableProgressBar("Local Terrain","Balancing local transitions; Cancel preserves old meshes.",.5f))
-                    throw new OperationCanceledException("Terrain balancing cancelled.");
             }
+            if(visited>0)yield return ProcessedCells;
         }
         public List<Vector3Int> Plan(int chunk)=>byChunk[chunk].OrderBy(p=>p.y).ThenBy(p=>p.x).ThenBy(p=>p.z).ToList();
         public bool Midpoint(int chunk,Vector3Int p,int side)

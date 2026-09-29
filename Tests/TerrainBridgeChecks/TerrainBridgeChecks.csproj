@@ -1,6 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><DefineConstants>$(DefineConstants);ROAD_MATH_CHECKS</DefineConstants></PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadHeightKernel.cs" Link="Production/LTRoadHeightKernel.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTBlend.cs" Link="Production/LTBlend.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHeightJobMath.cs" Link="Production/LTHeightJobMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHeightSampling.cs" Link="Production/LTHeightSampling.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTLODJobInput.cs" Link="Production/LTLODJobInput.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTStagedBuild.cs" Link="Production/LTStagedBuild.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadProjectionMath.cs" Link="Production/LTRoadProjectionMath.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadJunctionMath.cs" Link="Production/LTRoadJunctionMath.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionMesh.cs" Link="Production/LTRoadJunctionMesh.cs" />

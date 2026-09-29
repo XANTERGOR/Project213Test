@@ -106,7 +106,6 @@ namespace LocalTerrainPrototype
                 if(layers.Count>1 && (!state.ready||state.coverageHash!=coverage))
                 {
                     using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.WeightBake))Bake(world,rect,local,layers,state,asphaltInputs);
-                    world.paintCpu.WeightBaked();
                 }
                 if(!state.ready||state.coverageHash!=coverage||state.surfaceHash!=surface)
                 {

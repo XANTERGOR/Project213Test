@@ -9,12 +9,14 @@ namespace LocalTerrainPrototype
     // CPU wall time, not GPU time or FPS. Runtime remains opt-in.
     public sealed class LTPaintCpuCapture
     {
-        public enum Stage { Total, TerrainCache, ChangeChecks, WeightBake, LayerBind, SavedSignature, GlobalMaterials, GlobalBake, DisplacementBake, RockMaterials }
+        public enum Stage { Total, TerrainCache, ChangeChecks, WeightBake, LayerBind, SavedSignature, GlobalMaterials, GlobalBake, DisplacementBake, RockMaterials,
+            RoadProjection, RoadUVCompute, RoadUVUpload, WeightCompute, WeightUpload }
         static readonly int StageCount=Enum.GetValues(typeof(Stage)).Length;
         [Serializable] public sealed class Sample
         {
             public double[] milliseconds=new double[StageCount];
             public int weightBakes,layerBinds,globalMaterialUpdates,farMaterialCopies;
+            public int weightReuses,roadProjectionBakes;
         }
         [Serializable] public sealed class Report
         {
@@ -38,7 +40,8 @@ namespace LocalTerrainPrototype
                 if(LastTick==null)return "";
                 var text=new System.Text.StringBuilder("Последний рабочий проход покраски (CPU):\n");
                 for(int i=0;i<StageCount;i++)text.AppendLine($"{(Stage)i}: {LastTick.milliseconds[i]:F1} мс");
-                text.Append($"Масок пересчитано: {LastTick.weightBakes}. Этапы входят в Total; WeightBake включает маски скал внутри RockMaterials.");
+                text.AppendLine($"Масок пересчитано: {LastTick.weightBakes}; сохранено при изменении дороги: {LastTick.weightReuses}; карт дорожных UV/подавления обновлено: {LastTick.roadProjectionBakes}.");
+                text.Append("Этапы вложенные, не складывайте: WeightBake включает RoadProjection + WeightCompute + WeightUpload; RoadUVCompute/Upload входят в RoadProjection. Маски скал входят также в RockMaterials. Upload — время CPU, не GPU.");
                 return text.ToString();
             }
         }
@@ -58,6 +61,8 @@ namespace LocalTerrainPrototype
         public Scope Measure(Stage stage)=>current!=null?new Scope(this,current,(int)stage):default;
         public Scope CameraScope()=>Running?new Scope(this,null,-1):default;
         public void WeightBaked(){if(current!=null)current.weightBakes++;}
+        public void WeightReused(){if(current!=null)current.weightReuses++;}
+        public void RoadProjectionBaked(){if(current!=null)current.roadProjectionBakes++;}
         public void LayerBound(){if(current!=null)current.layerBinds++;}
         public void GlobalUpdated(bool copied)
         {if(current!=null){current.globalMaterialUpdates++;if(copied)current.farMaterialCopies++;}}
@@ -95,6 +100,8 @@ namespace LocalTerrainPrototype
             }
             int bakes=0,binds=0;foreach(var sample in report.samples){bakes+=sample.weightBakes;binds+=sample.layerBinds;}
             text.AppendLine($"Пересчёты масок: {bakes}; привязки слоёв: {binds}. Camera selection: {report.cameraCalls} вызовов / {report.cameraSelectionMs:F3} ms суммарно.");
+            int reuses=0,projections=0;foreach(var sample in report.samples){reuses+=sample.weightReuses;projections+=sample.roadProjectionBakes;}
+            text.AppendLine($"Сохранено масок при изменении дороги: {reuses}; обновлено карт дорожных UV/подавления: {projections}. RoadUVCompute/Upload вложены в RoadProjection, а он вместе с WeightCompute/Upload — в WeightBake. Upload — CPU, не GPU.");
             int globals=0,copies=0;foreach(var sample in report.samples){globals+=sample.globalMaterialUpdates;copies+=sample.farMaterialCopies;}
             text.AppendLine($"Обновления глобальных параметров материалов: {globals}; копирования дальних материалов: {copies}.");
             text.AppendLine($"Аллокации всего main thread за окно: {report.allocatedBytes/1048576.0:F2} MiB (включая другие системы и диагностику).");

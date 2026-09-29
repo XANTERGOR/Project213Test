@@ -185,7 +185,7 @@ namespace LocalTerrainPrototype
         public bool previewLODs;
         public bool autoUpdate = true;
         [Tooltip("Wait until a Scene/Inspector drag ends before rebuilding meshes. Greatly reduces editor lag for large stamps.")]
-        public bool rebuildAfterEdit = true;
+        [HideInInspector] public bool rebuildAfterEdit = true; // legacy scene data; staged editor updates always wait for release
         public bool showDebug = true;
         [HideInInspector] public Transform generatedRoot;
         [HideInInspector] public string outputFolder;
@@ -210,7 +210,8 @@ namespace LocalTerrainPrototype
         void OnDisable()
         {
             ReleasePainting();
-            if(generatedRoot)foreach(var c in generatedRoot.GetComponentsInChildren<LTChunk>())c.ShowLOD(0);
+            if(generatedRoot)foreach(var c in generatedRoot.GetComponentsInChildren<LTChunk>())
+            {c.ReleaseLODPreview();c.ShowLOD(0);}
             foreach(var road in GetComponentsInChildren<LTRoadLOD>())road.Show(0);
         }
         void Update(){UpdateLOD();UpdatePainting();paintCpu.Poll();}
@@ -280,7 +281,7 @@ namespace LocalTerrainPrototype
                 if(!reset)foreach(var c in cachedChunks)
                 {
                     int id=c?c.z*chunksX+c.x:-1;
-                    if(id<0||id>=spatialChunks.Length||spatialChunks[id]!=c||spatialAssets[id]!=c.spatialLOD||!c.spatialLOD||spatialRevisions[id]!=c.spatialLOD.revision){reset=true;break;}
+                    if(id<0||id>=spatialChunks.Length||spatialChunks[id]!=c||spatialAssets[id]!=c.ActiveSpatialLOD||!c.ActiveSpatialLOD||spatialRevisions[id]!=c.ActiveSpatialLOD.revision){reset=true;break;}
                 }
                 if(reset)
                 {
@@ -290,7 +291,7 @@ namespace LocalTerrainPrototype
                     foreach(var c in cachedChunks)
                     {
                         if(!c||c.x<0||c.z<0||c.x>=chunksX||c.z>=chunksZ)throw new System.InvalidOperationException("Некорректная сетка чанков.");
-                        int id=c.z*chunksX+c.x;var asset=c.spatialLOD;
+                        int id=c.z*chunksX+c.x;var asset=c.ActiveSpatialLOD;
                         if(ordered[id]||!asset||!asset.vertexBank||asset.formatVersion!=LTSpatialLODMath.Version||asset.divisions!=SpatialLODDivisions)
                             throw new System.InvalidOperationException("Нужна однократная перестройка геометрии: данные адаптивных стыков LOD отсутствуют или устарели.");
                         ordered[id]=c;assets[id]=asset;revisions[id]=asset.revision;

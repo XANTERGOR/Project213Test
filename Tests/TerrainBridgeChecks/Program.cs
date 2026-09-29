@@ -83,10 +83,17 @@ partial class Checks
         RoadMathChecks.Run();
         RoadNetworkChecks();
         SpatialLODChecks();
+        StagedBuildChecks();
+        LocalLODQueueChecks();
+        LODJobChecks();
+        HeightSamplingChecks();
+        HeightJobChecks();
+        StagedBalanceChecks();
         LODPreparationChecks();
         RoadTerrainLODChecks();
         RoadVariationChecks();
         RoadWheelTracksChecks();
+        RoadPaintCacheChecks();
         RoadTilingVegetationChecks();
         RoadModuleChecks();
         RoadIntegrationChecks();

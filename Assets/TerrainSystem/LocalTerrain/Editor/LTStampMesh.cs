@@ -94,12 +94,14 @@ namespace LocalTerrainPrototype
             public Func<float,float,float> evaluate;
             public Func<float,float,bool> cut;
             public Func<Rect,bool> transitionDiagonals;
+            public LTLODMesh.BuildProgress progress;
             public int forcedMask=-1;
-            bool Midpoint(Vector3Int p,int side)=>forcedMask>=0?(forcedMask&(1<<side))!=0:forest.Midpoint(chunk,p,side);
+            public Func<Vector3Int,int,bool> midpoint;
+            bool Midpoint(Vector3Int p,int side)=>forcedMask>=0?(forcedMask&(1<<side))!=0:
+                midpoint!=null?midpoint(p,side):forest.Midpoint(chunk,p,side);
             public readonly List<Vector3> vertices=new List<Vector3>(),normals=new List<Vector3>();
             public readonly List<Vector2> uv=new List<Vector2>();public readonly List<int> triangles=new List<int>();
             readonly List<Leaf> leaves=new List<Leaf>();
-            readonly System.Diagnostics.Stopwatch watch=System.Diagnostics.Stopwatch.StartNew();
             int visits;
             readonly Dictionary<Vector2Int,float> heights=new Dictionary<Vector2Int,float>();
             readonly Dictionary<Vector2Int,int> ids=new Dictionary<Vector2Int,int>();
@@ -130,9 +132,8 @@ namespace LocalTerrainPrototype
             void Split(int x,int z,int w,int depth)
             {
                 visits++;
-                if((visits&4095)==0&&watch.ElapsedMilliseconds>500)
-                    if(EditorUtility.DisplayCancelableProgressBar("Local Terrain", "Building requested density; Cancel preserves the previous mesh.",Mathf.Min(.99f,leaves.Count/(float)vertexBudget)))
-                        throw new OperationCanceledException("Mesh rebuild cancelled. Previous meshes were preserved.");
+                if((visits&4095)==0)
+                    progress.Report("Building requested density; Cancel preserves the previous mesh.",Mathf.Min(.99f,leaves.Count/(float)vertexBudget));
                 if(leaves.Count>vertexBudget)throw new InvalidOperationException("Mesh budget exceeded before generation. The requested Cell Size was NOT clamped. Reduce the area or raise Max Vertices Per Chunk.");
                 var r=new Rect(X(x),Z(z),w/(float)N*rect.width,w/(float)N*rect.height);
                 Zone full=null;float partialStep=float.PositiveInfinity;
@@ -164,9 +165,8 @@ namespace LocalTerrainPrototype
             int Vertex(float x,float z)
             {
                 var key=new Vector2Int(Mathf.RoundToInt(x*2),Mathf.RoundToInt(z*2));if(ids.TryGetValue(key,out int id))return id;
-                if((vertices.Count&4095)==0&&watch.ElapsedMilliseconds>500)
-                    if(EditorUtility.DisplayCancelableProgressBar("Local Terrain","Creating mesh vertices; Cancel preserves the previous mesh.",Mathf.Min(.99f,vertices.Count/(float)vertexBudget)))
-                        throw new OperationCanceledException("Mesh rebuild cancelled. Previous meshes were preserved.");
+                if((vertices.Count&4095)==0)
+                    progress.Report("Creating mesh vertices; Cancel preserves the previous mesh.",Mathf.Min(.99f,vertices.Count/(float)vertexBudget));
                 if(vertices.Count>=vertexBudget)throw new InvalidOperationException("Vertex budget exceeded. Previous mesh is preserved; raise Max Vertices Per Chunk or reduce the area.");
                 id=vertices.Count;ids[key]=id;float gx=X(x),gz=Z(z);
                 vertices.Add(new Vector3(x/N*rect.width,H(x,z),z/N*rect.height));
@@ -300,9 +300,9 @@ namespace LocalTerrainPrototype
                 uv.Clear();uv.AddRange(compactUv);
             }
         }
-        public static List<Vector3Int> Plan(Rect rect,int baseCells,bool adaptive,float error,int budget,List<Zone> zones,Func<float,float,float> evaluate)
+        public static List<Vector3Int> Plan(Rect rect,int baseCells,bool adaptive,float error,int budget,List<Zone> zones,Func<float,float,float> evaluate,LTLODMesh.BuildProgress progress=null)
         {
-            var b=new Builder{rect=rect,baseDepth=Depth(1,1f/baseCells),adaptive=adaptive,error=error,vertexBudget=budget,zones=zones,evaluate=evaluate};return b.MakePlan();
+            var b=new Builder{rect=rect,baseDepth=Depth(1,1f/baseCells),adaptive=adaptive,error=error,vertexBudget=budget,zones=zones,evaluate=evaluate,progress=progress??new LTLODMesh.BuildProgress()};return b.MakePlan();
         }
         public static void Emit(Rect rect,Vector2 worldSize,int budget,LTBalancedForest forest,int chunk,List<Vector3Int> plan,Func<float,float,float> evaluate,
             out Vector3[] v,out Vector3[] normals,out Vector2[] uv,out int[] triangles)
@@ -310,15 +310,15 @@ namespace LocalTerrainPrototype
             Emit(rect,worldSize,budget,forest,chunk,plan,evaluate,null,out v,out normals,out uv,out triangles);
         }
         public static void Emit(Rect rect,Vector2 worldSize,int budget,LTBalancedForest forest,int chunk,List<Vector3Int> plan,Func<float,float,float> evaluate,Func<float,float,bool> cut,
-            out Vector3[] v,out Vector3[] normals,out Vector2[] uv,out int[] triangles,Func<Rect,bool> transitionDiagonals=null)
+            out Vector3[] v,out Vector3[] normals,out Vector2[] uv,out int[] triangles,Func<Rect,bool> transitionDiagonals=null,LTLODMesh.BuildProgress progress=null,Func<Vector3Int,int,bool> midpoint=null)
         {
-            var b=new Builder{rect=rect,worldSize=worldSize,vertexBudget=budget,evaluate=evaluate,cut=cut,forest=forest,chunk=chunk,transitionDiagonals=transitionDiagonals};
+            var b=new Builder{rect=rect,worldSize=worldSize,vertexBudget=budget,evaluate=evaluate,cut=cut,forest=forest,chunk=chunk,transitionDiagonals=transitionDiagonals,progress=progress??new LTLODMesh.BuildProgress(),midpoint=midpoint};
             b.Emit(plan);b.CompactCutVertices();v=b.vertices.ToArray();normals=b.normals.ToArray();uv=b.uv.ToArray();triangles=b.triangles.ToArray();
         }
         public static void EmitSpatialVariants(LTSpatialLODMath.Output data,Rect rect,Vector2 worldSize,int budget,
-            Func<float,float,float> evaluate,Func<float,float,bool> cut,Func<Rect,bool> transitionDiagonals=null)
+            Func<float,float,float> evaluate,Func<float,float,bool> cut,Func<Rect,bool> transitionDiagonals=null,LTLODMesh.BuildProgress progress=null)
         {
-            var b=new Builder{rect=rect,worldSize=worldSize,vertexBudget=budget,evaluate=evaluate,cut=cut,transitionDiagonals=transitionDiagonals};
+            var b=new Builder{rect=rect,worldSize=worldSize,vertexBudget=budget,evaluate=evaluate,cut=cut,transitionDiagonals=transitionDiagonals,progress=progress??new LTLODMesh.BuildProgress()};
             var single=new List<Vector3Int>(1){default};long indexCount=0;
             // Seed shared cut intersections in precisely LOD0's emission order. Unused
             // coarse variants must not win a quantized vertex-cache collision at a rim.

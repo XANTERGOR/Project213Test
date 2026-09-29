@@ -31,8 +31,8 @@ partial class Checks
 
         const string root="Assets/TerrainSystem/LocalTerrain/";
         var runtime=File.ReadAllText(root+"LTPaintRuntime.cs");
-        foreach(var hook in new[]{"BakeRoadProjection(world,rect,stamps,layers,state,asphaltInputs);","ReleaseRoadProjection(state);",
-            "BindRoadProjection(material,state);","TryRoadProjectionUV(state,i,px,pz","roads[i].PaintWeight(point.x,point.z)",
+        foreach(var hook in new[]{"BakeRoadProjection(world,rect,stamps,layers,state,asphaltInputs)","ReleaseRoadProjection(state);",
+            "BindRoadProjection(material,state);","TryRoadProjectionUV(state,i,px,pz","roads[i].PaintWeights(point.x,point.z",
             "asphaltInputs","RoadDisplacementMultiplier(state,px,pz)"})Require(runtime.Contains(hook),"road painter integration missing "+hook);
         var details=File.ReadAllText(root+"LTDetailRenderer.cs");
         Require(details.Contains("road.ClearWeight(px,pz,entry.category)"),"road clearing must precede placement acceptance");
@@ -49,8 +49,8 @@ partial class Checks
         Require(!roadProjection.Contains("GetComponentsInChildren<LTRoad>")&&roadProjection.Contains("foreach (var snapshot in asphaltInputs)"),
             "road projection reuses the tick's validated asphalt snapshots rather than recapturing per chunk");
         var terrainEditor=File.ReadAllText(root+"Editor/LTEditor.cs");
-        foreach(var hook in new[]{"Mark(w,s,a.bounds,a.road)","Mark(w,s,b.bounds,b.road)",
-            "MarkDensity(w,state,a.bounds,a.road)","MarkDensity(w,state,b.bounds,b.road)",
+        foreach(var hook in new[]{"Mark(w,s,a.bounds,a.road,b?.road)","Mark(w,s,b.bounds,b.road,a?.road)",
+            "MarkDensity(w,state,a.bounds,a.road,b?.road)","MarkDensity(w,state,b.bounds,b.road,a?.road)",
             "road.Intersects(Expanded(chunk,hx,hz))","id=stamp.id,road=road"})
             Require(terrainEditor.Contains(hook),"old/new road dirty-region/normal halo integration missing "+hook);
         Require(roadProjection.Contains("road.TryTextureCoordinates(x, z, out uv, out right)"),"road texture bake uses the endpoint-extending UV query");

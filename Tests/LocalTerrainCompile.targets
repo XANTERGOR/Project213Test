@@ -37,6 +37,14 @@
     <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\LTGlobalBakeAsset.cs" />
   </ItemGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'Assembly-CSharp-Editor'">
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTHeightJob*.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTHeightJob*.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTHeightSampling.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTHeightSampling.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTLODJob*.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTLODJob*.cs" />
+    <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTStagedBuild.cs" />
+    <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTStagedBuild.cs" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTSpatial*.cs" />
     <Compile Include="$(MSBuildProjectDirectory)\Assets\TerrainSystem\LocalTerrain\Editor\LTSpatial*.cs" />
     <Compile Remove="Assets\TerrainSystem\LocalTerrain\Editor\LTLayerArraySaving.cs" />

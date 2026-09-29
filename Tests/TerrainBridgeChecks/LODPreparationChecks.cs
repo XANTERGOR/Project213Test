@@ -71,8 +71,8 @@ partial class Checks
         LODPreparationBenchmark();
         var engine=File.ReadAllText("Assets/TerrainSystem/LocalTerrain/Editor/LTEditor.cs");
         Require(engine.Split("new LTLODMesh.Preparation(data.balanced,r,").Length==3,"both production LOD paths use chunk-local preparations");
-        Require(engine.Split("new LTLODMesh.BuildProgress()").Length==2&&engine.Split(",lodProgress)").Length==3,"one rebuild-wide progress budget for both paths");
-        Require(engine.Contains("finally{EditorUtility.ClearProgressBar();}")&&engine.Contains("var preparedLODPlans=new Dictionary<int,List<Vector3Int>[]>();"),"cancellation clears UI and caches are local to the rebuild");
+        Require(engine.Split("new LTLODMesh.BuildProgress(!staged)").Length==2&&engine.Split(",lodProgress)").Length==8,"one rebuild-wide progress policy for both LOD paths, planning, balancing and emission");
+        Require(engine.Contains("finally{timer.Stop();if(staged)state.buildObjectsValid=null;EditorUtility.ClearProgressBar();}")&&engine.Contains("var preparedLODPlans=new Dictionary<int,List<Vector3Int>[]>();"),"cancellation clears UI and caches are local to the rebuild");
         Console.WriteLine($"PASS LOD preparation: {comparisons} exact old/new level comparisons, rectangular chunks, borders/protection, immutable input, edit isolation, delayed/throttled progress and cancellation. Managed checks only.");
     }
     static void LODProgressChecks()

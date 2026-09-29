@@ -36,6 +36,7 @@ partial class Checks
             }
             var forest=new LTBalancedForest(columns,rows,100000,plans);forest.Balance();
             var outputs=new LTSpatialLODMath.Output[count];var inputs=new LTSpatialLODTopology.Chunk[count];
+            var previews=new LTSpatialLODMath.Output[count];
             for(int c=0;c<count;c++)
             {
                 int chunk=c;var r=RectOf(c);var fine=forest.Plan(c);var levels=new List<Vector3Int>[5];levels[0]=fine;
@@ -47,6 +48,12 @@ partial class Checks
                 var data=LTSpatialLODMath.BuildLayout(levels,divisions,100000,Mask,Protected);
                 LTStampMesh.EmitSpatialVariants(data,r,new Vector2(extent,extent),100000,H,irregular?Cut:null);
                 outputs[c]=data;inputs[c]=new LTSpatialLODTopology.Chunk{cells=data.cells,patches=data.patches};
+                // Stage-one publication has only LOD0, but retains stitch variants
+                // so neighbouring unchanged chunks can still use their coarse LODs.
+                var preview=LTSpatialLODMath.BuildLayout(new[]{fine},divisions,100000,Mask,Protected);
+                LTStampMesh.EmitSpatialVariants(preview,r,new Vector2(extent,extent),100000,H,irregular?Cut:null);
+                previews[c]=preview;
+                Require(SpatialTriangles(preview.vertices,preview.baseIndices).SetEquals(SpatialTriangles(data.vertices,data.baseIndices)),"temporary LOD0 geometry matches final LOD0");
                 // Verify the alternate emitter retains the actual legacy LOD0 cut contour.
                 LTStampMesh.Emit(r,new Vector2(extent,extent),100000,forest,c,fine,H,irregular?Cut:null,out var v,out _,out _,out var indices);
                 Require(SpatialTriangles(v,indices).SetEquals(SpatialTriangles(data.vertices,data.baseIndices)),"spatial LOD0 must match production mesh exactly");
@@ -63,6 +70,17 @@ partial class Checks
             var baseline=Read(topology);
             var holes=SpatialBoundary(outputs,baseline,columns,width,extent);
             Require(irregular?holes.Count>0:holes.Count==0,"expected hole contour");
+            foreach(int changedMask in new[]{1,3,6,15})
+            {
+                var visible=Enumerable.Range(0,count).Select(c=>(changedMask&(1<<c))!=0?previews[c]:outputs[c]).ToArray();
+                var stagedInput=visible.Select(o=>new LTSpatialLODTopology.Chunk{cells=o.cells,patches=o.patches}).ToArray();
+                var staged=new LTSpatialLODTopology(columns,rows,divisions,stagedInput);
+                for(int c=0;c<count;c++)for(int p=0;p<divisions*divisions;p++)staged.SetLevel(c,p,4);
+                staged.Update();staged.Validate();
+                Require(SpatialBoundary(visible,Read(staged),columns,width,extent).SetEquals(holes),"LOD0-only preview plus old neighbours has no cracks or changed holes");
+                for(int c=0;c<count;c++)if((changedMask&(1<<c))!=0)
+                    for(int p=0;p<divisions*divisions;p++)Require(staged.Requested(c,p)==0,"preview clamps forced/camera LOD to its new LOD0");
+            }
             void Check()
             {
                 topology.Update();topology.Validate();var actual=Read(topology);

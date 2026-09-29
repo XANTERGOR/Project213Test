@@ -369,7 +369,7 @@ MonoBehaviour:
     - indices: 120000001700000013000000130000001700000018000000
   formatVersion: 2
   divisions: 4
-  revision: 33
+  revision: 56
 --- !u!43 &4438962929065747555
 Mesh:
   m_ObjectHideFlags: 0

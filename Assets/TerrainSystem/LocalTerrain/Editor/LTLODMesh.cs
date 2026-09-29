@@ -25,23 +25,33 @@ namespace LocalTerrainPrototype
         public sealed class BuildProgress
         {
             readonly Func<double> seconds;
-            readonly Func<bool> display;
-            readonly double started;
+            readonly Func<string,float,bool> display;
+            readonly bool showWindow=true;
             double nextDisplay;
             int visits;
-            public BuildProgress():this(()=>Stopwatch.GetTimestamp()/(double)Stopwatch.Frequency,
-                ()=>EditorUtility.DisplayCancelableProgressBar("Local Terrain","Building LOD meshes; Cancel preserves old meshes.",.65f)){}
-            internal BuildProgress(Func<double> seconds,Func<bool> display)
+            public BuildProgress(bool showWindow=true):this(()=>Stopwatch.GetTimestamp()/(double)Stopwatch.Frequency,
+                (message,fraction)=>EditorUtility.DisplayCancelableProgressBar("Local Terrain",message,fraction))
+            {this.showWindow=showWindow;}
+            internal BuildProgress(Func<double> seconds,Func<bool> display):this(seconds,(message,fraction)=>display()){}
+            internal BuildProgress(Func<double> seconds,Func<string,float,bool> display,bool showWindow=true)
             {
-                this.seconds=seconds;this.display=display;started=seconds();nextDisplay=started+1;
+                this.seconds=seconds;this.display=display;this.showWindow=showWindow;nextDisplay=seconds()+1;
             }
             public void Poll()
             {
                 if((++visits&1023)!=0)return;
+                Report("Building LOD meshes; Cancel preserves old meshes.",.65f);
+            }
+            // One rebuild-wide policy, including nested planning/balancing/emission.
+            // Automatic staged work is silent; explicit synchronous operations keep
+            // a delayed/throttled cancellation window. Cell counts alone never show UI.
+            public void Report(string message,float fraction)
+            {
+                if(!showWindow)return;
                 double now=seconds();
                 if(now<nextDisplay)return;
                 nextDisplay=now+.1;
-                if(display())throw new OperationCanceledException("LOD generation cancelled.");
+                if(display(message,fraction))throw new OperationCanceledException("Terrain generation cancelled.");
             }
         }
         // A short-lived snapshot for ONE chunk and ONE synchronous rebuild.
@@ -142,6 +152,22 @@ namespace LocalTerrainPrototype
             Func<Vector3Int,bool> boundary=p=>p.x==0||p.y==0||p.x+p.z==N||p.y+p.z==N;
             if(!new HashSet<Vector3Int>(fine.Where(boundary)).SetEquals(coarse.Where(boundary)))
                 throw new InvalidOperationException("LOD boundary mismatch. Previous meshes preserved.");
+        }
+        // Legacy LOD edges stay pinned to LOD0. Only their EXTERNAL midpoint bits
+        // come from the accepted base snapshot; interior transitions come from the
+        // independently balanced local coarse plan. No neighbour LOD is rebuilt.
+        public static bool LocalMidpoint(LTBalancedForest local,Dictionary<Vector3Int,int> baseMasks,Vector3Int cell,int side)
+        {
+            bool external=side==0?cell.x==0:side==1?cell.x+cell.z==N:side==2?cell.y==0:cell.y+cell.z==N;
+            return external?(baseMasks[cell]&(1<<side))!=0:local.Midpoint(0,cell,side);
+        }
+        public static Dictionary<Vector3Int,int> BoundaryMasks(List<Vector3Int> fine,List<int> border)
+        {
+            var result=new Dictionary<Vector3Int,int>();int i=0;
+            foreach(var cell in fine)
+                if(cell.x==0||cell.y==0||cell.x+cell.z==N||cell.y+cell.z==N)result.Add(cell,border[i++]);
+            if(i!=border.Count)throw new InvalidOperationException("Invalid chunk boundary snapshot.");
+            return result;
         }
     }
 }

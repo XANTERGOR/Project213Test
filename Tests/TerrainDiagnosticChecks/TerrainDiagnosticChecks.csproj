@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework>
+    <DefineConstants>ENABLE_INPUT_SYSTEM</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTTerrainDiagnosticMaterials.cs" Link="Production/LTTerrainDiagnosticMaterials.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTTerrainFrameSamples.cs" Link="Production/LTTerrainFrameSamples.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTTerrainFrameDiagnostic.cs" Link="Production/LTTerrainFrameDiagnostic.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTTerrainFrameShadows.cs" Link="Production/LTTerrainFrameShadows.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTTerrainFrameMetrics.cs" Link="Production/LTTerrainFrameMetrics.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTTerrainFramePacing.cs" Link="Production/LTTerrainFramePacing.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTTerrainFrameGeometry.cs" Link="Production/LTTerrainFrameGeometry.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTTerrainFrameWorld.cs" Link="Production/LTTerrainFrameWorld.cs" />
+  </ItemGroup>
+</Project>

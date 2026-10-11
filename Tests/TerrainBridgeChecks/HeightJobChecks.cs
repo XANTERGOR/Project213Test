@@ -146,16 +146,22 @@ partial class Checks
         var fine=LTStampMesh.Plan(rect,32,true,.02f,budget,zones,binding.Sample);
         Require(fallback==0&&fine.SequenceEqual(LTStampMesh.Plan(rect,32,true,.02f,budget,zones,Raw)),"prefetch base lattice covers every planner height without changing plan");
         var forest=new LTBalancedForest(1,1,budget,new Dictionary<int,List<Vector3Int>>{{0,fine}});forest.Balance();fine=forest.Plan(0);
-        foreach(var p in LTHeightJobMath.FinePoints(rect,fine))if(!binding.Contains(p.x,p.y))binding.Accept(p.x,p.y,LTRoadHeightKernel.Apply(native,samples,nodes,p.x,p.y,.012f*p.x+.008f*p.y));
-        LTStampMesh.Emit(rect,new Vector2(48,40),budget,forest,0,fine,binding.Sample,null,out var v,out var n,out var uv,out var t);
-        Require(fallback==0,"prefetch fine lattice covers uncut LOD0 emitter");
+        var stitches=CaptureStitches(forest,0,fine);
+        foreach(var p in LTHeightJobMath.EmitPoints(rect,stitches))
+            if(!binding.Contains(p.x,p.y))binding.Accept(p.x,p.y,LTRoadHeightKernel.Apply(native,samples,nodes,p.x,p.y,.012f*p.x+.008f*p.y));
+        LTStampMesh.Emit(rect,new Vector2(48,40),budget,forest,0,fine,binding.Sample,null,out var v,out var n,out var uv,out var t,stitches:stitches);
+        Require(fallback==0,"stitch-only prefetch covers uncut LOD0 emitter");
         LTStampMesh.Emit(rect,new Vector2(48,40),budget,forest,0,fine,Raw,null,out var expectedV,out var expectedN,out var expectedUV,out var expectedT);
         Require(v.SequenceEqual(expectedV)&&n.SequenceEqual(expectedN)&&uv.SequenceEqual(expectedUV)&&t.SequenceEqual(expectedT),"prefetched mesh streams exact parity");
+        // Match the deferred coarse stage: only after LOD0 is available, request
+        // the remaining midpoint/centre samples required for error estimation.
+        foreach(var p in LTHeightJobMath.FinePoints(rect,fine))
+            if(!binding.Contains(p.x,p.y))binding.Accept(p.x,p.y,LTRoadHeightKernel.Apply(native,samples,nodes,p.x,p.y,.012f*p.x+.008f*p.y));
         var levels=Enumerable.Range(1,4).Select(l=>new LTLODJobMath.Level{steps=l,tolerance=l*.2f}).ToArray();
         var jobInput=new LTLODJobInput();foreach(var _ in jobInput.Prepare(fine,rect,levels,binding.Sample,null,null,4,false)){}
         Require(fallback==0,"fine lattice covers all coarse hierarchy height requests");
         var output=SolveJobInput(jobInput);
         for(int i=0;i<4;i++)Require(output[i].SequenceEqual(LTLODMesh.Coarsen(fine,rect,levels[i].steps,levels[i].tolerance,Raw,null,null,4,false)),"prefetched LOD exact parity");
-        Console.WriteLine("PASS height-job pipeline: zero synchronous height fallbacks in planning/uncut LOD0/coarse input; exact plans and mesh streams. Managed worker simulation only.");
+        Console.WriteLine("PASS height-job pipeline: stitch-only LOD0 prefetch, deferred full coarse stencil; zero synchronous height fallbacks, exact plans/mesh streams. Managed worker simulation only.");
     }
 }

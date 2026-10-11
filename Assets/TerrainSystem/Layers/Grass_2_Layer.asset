@@ -33,12 +33,16 @@ MonoBehaviour:
   tileSizeMetres: {x: 4, y: 4}
   tileOffsetMetres: {x: 0, y: 0}
   detailDensityMask:
-    enabled: 0
-    patchSize: 6
-    patchCoverage: 0.6
-    patchSoftness: 0.2
-    patchMinimumDensity: 0.05
+    enabled: 1
+    patchSize: 3
+    patchCoverage: 0.8
+    patchSoftness: 0.5
+    patchMinimumDensity: 0
     patchSeed: 0
+    patchScaleEnabled: 1
+    patchScaleEdge: 0.5
+    patchScaleInside: 1.1
+    patchScaleSoftness: 0.4
   details:
   - id: cc27faf124bc4c57bdd3249d8a854d7b
     enabled: 1
@@ -54,13 +58,19 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
-    scaleRange: {x: 0.8, y: 1.2}
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.2, y: 0.4}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 100
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.5
@@ -79,13 +89,19 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
-    scaleRange: {x: 0.8, y: 1.2}
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.2, y: 0.4}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.25
@@ -104,13 +120,19 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
-    scaleRange: {x: 0.8, y: 1.2}
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.2, y: 0.4}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.25
@@ -129,22 +151,28 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
-    scaleRange: {x: 0.8, y: 1.2}
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.2, y: 0.4}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.25
     deformationBoundsPadding: 0.5
   - id: 08df674638854f0eb65840686f474e90
     enabled: 1
-    prefab: {fileID: 4487194205337123915, guid: 23ab098f2cd30a345a116625069f0200, type: 3}
+    prefab: {fileID: 2653810025838252133, guid: f2fcf81b3a446b844b312059c3d53d5f, type: 3}
     category: 1
-    density: 0.5
+    density: 2
     probability: 1
     densityMaskMode: 0
     maskModeConfigured: 1
@@ -154,19 +182,25 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
-    scaleRange: {x: 0.8, y: 1.2}
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.1, y: 0.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
-    fadeStart: 35
-    cullDistance: 50
+    fadeStart: 90
+    cullDistance: 100
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
-    thinInDistance: 0
-    farDensity: 0.25
+    thinInDistance: 1
+    farDensity: 0.75
     deformationBoundsPadding: 0.5
   - id: 6debb6c86e4148f5ba964fc7baa27c58
-    enabled: 1
+    enabled: 0
     prefab: {fileID: 6846498190415640016, guid: f8bf6eff718f6574fa17809bb6881d41, type: 3}
     category: 1
     density: 0.5
@@ -179,13 +213,19 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
-    scaleRange: {x: 0.8, y: 1.2}
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.2, y: 0.4}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
     alignToNormal: 1
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.25
@@ -204,6 +244,10 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -211,6 +255,8 @@ MonoBehaviour:
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.25
@@ -229,6 +275,10 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -236,6 +286,8 @@ MonoBehaviour:
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.25
@@ -254,6 +306,10 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -261,6 +317,8 @@ MonoBehaviour:
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.25
@@ -279,6 +337,10 @@ MonoBehaviour:
     patchSoftness: 0.2
     patchMinimumDensity: 0.05
     patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
     scaleRange: {x: 0.8, y: 1.2}
     yawRange: {x: 0, y: 360}
     slopeRange: {x: 0, y: 45}
@@ -286,7 +348,71 @@ MonoBehaviour:
     heightOffsetRange: {x: 0, y: 0}
     fadeStart: 35
     cullDistance: 50
+    limitShadowDistance: 0
+    shadowDistance: 25
     shaderFade: 0
     thinInDistance: 0
     farDensity: 0.25
+    deformationBoundsPadding: 0.5
+  - id: 2338a0d3e7a4405ea40305e9bcb1a10b
+    enabled: 1
+    prefab: {fileID: 5032733467220894670, guid: 1f80d3359d2e8da488a866f458e69d4b, type: 3}
+    category: 1
+    density: 0.5
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.8, y: 1.2}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 90
+    cullDistance: 100
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 1
+    farDensity: 0.5
+    deformationBoundsPadding: 0.5
+  - id: 76c7031c591f4cc3ad5be9b3d397d59d
+    enabled: 1
+    prefab: {fileID: 999365055518407450, guid: 41f53e0408998864fad0e334331b590c, type: 3}
+    category: 1
+    density: 1
+    probability: 1
+    densityMaskMode: 0
+    maskModeConfigured: 1
+    densityMask: 0
+    patchSize: 6
+    patchCoverage: 0.6
+    patchSoftness: 0.2
+    patchMinimumDensity: 0.05
+    patchSeed: 0
+    patchScaleEnabled: 0
+    patchScaleEdge: 0.35
+    patchScaleInside: 1
+    patchScaleSoftness: 0.35
+    scaleRange: {x: 0.4, y: 0.6}
+    yawRange: {x: 0, y: 360}
+    slopeRange: {x: 0, y: 45}
+    alignToNormal: 1
+    heightOffsetRange: {x: 0, y: 0}
+    fadeStart: 90
+    cullDistance: 110
+    limitShadowDistance: 0
+    shadowDistance: 25
+    shaderFade: 0
+    thinInDistance: 1
+    farDensity: 0.5
     deformationBoundsPadding: 0.5

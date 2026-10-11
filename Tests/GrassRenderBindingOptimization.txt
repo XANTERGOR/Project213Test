@@ -1,0 +1,45 @@
+Grass terrain binding optimization — 2026-10-10
+
+Evidence (existing capture; not a new before/after FPS measurement):
+Logs/FrameProfiles/flight-20261010-162202-816-ad7ee47e-markers.csv
+295 retained Scene View frames, Unity 6000.3.23f1, D3D12, RTX 5070.
+Capture is incomplete; history eviction and report limits are noted in its report.
+Main-thread paths aggregated by leaf marker (do not add parent/child Total times):
+  LT.Details.RenderCPU                 mean total 1.815 ms/frame
+  LT.Details.GPU.Stage.CullSubmitCPU    mean total 0.303 ms/frame
+  LT.Details.GPU.Stage.DrawSubmitCPU    mean total 0.298 ms/frame
+  LT.Details.GPU.Stage.TerrainBindCPU   mean total 0.235 ms/frame, 290.888 calls/frame
+These are CPU submission costs. They do not establish the current game's critical
+path, GPU execution cost or a standalone-player bottleneck.
+
+Change:
+- Capture grass map readiness, texture and exact U/V vectors once per explicitly
+  prepared, synchronous camera pass. Direct callers capture each TryRender call.
+- Each privately owned indirect draw MPB remembers its applied binding. Skip the
+  four setters when texture identity, readiness and exact vectors still match.
+- Texture pixels may update in place: no rebind needed, shader still sees them.
+- Texture replacement, not-ready fallback, world/extent changes, new cameras and
+  new/recreated draw blocks bind updated values. No global material properties.
+- Source shaders, compute shader, placement, density, LOD, distances, shadows,
+  command count/order and all submitted draw parameters are unchanged.
+- CPU fallback Bind remains unconditional. Cached Shader.PropertyToID values are
+  shared by both binding paths. No readbacks or cross-frame camera/culling cache.
+- Cache is only valid for its owned block. An external Clear/write requires Reset;
+  production GPU blocks are private to Draw and never externally exposed.
+
+Verification:
+dotnet run --project Tests/DetailGpuCpuChecks --no-restore
+  PASS: 40,029 managed assertions, 28,198 dispatch/draw payload comparisons against
+  the frozen legacy renderer. Includes unchanged frames, updated pixels, tiny UV
+  edits, replacement/released/recovered maps, two cameras, direct callers and
+  replacement blocks. New steady 24-group fixture: terrain MPB writes 1536 -> 0
+  with identical dispatch/draw payloads. This count is not a time or FPS estimate.
+node Tests/GrassTerrainChecks.mjs
+  PASS: graph/wiring checks and 31,500 fade/color cases. No HLSL/pixel execution.
+C# compilation: Assembly-CSharp-Editor.csproj with LocalTerrainCompile.targets.
+Logs and pre-edit scene/settings/source/package hashes:
+  Logs/GrassRenderBindingOptimization/
+
+Native Unity import, GPU image parity and a new live-scene FPS capture were not run.
+No scenes/assets/settings saved, no player benchmark, no quality preset changes,
+no package/cache edits and no user Editor process stopped.

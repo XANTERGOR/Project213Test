@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><DefineConstants>$(DefineConstants);UNITY_EDITOR</DefineConstants></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTLayerRenderWorld.cs" Link="Production/RenderMode.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTFastLayerBenchmarkPolicy.cs" Link="Production/Policy.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTFastLayerBenchmarkStats.cs" Link="Production/Stats.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailBenchmarkIsolation.cs" Link="Production/Isolation.cs" />
+  </ItemGroup>
+</Project>

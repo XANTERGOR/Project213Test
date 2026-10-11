@@ -3,15 +3,25 @@ namespace LocalTerrainPrototype
 {
     public enum LTStampOperation { Override = 1, Max = 2, Min = 3, Add = 0, Subtract = 4, Multiply = 5, Average = 6, Difference = 7, SqrtMultiply = 8, Blend = 9 }
     public enum LTStampShape { Ellipse, Rectangle }
+    public enum LTStampDensityMode { Shape = 0, Mask = 1 }
     public sealed class LTHeightStamp : MonoBehaviour
     {
         public bool affectHeight = true;
         public LTStampOperation operation = LTStampOperation.Max;
         [Tooltip("Override mesh cell size inside this stamp. Independent of global density.")]
         public bool densityZone;
-        [Min(.000001f), Tooltip("Smallest cell size in the centre of the density zone.")]
+        [Tooltip("Shape keeps the centre-to-edge density gradient. Mask uses the texture's red channel.")]
+        public LTStampDensityMode densityMode;
+        [Tooltip("Optional density texture. When empty, uses this stamp's Mask. Requires Read/Write.")]
+        public Texture2D densityMask;
+        public bool densityMaskInvert;
+        [Tooltip("Mask values mapped to coarse (X) and fine (Y), after inversion.")]
+        public Vector2 densityMaskRange = new Vector2(0,1);
+        [Min(.01f), Tooltip("1 = linear. Higher values concentrate fine cells in the brightest parts.")]
+        public float densityMaskPower = 1;
+        [Min(.000001f), Tooltip("Smallest cell size: centre in Shape mode, white in Mask mode.")]
         public float densityCellSizeMin = .25f;
-        [Min(.000001f), Tooltip("Largest cell size at the edge of the density zone.")]
+        [Min(.000001f), Tooltip("Largest cell size: edge in Shape mode, black in Mask mode.")]
         public float densityCellSizeMax = .5f;
         public LTStampShape shape;
         [Min(0.01f)] public Vector2 size = new Vector2(40, 40);

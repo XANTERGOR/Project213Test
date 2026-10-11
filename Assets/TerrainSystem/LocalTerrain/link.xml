@@ -1,0 +1,7 @@
+<linker>
+  <!-- LTChunk adds Unity's official exclusion component by Type because it is
+       internal in SRP Core 17.3. Preserve its native-facing lifecycle in players. -->
+  <assembly fullname="Unity.RenderPipelines.GPUDriven.Runtime">
+    <type fullname="UnityEngine.Rendering.DisallowGPUDrivenRendering" preserve="all" />
+  </assembly>
+</linker>

@@ -1,0 +1,46 @@
+Global background BC compression (2026-10-11)
+
+New saved global maps use linear BC7 albedo + linear BC5 XY normals, Best quality.
+RT previews and streamed-page pools stay uncompressed. There is no runtime/frame
+compression, format conversion, or new shader keyword permutation.
+The expensive editor compression call may block temporarily; cancel is offered
+between mip readbacks and before each map's compression, not inside Unity's codec.
+
+Both the live/far/tessellated terrain sampler and cache-to-background compositor
+use LTGlobalNormalEncoding.hlsl. _LTGlobalParams.w is 1 only for actual BC5 maps;
+old XYZ assets/RTs use 0. Reconstruct positive tangent-space Z before PBR blending.
+The global baker already stores positive-Z tangent perturbations. No changes to
+road/rock/LitBlend sampling or source texture imports.
+
+All GPU mips are read explicitly, without CPU mip regeneration or gamma change.
+Only owned staging textures are compressed, with actual format/mip/block checks.
+Existing maps stay intact. New saves use unique asset paths. Existing saved maps
+can be converted through 'Сжать сохранённый фон в BC — новая копия…' without
+regenerating terrain; old signature/layout metadata is preserved, including stale
+state. Assignment happens after asset save. No automatic scene save/conversion.
+The compressed CPU payload remains readable for reliable serialization, like the
+existing compressed layer arrays; there is no retained RGBA staging CPU copy.
+
+2048 square pair with all mips: RGBA32 44,739,240 bytes -> BC 11,184,864 bytes
+(42.67 -> 10.67 MiB GPU, including 4x4 blocks at 2x2 and 1x1 tail levels).
+The readable CPU payload adds approximately the same amount. Build file size and
+actual texture quality/performance are separate measurements.
+
+Checks:
+  node Tests/GlobalBakeBCChecks.mjs
+  node Tests/SurfaceCacheChecks.mjs
+  powershell -File Tests/CompileSurfaceCacheSampling.ps1
+  C# external build using Tests/LocalTerrainCompile.targets
+These are not native Unity compression, full HDRP compilation or GPU execution.
+
+Native menu:
+Tools > Local Terrain > Checks > Validate Compressed Global Maps (no scene changes)
+Owned 32x32 texture + RT fixtures test BC7/BC5, all mips, orientation, linear color,
+unchanged source bytes, serialized BC payload roundtrip and paired GPU samples
+using the production normal decoder. Scene/root/dirty/file hashes are guarded.
+Only Logs/GlobalBakeBC/<run>/report.txt and independent serialization fixtures are
+written, no assets/scenes. Native run and scene visual comparison remain required.
+
+API contract checked against Unity EditorUtility.CompressTexture documentation:
+https://docs.unity.com/en-us/engine/6000.7/script-reference/unityeditor/editorutility/compresstexture
+Unity may leave a texture unchanged on codec failure; explicit postchecks reject it.

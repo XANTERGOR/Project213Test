@@ -1,0 +1,68 @@
+Junction foundation terrain LOD (2026-10-10)
+
+Road Junction now has the same opt-out and edge-error controls as Road:
+  simplifyTerrainUnderAsphalt = true
+  terrainLODEdgeError = 0.03 metres (0..1)
+
+The three terrain LOD paths (deferred/local, whole-chunk legacy and spatial)
+retain the old full junction bounds lock ONLY when no usable generated surface
+can be captured, or the option is disabled. Otherwise the shared road clearance
+protection checks actual emitted terrain triangles against ALL generated junction
+LODs, with the shared reference-height constraint for outer edges and holes.
+This does not reduce the LOD0/collider plan, change authored meshes/materials,
+or guarantee that terrain already intersecting sunk asphalt can be simplified.
+
+Capture reads the owned generated root's LTRoadLOD array, not source meshes or
+the current MeshFilter. Existing generated output is usable without migration.
+While source changes await baking, currently published geometry remains the
+clearance reference. Replacing output, mesh dirty/dependency revisions, parent
+transforms and edge-error edits change the live stamp key. Missing, foreign,
+inactive, unreadable or unsupported output keeps a conservative fallback.
+Only junction stamp version changes, not the global world configuration: old
+and new affected bounds are invalidated through the existing Detect/Mark path.
+No scene-stored transient instance-ID hash or new rebuild-on-reload is added.
+Warm polls reuse immutable CPU surfaces and metadata keys; profiling marker:
+  LT.Editor.Capture.JunctionFoundation
+
+Managed:
+  dotnet run --project Tests/TerrainBridgeChecks -- --junction-foundation-lod
+Logs/JunctionFoundationLOD-data-v2.log:
+  PASS 16 geometric assertions; synthetic concave T + real hole, all-LOD
+  clearance, hole edge error vs independent penetration guard, slope, whole /
+  spatial LODs, mixed levels and exact return-near. 4096 -> 16 cells;
+  8192 -> 32 triangles. This is NOT a scene performance benchmark.
+  PASS 30 Jobs-input/scalar levels, 3 world offsets, regular and sunken LODs;
+  production capture/invalidation/three-fallback-path source contracts.
+The first fixture run (Logs/JunctionFoundationLOD-data.log) failed because its
+edge-error test also penetrated the asphalt. The revised fixture separates these
+two guards and explicitly asserts that loose edge error cannot permit penetration.
+No production clearance threshold was loosened to satisfy the test.
+
+Regression log: Logs/JunctionFoundationLOD-regressions.log
+  --road-foundation-lod, --junction-foundation, --road-junction-prefab,
+  --editor-capture, --editor-reload, --local-lod-queue: PASS.
+
+Final C# build: Logs/JunctionFoundationLOD-build-final.log, 0 errors,
+3 existing warnings (assembly version conflicts / unused importer field).
+Final data rerun: Logs/JunctionFoundationLOD-data-final.log, PASS.
+Post-change SHA-256 audit of 401 existing source/test/scene/settings/package
+files found only the five intended existing C#/csproj edits. Scene files,
+ProjectSettings and package manifests/lock stayed unchanged. New source files,
+unique .meta GUIDs and this test note were added separately.
+This does not establish native Unity import, shader rendering or live performance.
+
+Unity preview check (pending user execution):
+  Tools > Local Terrain > Validate Junction Foundation LOD (no scene changes)
+Expected log tag: [Junction Foundation LOD v1]
+Uses owned temporary meshes/world in a preview scene; checks actual native Mesh
+capture/cache/fallback/invalidation, production stamps, unchanged LOD0/collider,
+and runs the shared data fixtures. Never invokes a scene bake or SaveAssets.
+Verifies hashes of source/settings/open scene files, scene root count/dirty state
+and active scene after cleanup. Does not validate the user's real mesh visually.
+
+Scene check after preview PASS:
+  Road Junction > Упрощать землю под асфальтом enabled; start at 0.03 m edge error.
+  Rebuild the junction if no generated meshes exist or source geometry changed.
+  LT World > Apply Pending Changes; inspect near/far wireframe, holes and entries.
+  Ensure terrain LOD preview is enabled and generation has completed.
+  User saves scene normally if satisfied. No scene is saved by these tests.

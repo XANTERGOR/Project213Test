@@ -52,6 +52,32 @@ namespace LocalTerrainPrototype
             foreach(var p in leaves)for(int z=0;z<3;z++)for(int x=0;x<3;x++)
                 yield return Position(r,p.x+x*(p.z*.5f),p.y+z*(p.z*.5f));
         }
+        // LOD0 needs corners plus the balanced forest's actual stitch vertices,
+        // not the complete nine-point coarsening stencil. Keep the original
+        // coordinate arithmetic and relative order. A stitched cell may use a
+        // centre fan; requesting its centre conservatively also covers alternate
+        // diagonals without evaluating their material/road callback twice.
+        // Cut intersections remain on the existing on-demand reference path.
+        public static IEnumerable<Vector2> EmitPoints(Rect r,LTBalancedForest.StitchSnapshot stitches)
+            =>EmitPoints(r,null,null,stitches);
+        public static IEnumerable<Vector2> EmitPoints(Rect r,List<Vector3Int> leaves,Func<Vector3Int,int,bool> midpoint,
+            LTBalancedForest.StitchSnapshot stitches=null)
+        {
+            int count=stitches!=null?stitches.Count:leaves.Count;
+            for(int i=0;i<count;i++)
+            {
+                var p=stitches!=null?stitches.Cell(i):leaves[i];
+                int mask=stitches!=null?stitches.Mask(i):0;
+                if(stitches==null)for(int side=0;side<4;side++)if(midpoint(p,side))mask|=1<<side;
+                for(int z=0;z<3;z++)for(int x=0;x<3;x++)
+                {
+                    if(x==1&&z==1){if(mask==0)continue;}
+                    else if(x==1){if((mask&(z==0?4:8))==0)continue;}
+                    else if(z==1){if((mask&(x==0?1:2))==0)continue;}
+                    yield return Position(r,p.x+x*(p.z*.5f),p.y+z*(p.z*.5f));
+                }
+            }
+        }
         static Vector2 Position(Rect r,float x,float z)=>new Vector2((float)(r.xMin+(double)x/LTBalancedForest.N*r.width),(float)(r.yMin+(double)z/LTBalancedForest.N*r.height));
     }
 }

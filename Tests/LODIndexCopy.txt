@@ -1,0 +1,55 @@
+Spatial LOD bulk cache copy, 2026-10-10
+
+Baseline flight: flight-20261009-233550-427-207be815, worst frame 3352.
+SpatialIndices self 3.099 ms; Balance self 1.594 ms; CPU frame 13.367 ms.
+
+Change: replace the per-index output[i] / cachedList.Add loop with CopyTo.
+The private cache buffer implements ICollection<int>, so List.AddRange also
+copies only its logical Count in bulk on cache hits. No boxed ArraySegment or
+hot-path iterator. Growth allocates the same capacity without copying stale,
+invalid cache contents. The 64 MiB payload budget and fallback policy remain.
+No topology/mask/balance/selection changes, triangle reordering, source mesh
+mutation, collider changes, saved-format changes, shader changes or rebake.
+
+Completed verification:
+- Frozen SpatialIndexCopyReference is the exact pre-turn topology code except
+  its type name (whitespace-normalized equality verified).
+- 16,704 new ordered-output comparisons: 8 layouts, 3 index-cache budgets,
+  sparse worlds, nonempty and fully empty payloads, repeated near/far/random
+  changes, growth/shrink, delayed reads, caller mutation and zero warm GC.
+  Payload capacity and all existing cache/query/balance counters match exactly.
+- Existing mask/ancestor/cache/camera/capture/adaptive LOD checks pass.
+- Managed holes, sparse chunk grid, rock seams, and real LTChunk with engine
+  test doubles pass; native collider/rendering validation is separate.
+- Unity-reference C# Editor build: 0 errors, 6 existing warnings.
+- Hash audit: 403 existing source/test/scene/settings/package files; only the
+  intended topology, Editor menu, and two test entry files changed. A separate
+  hash comparison of 256 saved spatial banks also passed.
+- Initial new empty-fixture test failed because it tried to enumerate null
+  variants on non-renderable hierarchy nodes. Fixed the fixture to preserve
+  these nulls; Logs/LODIndexCopy-managed.log retains the failure and
+  Logs/LODIndexCopy-managed-final.log contains the successful complete rerun.
+
+Read-only saved-bank replay, Logs/LODIndexCopy-replay.log:
+256 current banks, 36 uniquely suffixed filenames; 1,235 recorded camera poses,
+3 runs. Identical indices and dirty sets at every pose; 1,259 publications,
+198,608 balance cells and 876,781 rebuilt cells per run. Cache remains 2.64 MiB.
+Index assembly peak ms in paired runs:
+  3.211 -> 2.394; 2.967 -> 2.643; 2.713 -> 2.188.
+Mean index assembly ms:
+  0.094 -> 0.064; 0.077 -> 0.079; 0.089 -> 0.059.
+The second mean was not better; these are noisy managed timings, not a promised
+live speedup. The replay assumes identity world transform, uses saved bank
+filenames rather than live scene bindings and cannot reconstruct initial camera
+hysteresis. It is not a Unity/frame/GPU benchmark.
+
+Pending native validation:
+Tools > Local Terrain > Validate LOD Index Copy (no scene changes).
+Owned preview objects only; full uncached/root-query reference vs cached native
+Mesh indices, logical count/caller mutation, unchanged source mesh and LOD0
+collider, clone reuse and native seam geometry. Scene/root/dirty state and
+source/settings/scene hashes checked; no scene/assets/settings saved.
+
+After PASS and terrain/grass recovery: record the same 5-second SceneView flight,
+Record GPU off, scene GPU Details on. Compare SpatialIndices, Balance, GC and
+frame peaks against the baseline above. Native/live validation remains pending.

@@ -90,7 +90,10 @@ partial class Checks
         const string root="Assets/TerrainSystem/LocalTerrain/Editor/";
         string engine=File.ReadAllText(root+"LTEditor.cs"),balancer=File.ReadAllText(root+"LTBalancedForest.cs"),emitter=File.ReadAllText(root+"LTStampMesh.cs");
         Require(!balancer.Contains("DisplayCancelableProgressBar")&&!emitter.Contains("DisplayCancelableProgressBar"),"nested helpers cannot bypass the common progress policy");
-        Require(engine.Contains("if(staged)foreach(int step in lodForest.BalanceSteps())")&&engine.Contains("state.balanceCache.PrepareSteps(plans,budget,internalPlans)")&&engine.Contains("if(staged)foreach(int step in forest.BalanceSteps())"),"all production balance paths yield in automatic mode");
+        Require(engine.Contains("if(staged)foreach(int step in lodForest.BalanceSteps())")&&engine.Contains("state.balanceCache.PrepareOwnedSteps(planSnapshots,budget,internalPlans)")&&engine.Contains("if(staged)foreach(int step in forest.BalanceSteps())"),"all production balance paths yield in automatic mode");
+        Require(engine.Contains("state.topologyCache.Begin(w.chunksX,w.chunksZ,budget,internalPlans)")&&engine.IndexOf("state.topologyCache.Commit(forest)",StringComparison.Ordinal)>engine.IndexOf("ApplyTrimmedRockMeshes(w,stamps,preparedRocks,rockTimings)",StringComparison.Ordinal),"COW topology is accepted only after mesh/bridge application");
+        Require(engine.Contains("data.stitches.MaskLookup()")&&engine.Contains("stitches.MaskLookup()")&&!engine.Contains("forest.Midpoint(id,cell,s)"),"initial and deferred spatial preparation consume accepted stitch snapshots");
+        Require(engine.Split("LTSpatialLODMath.BuildLayoutSteps(levels,").Length==3&&engine.Split("LTStampMesh.EmitSpatialVariantsSteps(").Length==3,"both spatial paths use bounded preparation/emission iterators");
         Require(engine.Contains("terrainTimings.Pause();timer.Stop();yield return LTBuildStep.Working;timer.Start();terrainTimings.Resume();"),"balance timing excludes pauses between editor updates");
         Console.WriteLine($"PASS staged balance/progress: reproduced old 16384-cell modal; 16 silent slices, {comparisons} frozen-reference chunk comparisons, cache cancellation/reuse, all nested progress policies and manual cancellation. Managed only; not live-scene timing.");
     }

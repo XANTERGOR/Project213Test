@@ -1,0 +1,50 @@
+Spatial LOD border-mask reuse, 2026-10-10
+
+Evidence: flight-20261009-225842-739-81c53121 showed SpatialIndices 4.898 ms,
+Balance 1.862 ms and CPU SetIndices 0.113 ms in frame 2136 (16.825 ms total).
+SpatialIndices includes assembly plus optional seam processing; the new nested
+LT.LOD.SpatialSeam marker separates the latter in future recordings.
+
+Change:
+- A patch reset/split still invalidates all of its stitch masks.
+- A change in a neighbouring patch invalidates only the shared rim side.
+- Mask invalidation survives Update() and deferred reads, and clears only after
+  that patch's indices were successfully assembled.
+- The four cached mask bits share the membership byte (formerly bool[]). There
+  is no additional per-cell array; each patch gains one integer dirty-side mask.
+- Exhausting the unchanged 64 MiB index-payload budget does not discard masks.
+- Balancing, dirty chunk sets, selection, order/winding of indices, source meshes,
+  collider policy, uploads, saved formats and LOD distances are unchanged.
+- Rock seam Apply remains after raw assembly. Its implementation was not changed.
+
+Tests:
+- Frozen pre-turn production reference, identical except type name/query counter.
+- 10,584 ordered index-array comparisons: divisions 1/2/4/8, uniform/irregular
+  terrain, cut contours, sparse layouts, payload budgets 0/512/67108864,
+  random/uniform near-far changes, delayed/idle reads and allocation-free warm use.
+- The default-budget subset reduced neighbour queries 3,249,096 -> 1,732,622
+  (46.7%). Aggregate managed WriteIndices time in this run: 280.51 -> 175.39 ms.
+  These are fixture totals, NOT frame times or an Editor/GPU speedup prediction.
+- Existing LOD camera/capture, 224 mixed adaptive LOD comparisons, 160 native
+  seam ownership layouts / 320 all-variant contraction layouts, 96 sparse-grid
+  LOD states and 88 hole-stamp mixed/staged checks passed in the managed harness.
+- ChunkRenderPolicyChecks passed with real LTChunk + test doubles, including
+  the added seam scope, upload ordering and unchanged collider/publication policy.
+- Unity-reference C# Editor build: 0 errors, 6 existing warnings.
+- Hash audit: 392 existing source/scene/settings/package/test files. Only the
+  four intended existing source/test files changed; scenes/settings/locked
+  packages unchanged. A unique meta GUID accompanies the new Editor check.
+
+Native validation still pending:
+Tools > Local Terrain > Validate LOD Border Mask Cache (no scene changes).
+Uses an owned preview scene, private meshes and no LTWorld; compares the actual
+MeshFilter indices with full-query results over 40 layouts, verifies source
+meshes and LOD0 colliders, runs native seam geometry fixtures, closes the owned
+preview and checks live-scene dirty/root state and source/settings hashes.
+No scene/asset saving, package edits, extra Unity process or nested project.
+
+After PASS and terrain/grass recovery, record the same 5-second SceneView route
+with Frame Profiler, Record GPU off and scene GPU Details unchanged/on.
+Compare SpatialIndices total vs nested SpatialSeam, TerrainApply and frame peaks.
+Do not add nested totals or infer GPU cost from CPU SetIndices. No rebake needed
+specifically for this runtime-only cache change.

@@ -43,27 +43,73 @@ namespace LocalTerrainPrototype
         }
         public static List<LTRoadMesh.Chunk> Bend(LTRoadMesh.Chunk source,LTRoadMath.Snapshot path,
             Vector3 referenceMin,Vector3 referenceMax,float desiredLength,bool fitWidth,float baseY,float offset,float chunkLength,Matrix4x4 toRoad)
+            =>BendVariants(new[]{source},new[]{1f},0,false,path,referenceMin,referenceMax,desiredLength,fitWidth,baseY,offset,chunkLength,toRoad);
+
+        public static int[] SelectModules(float[] weights,int count,int seed,bool avoidRepeat)
+        {
+            if(weights==null||weights.Length==0||weights.Length>32||count<0||count>32768)throw new InvalidOperationException("Нужны 1–32 варианта и не более 32768 повторов.");
+            foreach(float w in weights)if(!LTRoadMesh.Finite(w)||w<0)throw new InvalidOperationException("Вес модуля должен быть конечным и неотрицательным.");
+            int active=weights.Count(w=>w>0);if(active==0)throw new InvalidOperationException("В наборе нет модулей с положительным весом.");
+            var result=new int[count];int previous=-1;
+            for(int i=0;i<count;i++)
+            {
+                int excluded=avoidRepeat&&active>1?previous:-1;double total=0;
+                for(int m=0;m<weights.Length;m++)if(m!=excluded)total+=weights[m];
+                uint hash;unchecked{hash=(uint)seed^(uint)i*0x9e3779b9u;hash^=hash>>16;hash*=0x7feb352du;hash^=hash>>15;hash*=0x846ca68bu;hash^=hash>>16;}
+                double pick=(hash/4294967296.0)*total;int selected=-1;
+                for(int m=0;m<weights.Length;m++)if(m!=excluded&&weights[m]>0)
+                {selected=m;pick-=weights[m];if(pick<0)break;}
+                result[i]=previous=selected;
+            }
+            return result;
+        }
+        public static LTRoadMesh.Chunk NormalizeLength(LTRoadMesh.Chunk source,float minZ,float maxZ,float targetMin,float targetMax,bool allowEndOvershoot=false)
+        {
+            if(maxZ-minZ<.001f||targetMax-targetMin<.001f)throw new InvalidOperationException("Модуль должен иметь ненулевую продольную длину.");
+            if(minZ==targetMin&&maxZ==targetMax)return source;
+            var output=Compact(source,source.submeshes??new[]{source.triangles});float scale=(targetMax-targetMin)/(maxZ-minZ);
+            for(int i=0;i<output.vertices.Length;i++)
+            {
+                var p=output.vertices[i];
+                if(!allowEndOvershoot&&(p.z<minZ-.00001f||p.z>maxZ+.00001f))throw new InvalidOperationException("Готовый LOD выходит за длину своего модуля LOD0.");
+                p.z=Math.Abs(p.z-minZ)<.00001f?targetMin:Math.Abs(p.z-maxZ)<.00001f?targetMax:targetMin+(p.z-minZ)*scale;
+                output.vertices[i]=p;var n=output.normals[i];n=new Vector3(n.x,n.y,n.z/scale).normalized;output.normals[i]=n;
+                var st=output.tangents[i];var t=new Vector3(st.x,st.y,st.z*scale);t=(t-n*Vector3.Dot(n,t)).normalized;
+                output.tangents[i]=new Vector4(t.x,t.y,t.z,st.w);
+            }
+            output.hash=LTRoadMesh.ContentHash(output);return output;
+        }
+        public static List<LTRoadMesh.Chunk> BendVariants(LTRoadMesh.Chunk[] sources,float[] weights,int seed,bool avoidRepeat,LTRoadMath.Snapshot path,
+            Vector3 referenceMin,Vector3 referenceMax,float desiredLength,bool fitWidth,float baseY,float offset,float chunkLength,Matrix4x4 toRoad)
         {
             float originalLength=referenceMax.z-referenceMin.z,originalWidth=referenceMax.x-referenceMin.x;
             if(originalLength<.001f||originalWidth<.001f)throw new InvalidOperationException("Модуль должен иметь ненулевую длину Z и ширину X после выбора оси.");
             float target=desiredLength>0?desiredLength:originalLength;
             int count=Math.Max(1,(int)Math.Ceiling(path.length/target));
-            if(count>32768||(long)count*source.vertices.Length>4000000)throw new InvalidOperationException("Модуль дороги превышает бюджет 4 млн вершин / 32768 повторов. Увеличьте длину модуля или упростите его.");
+            if(sources.Length!=weights.Length)throw new InvalidOperationException("Набор модулей не совпадает с весами.");
+            var choices=SelectModules(weights,count,seed,avoidRepeat);
+            if(choices.Sum(i=>(long)sources[i].vertices.Length)>4000000)throw new InvalidOperationException("Модуль дороги превышает бюджет 4 млн вершин. Увеличьте длину модуля или упростите его.");
             float length=path.length/count,scaleX=fitWidth?path.width/originalWidth:1,centerX=(referenceMin.x+referenceMax.x)*.5f;
             int perChunk=Math.Max(1,(int)Math.Floor(chunkLength/length));
             if((count+perChunk-1)/perChunk>LTRoadMesh.MaxChunks)throw new InvalidOperationException("Слишком много секций дороги. Увеличьте длину чанка.");
             var result=new List<LTRoadMesh.Chunk>();
             for(int start=0;start<count;start+=perChunk)
             {
-                int repeats=Math.Min(perChunk,count-start),n=source.vertices.Length;
-                var output=new LTRoadMesh.Chunk{vertices=new Vector3[n*repeats],normals=new Vector3[n*repeats],tangents=new Vector4[n*repeats],uv=new Vector2[n*repeats]};
-                if(source.uv2!=null)output.uv2=new Vector2[n*repeats];if(source.uv3!=null)output.uv3=new Vector2[n*repeats];if(source.uv4!=null)output.uv4=new Vector2[n*repeats];if(source.colors!=null)output.colors=new Color[n*repeats];
-                var sourceSubs=source.submeshes??new[]{source.triangles};var subs=sourceSubs.Select(s=>new List<int>(s.Length*repeats)).ToArray();
+                int repeats=Math.Min(perChunk,count-start),vertices=0;
+                for(int c=0;c<repeats;c++)vertices+=sources[choices[start+c]].vertices.Length;
+                var output=new LTRoadMesh.Chunk{vertices=new Vector3[vertices],normals=new Vector3[vertices],tangents=new Vector4[vertices],uv=new Vector2[vertices]};
+                if(sources.Any(s=>s.uv2!=null))output.uv2=new Vector2[vertices];if(sources.Any(s=>s.uv3!=null))output.uv3=new Vector2[vertices];
+                if(sources.Any(s=>s.uv4!=null))output.uv4=new Vector2[vertices];if(sources.Any(s=>s.colors!=null))output.colors=Enumerable.Repeat(Color.white,vertices).ToArray();
+                int subCount=sources.Max(s=>s.submeshes?.Length??1);var subs=Enumerable.Range(0,subCount).Select(_=>new List<int>()).ToArray();
                 Vector3 Position(float distance,float x,float y)
                 {var frame=Along(path,distance);var p=frame.position+frame.right*x;p.y=path.SurfaceHeight(frame,x)+offset+y;return p;}
-                for(int copy=0;copy<repeats;copy++)for(int i=0;i<n;i++)
+                int vertexStart=0;
+                for(int copy=0;copy<repeats;copy++)
                 {
-                    int id=copy*n+i;var p=source.vertices[i];float x=(p.x-centerX)*scaleX;
+                var source=sources[choices[start+copy]];int n=source.vertices.Length;
+                for(int i=0;i<n;i++)
+                {
+                    int id=vertexStart+i;var p=source.vertices[i];float x=(p.x-centerX)*scaleX;
                     // Evaluate shared module endpoints through the exact same distance expression.
                     float fraction=(p.z-referenceMin.z)/originalLength;
                     float distance=(start+copy+fraction)*length;
@@ -80,9 +126,12 @@ namespace LocalTerrainPrototype
                     normal=NormalTransform(toRoad,normal);tangent=toRoad.MultiplyVector(tangent);tangent=(tangent-normal*Vector3.Dot(normal,tangent)).normalized;
                     output.vertices[id]=toRoad.MultiplyPoint3x4(Position(distance,x,p.y-baseY));output.normals[id]=normal;
                     output.tangents[id]=new Vector4(tangent.x,tangent.y,tangent.z,st.w);output.uv[id]=source.uv[i];
-                    if(output.uv2!=null)output.uv2[id]=source.uv2[i];if(output.uv3!=null)output.uv3[id]=source.uv3[i];if(output.uv4!=null)output.uv4[id]=source.uv4[i];if(output.colors!=null)output.colors[id]=source.colors[i];
+                    if(source.uv2!=null)output.uv2[id]=source.uv2[i];if(source.uv3!=null)output.uv3[id]=source.uv3[i];if(source.uv4!=null)output.uv4[id]=source.uv4[i];if(source.colors!=null)output.colors[id]=source.colors[i];
                 }
-                for(int copy=0;copy<repeats;copy++)for(int s=0;s<subs.Length;s++)foreach(int id in sourceSubs[s])subs[s].Add(copy*n+id);
+                var sourceSubs=source.submeshes??new[]{source.triangles};
+                for(int s=0;s<sourceSubs.Length;s++)foreach(int id in sourceSubs[s])subs[s].Add(vertexStart+id);
+                vertexStart+=n;
+                }
                 output.submeshes=subs.Select(s=>s.ToArray()).ToArray();output.triangles=output.submeshes.SelectMany(s=>s).ToArray();
                 output.hash=LTRoadMesh.ContentHash(output);result.Add(output);
             }

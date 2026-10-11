@@ -17,7 +17,7 @@ namespace LocalTerrainPrototype
             AssemblyReloadEvents.beforeAssemblyReload+=Stop;
             EditorApplication.quitting+=Stop;
         }
-        [MenuItem("Tools/Local Terrain/Validate LOD Jobs (no scene changes)")]
+        // Archived validation menu: Tools/Local Terrain/Validate LOD Jobs (no scene changes)
         static void Run()
         {
             if(runner!=null){Debug.Log("LOD job validation already running.");return;}

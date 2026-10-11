@@ -129,7 +129,10 @@ namespace LocalTerrainPrototype
                         (adapter.indirect.GetPropertyFlags(p)&UnityEngine.Rendering.ShaderPropertyFlags.NonModifiableTextureData)==0)
                     {
                         string property=adapter.indirect.GetPropertyName(p);
-                        material.SetTexture(property,Presence(source.GetTexture(property)));
+                        // A graph can gain a renderer-only texture before existing
+                        // materials finish refreshing their shader property layout.
+                        // Keep its generated default; never query a missing slot.
+                        if(source.HasProperty(property))material.SetTexture(property,Presence(source.GetTexture(property)));
                     }
                 material.EnableKeyword("PROCEDURAL_INSTANCING_ON");
                 ctx.AddObjectToAsset("Variant_"+guid,material);variants.Add(material);

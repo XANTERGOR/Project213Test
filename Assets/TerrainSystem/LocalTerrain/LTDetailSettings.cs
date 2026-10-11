@@ -139,6 +139,10 @@ namespace LocalTerrainPrototype
             copy.patchScaleEnabled=false;copy.patchScaleEdge=1;copy.patchScaleInside=1;copy.patchScaleSoftness=0;
             return copy;
         }
+        // Serialize values only; prefab identity is a serialized asset reference
+        // in the persistent cell, not a session-specific InstanceID in JSON.
+        public LTDetailEntry SavedPlacementSettings()
+        {var copy=(LTDetailEntry)MemberwiseClone();copy.prefab=null;return copy;}
         public void Validate(HashSet<string> used)
         {
             UpgradeMaskMode();

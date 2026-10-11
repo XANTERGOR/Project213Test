@@ -1,6 +1,7 @@
 // Three world-shared arrays; local layer slots map to world palette slices.
 // Reuse HDRP's guarded global sampler declarations; do not redeclare them.
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/GlobalSamplers.hlsl"
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTLayerNormal.hlsl"
 TEXTURE2D_ARRAY(_LTColorArray);
 TEXTURE2D_ARRAY(_LTNormalArray);
 TEXTURE2D_ARRAY(_LTMaskArray);
@@ -23,9 +24,32 @@ TEXTURE2D(_LTWeights1);
 TEXTURE2D(_LTWeights2);
 
 #include "Assets/TerrainSystem/LocalTerrain/Shaders/LTRoadProjection.hlsl"
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTRoadAsphalt.hlsl"
 
-void LTSampleLayersMappedFrame(float2 coveragePosition, float2 coverageDx, float2 coverageDy,
+// Coverage belongs to terrain XZ, not to a material projection. Projected callers
+// share these three reads across their active axes; height masks remain per-axis.
+void LTReadLayerCoverage(float2 coveragePosition,out float4 w0,out float4 w1,out float4 w2)
+{
+    w0=0;w1=0;w2=0;
+    [branch] if(_LTBaseOnly > .5)return;
+    float2 coverageUV = (coveragePosition - _LTRect.xy) / _LTRect.zw;
+    // Coverage texels include both endpoints, so adjacent chunks agree at their border.
+    coverageUV = (coverageUV * 256.0 + .5) / 257.0;
+    w0 = SAMPLE_TEXTURE2D_LOD(_LTWeights0, sampler_LinearClamp, coverageUV, 0);
+    w1 = SAMPLE_TEXTURE2D_LOD(_LTWeights1, sampler_LinearClamp, coverageUV, 0);
+    w2 = SAMPLE_TEXTURE2D_LOD(_LTWeights2, sampler_LinearClamp, coverageUV, 0);
+}
+
+#if defined(_LT_FAST_LAYERS)
+#define LT_FAST_LAYER_PATH 1
+#if defined(_LT_FAST_PREHEIGHT)
+#define LT_FAST_PREHEIGHT_PATH 1
+#endif
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTFastLayerBlend.hlsl"
+#else
+void LTSampleLayersMappedFrameWithCoverage(float2 coveragePosition, float2 coverageDx, float2 coverageDy,
     float2 position, float2 uvDx, float2 uvDy, int projectionAxis,
+    float4 w0,float4 w1,float4 w2,
     out float3 color, out float3 normalTS, out float ao, out float smoothness, out float metallic,
     out float3 gradientLocal)
 {
@@ -41,303 +65,314 @@ void LTSampleLayersMappedFrame(float2 coveragePosition, float2 coverageDx, float
 #if defined(SHADER_STAGE_RAY_TRACING)
         color=SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(0),0).rgb*_LTTint0.rgb;
         if(_LTSettings0.w > .5) mask=SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(0),0).rgb;
-        if(_LTFlags0.x > .5) n=UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(0),0),_LTSettings0.x);
+        if(_LTFlags0.x > .5) n=LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(0),0),_LTSettings0.x,_LTFlags0.x);
 #else
         float2 dx=uvDx/max(_LTTiling0.xy,.001),dy=uvDy/max(_LTTiling0.xy,.001);
         color=SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(0),dx,dy).rgb*_LTTint0.rgb;
         if(_LTSettings0.w > .5) mask=SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(0),dx,dy).rgb;
-        if(_LTFlags0.x > .5) n=UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(0),dx,dy),_LTSettings0.x);
+        if(_LTFlags0.x > .5) n=LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(0),dx,dy),_LTSettings0.x,_LTFlags0.x);
 #endif
         normalTS=normalize(n+float3(0,0,.00001));
         ao=saturate(1+(mask.x-1)*_LTFlags0.y);smoothness=mask.z;metallic=_LTSettings0.y;
         gradientLocal=LTProjectionGradient(normalTS,projectionAxis);
         return;
     }
-    float2 coverageUV = (coveragePosition - _LTRect.xy) / _LTRect.zw;
-    // Coverage texels include both endpoints, so adjacent chunks agree at their border.
-    coverageUV = (coverageUV * 256.0 + .5) / 257.0;
-    float4 w0 = SAMPLE_TEXTURE2D_LOD(_LTWeights0, sampler_LinearClamp, coverageUV, 0);
-    float4 w1 = SAMPLE_TEXTURE2D_LOD(_LTWeights1, sampler_LinearClamp, coverageUV, 0);
-    float4 w2 = SAMPLE_TEXTURE2D_LOD(_LTWeights2, sampler_LinearClamp, coverageUV, 0);
     float weights[12] = {w0.x,w0.y,w0.z,w0.w,w1.x,w1.y,w1.z,w1.w,w2.x,w2.y,w2.z,w2.w};
     float3 colors[12], normals[12], masks[12];
 
+    // Do not fetch spline maps/Jacobians for layers below the existing sampling
+    // threshold. Keep their flat-normal/default-mask contribution: a tiny positive
+    // weight still reaches height blending. Flat normals have zero slope in any
+    // road frame, so an unsampled layer may use the identity roadRight safely.
+
     {
-        float2 uv = position / max(_LTTiling0.xy, .001) + _LTTiling0.zw;
-        float2 dx=uvDx/max(_LTTiling0.xy,.001),dy=uvDy/max(_LTTiling0.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(0,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[0] = 0; normals[0] = float3(0,0,1); masks[0] = float3(1,.5,_LTSettings0.z);
-        if(weights[0] > 0.00001)
+        [branch] if(weights[0] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling0.xy, .001) + _LTTiling0.zw;
+            float2 dx=uvDx/max(_LTTiling0.xy,.001),dy=uvDy/max(_LTTiling0.xy,.001);
+            LTRoadMappedUV(0,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[0] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(0), 0).rgb * _LTTint0.rgb;
             if(_LTSettings0.w > .5) masks[0] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(0), 0).rgb;
-            if(_LTFlags0.x > .5) normals[0] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(0), 0),_LTSettings0.x);
+            if(_LTFlags0.x > .5) normals[0] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(0), 0),_LTSettings0.x,_LTFlags0.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[0] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(0), dx, dy).rgb * _LTTint0.rgb;
             if(_LTSettings0.w > .5) masks[0] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(0), dx, dy).rgb;
-            if(_LTFlags0.x > .5) normals[0] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(0), dx, dy),_LTSettings0.x);
+            if(_LTFlags0.x > .5) normals[0] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(0), dx, dy),_LTSettings0.x,_LTFlags0.x);
 #endif
         }
+        if(weights[0]>.00001)LTApplyAsphaltCracks(0,coveragePosition,coverageDx,coverageDy,roadRight,colors[0],normals[0],masks[0]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[0]=LTRoadLayerGradient(0,normals[0],roadRight,projectionAxis);
     }
 
     {
-        float2 uv = position / max(_LTTiling1.xy, .001) + _LTTiling1.zw;
-        float2 dx=uvDx/max(_LTTiling1.xy,.001),dy=uvDy/max(_LTTiling1.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(1,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[1] = 0; normals[1] = float3(0,0,1); masks[1] = float3(1,.5,_LTSettings1.z);
-        if(weights[1] > 0.00001)
+        [branch] if(weights[1] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling1.xy, .001) + _LTTiling1.zw;
+            float2 dx=uvDx/max(_LTTiling1.xy,.001),dy=uvDy/max(_LTTiling1.xy,.001);
+            LTRoadMappedUV(1,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[1] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(1), 0).rgb * _LTTint1.rgb;
             if(_LTSettings1.w > .5) masks[1] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(1), 0).rgb;
-            if(_LTFlags1.x > .5) normals[1] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(1), 0),_LTSettings1.x);
+            if(_LTFlags1.x > .5) normals[1] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(1), 0),_LTSettings1.x,_LTFlags1.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[1] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(1), dx, dy).rgb * _LTTint1.rgb;
             if(_LTSettings1.w > .5) masks[1] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(1), dx, dy).rgb;
-            if(_LTFlags1.x > .5) normals[1] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(1), dx, dy),_LTSettings1.x);
+            if(_LTFlags1.x > .5) normals[1] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(1), dx, dy),_LTSettings1.x,_LTFlags1.x);
 #endif
         }
+        if(weights[1]>.00001)LTApplyAsphaltCracks(1,coveragePosition,coverageDx,coverageDy,roadRight,colors[1],normals[1],masks[1]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[1]=LTRoadLayerGradient(1,normals[1],roadRight,projectionAxis);
     }
 
     {
-        float2 uv = position / max(_LTTiling2.xy, .001) + _LTTiling2.zw;
-        float2 dx=uvDx/max(_LTTiling2.xy,.001),dy=uvDy/max(_LTTiling2.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(2,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[2] = 0; normals[2] = float3(0,0,1); masks[2] = float3(1,.5,_LTSettings2.z);
-        if(weights[2] > 0.00001)
+        [branch] if(weights[2] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling2.xy, .001) + _LTTiling2.zw;
+            float2 dx=uvDx/max(_LTTiling2.xy,.001),dy=uvDy/max(_LTTiling2.xy,.001);
+            LTRoadMappedUV(2,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[2] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(2), 0).rgb * _LTTint2.rgb;
             if(_LTSettings2.w > .5) masks[2] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(2), 0).rgb;
-            if(_LTFlags2.x > .5) normals[2] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(2), 0),_LTSettings2.x);
+            if(_LTFlags2.x > .5) normals[2] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(2), 0),_LTSettings2.x,_LTFlags2.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[2] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(2), dx, dy).rgb * _LTTint2.rgb;
             if(_LTSettings2.w > .5) masks[2] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(2), dx, dy).rgb;
-            if(_LTFlags2.x > .5) normals[2] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(2), dx, dy),_LTSettings2.x);
+            if(_LTFlags2.x > .5) normals[2] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(2), dx, dy),_LTSettings2.x,_LTFlags2.x);
 #endif
         }
+        if(weights[2]>.00001)LTApplyAsphaltCracks(2,coveragePosition,coverageDx,coverageDy,roadRight,colors[2],normals[2],masks[2]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[2]=LTRoadLayerGradient(2,normals[2],roadRight,projectionAxis);
     }
 
     {
-        float2 uv = position / max(_LTTiling3.xy, .001) + _LTTiling3.zw;
-        float2 dx=uvDx/max(_LTTiling3.xy,.001),dy=uvDy/max(_LTTiling3.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(3,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[3] = 0; normals[3] = float3(0,0,1); masks[3] = float3(1,.5,_LTSettings3.z);
-        if(weights[3] > 0.00001)
+        [branch] if(weights[3] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling3.xy, .001) + _LTTiling3.zw;
+            float2 dx=uvDx/max(_LTTiling3.xy,.001),dy=uvDy/max(_LTTiling3.xy,.001);
+            LTRoadMappedUV(3,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[3] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(3), 0).rgb * _LTTint3.rgb;
             if(_LTSettings3.w > .5) masks[3] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(3), 0).rgb;
-            if(_LTFlags3.x > .5) normals[3] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(3), 0),_LTSettings3.x);
+            if(_LTFlags3.x > .5) normals[3] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(3), 0),_LTSettings3.x,_LTFlags3.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[3] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(3), dx, dy).rgb * _LTTint3.rgb;
             if(_LTSettings3.w > .5) masks[3] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(3), dx, dy).rgb;
-            if(_LTFlags3.x > .5) normals[3] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(3), dx, dy),_LTSettings3.x);
+            if(_LTFlags3.x > .5) normals[3] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(3), dx, dy),_LTSettings3.x,_LTFlags3.x);
 #endif
         }
+        if(weights[3]>.00001)LTApplyAsphaltCracks(3,coveragePosition,coverageDx,coverageDy,roadRight,colors[3],normals[3],masks[3]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[3]=LTRoadLayerGradient(3,normals[3],roadRight,projectionAxis);
     }
 
     {
-        float2 uv = position / max(_LTTiling4.xy, .001) + _LTTiling4.zw;
-        float2 dx=uvDx/max(_LTTiling4.xy,.001),dy=uvDy/max(_LTTiling4.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(4,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[4] = 0; normals[4] = float3(0,0,1); masks[4] = float3(1,.5,_LTSettings4.z);
-        if(weights[4] > 0.00001)
+        [branch] if(weights[4] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling4.xy, .001) + _LTTiling4.zw;
+            float2 dx=uvDx/max(_LTTiling4.xy,.001),dy=uvDy/max(_LTTiling4.xy,.001);
+            LTRoadMappedUV(4,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[4] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(4), 0).rgb * _LTTint4.rgb;
             if(_LTSettings4.w > .5) masks[4] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(4), 0).rgb;
-            if(_LTFlags4.x > .5) normals[4] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(4), 0),_LTSettings4.x);
+            if(_LTFlags4.x > .5) normals[4] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(4), 0),_LTSettings4.x,_LTFlags4.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[4] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(4), dx, dy).rgb * _LTTint4.rgb;
             if(_LTSettings4.w > .5) masks[4] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(4), dx, dy).rgb;
-            if(_LTFlags4.x > .5) normals[4] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(4), dx, dy),_LTSettings4.x);
+            if(_LTFlags4.x > .5) normals[4] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(4), dx, dy),_LTSettings4.x,_LTFlags4.x);
 #endif
         }
+        if(weights[4]>.00001)LTApplyAsphaltCracks(4,coveragePosition,coverageDx,coverageDy,roadRight,colors[4],normals[4],masks[4]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[4]=LTRoadLayerGradient(4,normals[4],roadRight,projectionAxis);
     }
 
     {
-        float2 uv = position / max(_LTTiling5.xy, .001) + _LTTiling5.zw;
-        float2 dx=uvDx/max(_LTTiling5.xy,.001),dy=uvDy/max(_LTTiling5.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(5,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[5] = 0; normals[5] = float3(0,0,1); masks[5] = float3(1,.5,_LTSettings5.z);
-        if(weights[5] > 0.00001)
+        [branch] if(weights[5] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling5.xy, .001) + _LTTiling5.zw;
+            float2 dx=uvDx/max(_LTTiling5.xy,.001),dy=uvDy/max(_LTTiling5.xy,.001);
+            LTRoadMappedUV(5,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[5] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(5), 0).rgb * _LTTint5.rgb;
             if(_LTSettings5.w > .5) masks[5] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(5), 0).rgb;
-            if(_LTFlags5.x > .5) normals[5] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(5), 0),_LTSettings5.x);
+            if(_LTFlags5.x > .5) normals[5] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(5), 0),_LTSettings5.x,_LTFlags5.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[5] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(5), dx, dy).rgb * _LTTint5.rgb;
             if(_LTSettings5.w > .5) masks[5] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(5), dx, dy).rgb;
-            if(_LTFlags5.x > .5) normals[5] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(5), dx, dy),_LTSettings5.x);
+            if(_LTFlags5.x > .5) normals[5] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(5), dx, dy),_LTSettings5.x,_LTFlags5.x);
 #endif
         }
+        if(weights[5]>.00001)LTApplyAsphaltCracks(5,coveragePosition,coverageDx,coverageDy,roadRight,colors[5],normals[5],masks[5]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[5]=LTRoadLayerGradient(5,normals[5],roadRight,projectionAxis);
     }
 
     {
-        float2 uv = position / max(_LTTiling6.xy, .001) + _LTTiling6.zw;
-        float2 dx=uvDx/max(_LTTiling6.xy,.001),dy=uvDy/max(_LTTiling6.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(6,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[6] = 0; normals[6] = float3(0,0,1); masks[6] = float3(1,.5,_LTSettings6.z);
-        if(weights[6] > 0.00001)
+        [branch] if(weights[6] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling6.xy, .001) + _LTTiling6.zw;
+            float2 dx=uvDx/max(_LTTiling6.xy,.001),dy=uvDy/max(_LTTiling6.xy,.001);
+            LTRoadMappedUV(6,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[6] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(6), 0).rgb * _LTTint6.rgb;
             if(_LTSettings6.w > .5) masks[6] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(6), 0).rgb;
-            if(_LTFlags6.x > .5) normals[6] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(6), 0),_LTSettings6.x);
+            if(_LTFlags6.x > .5) normals[6] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(6), 0),_LTSettings6.x,_LTFlags6.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[6] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(6), dx, dy).rgb * _LTTint6.rgb;
             if(_LTSettings6.w > .5) masks[6] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(6), dx, dy).rgb;
-            if(_LTFlags6.x > .5) normals[6] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(6), dx, dy),_LTSettings6.x);
+            if(_LTFlags6.x > .5) normals[6] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(6), dx, dy),_LTSettings6.x,_LTFlags6.x);
 #endif
         }
+        if(weights[6]>.00001)LTApplyAsphaltCracks(6,coveragePosition,coverageDx,coverageDy,roadRight,colors[6],normals[6],masks[6]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[6]=LTRoadLayerGradient(6,normals[6],roadRight,projectionAxis);
     }
 
     {
-        float2 uv = position / max(_LTTiling7.xy, .001) + _LTTiling7.zw;
-        float2 dx=uvDx/max(_LTTiling7.xy,.001),dy=uvDy/max(_LTTiling7.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(7,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[7] = 0; normals[7] = float3(0,0,1); masks[7] = float3(1,.5,_LTSettings7.z);
-        if(weights[7] > 0.00001)
+        [branch] if(weights[7] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling7.xy, .001) + _LTTiling7.zw;
+            float2 dx=uvDx/max(_LTTiling7.xy,.001),dy=uvDy/max(_LTTiling7.xy,.001);
+            LTRoadMappedUV(7,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[7] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(7), 0).rgb * _LTTint7.rgb;
             if(_LTSettings7.w > .5) masks[7] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(7), 0).rgb;
-            if(_LTFlags7.x > .5) normals[7] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(7), 0),_LTSettings7.x);
+            if(_LTFlags7.x > .5) normals[7] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(7), 0),_LTSettings7.x,_LTFlags7.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[7] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(7), dx, dy).rgb * _LTTint7.rgb;
             if(_LTSettings7.w > .5) masks[7] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(7), dx, dy).rgb;
-            if(_LTFlags7.x > .5) normals[7] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(7), dx, dy),_LTSettings7.x);
+            if(_LTFlags7.x > .5) normals[7] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(7), dx, dy),_LTSettings7.x,_LTFlags7.x);
 #endif
         }
+        if(weights[7]>.00001)LTApplyAsphaltCracks(7,coveragePosition,coverageDx,coverageDy,roadRight,colors[7],normals[7],masks[7]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[7]=LTRoadLayerGradient(7,normals[7],roadRight,projectionAxis);
     }
     colors[8]=0; normals[8]=0; masks[8]=float3(1,.5,_LTSettings8.z);
     [branch] if(weights[8] > .00001)
     {
-        float2 uv = position / max(_LTTiling8.xy, .001) + _LTTiling8.zw;
-        float2 dx=uvDx/max(_LTTiling8.xy,.001),dy=uvDy/max(_LTTiling8.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(8,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[8] = 0; normals[8] = float3(0,0,1); masks[8] = float3(1,.5,_LTSettings8.z);
-        if(weights[8] > 0.00001)
+        [branch] if(weights[8] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling8.xy, .001) + _LTTiling8.zw;
+            float2 dx=uvDx/max(_LTTiling8.xy,.001),dy=uvDy/max(_LTTiling8.xy,.001);
+            LTRoadMappedUV(8,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[8] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(8), 0).rgb * _LTTint8.rgb;
             if(_LTSettings8.w > .5) masks[8] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(8), 0).rgb;
-            if(_LTFlags8.x > .5) normals[8] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(8), 0),_LTSettings8.x);
+            if(_LTFlags8.x > .5) normals[8] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(8), 0),_LTSettings8.x,_LTFlags8.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[8] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(8), dx, dy).rgb * _LTTint8.rgb;
             if(_LTSettings8.w > .5) masks[8] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(8), dx, dy).rgb;
-            if(_LTFlags8.x > .5) normals[8] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(8), dx, dy),_LTSettings8.x);
+            if(_LTFlags8.x > .5) normals[8] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(8), dx, dy),_LTSettings8.x,_LTFlags8.x);
 #endif
         }
+        if(weights[8]>.00001)LTApplyAsphaltCracks(8,coveragePosition,coverageDx,coverageDy,roadRight,colors[8],normals[8],masks[8]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[8]=LTRoadLayerGradient(8,normals[8],roadRight,projectionAxis);
     }
     colors[9]=0; normals[9]=0; masks[9]=float3(1,.5,_LTSettings9.z);
     [branch] if(weights[9] > .00001)
     {
-        float2 uv = position / max(_LTTiling9.xy, .001) + _LTTiling9.zw;
-        float2 dx=uvDx/max(_LTTiling9.xy,.001),dy=uvDy/max(_LTTiling9.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(9,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[9] = 0; normals[9] = float3(0,0,1); masks[9] = float3(1,.5,_LTSettings9.z);
-        if(weights[9] > 0.00001)
+        [branch] if(weights[9] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling9.xy, .001) + _LTTiling9.zw;
+            float2 dx=uvDx/max(_LTTiling9.xy,.001),dy=uvDy/max(_LTTiling9.xy,.001);
+            LTRoadMappedUV(9,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[9] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(9), 0).rgb * _LTTint9.rgb;
             if(_LTSettings9.w > .5) masks[9] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(9), 0).rgb;
-            if(_LTFlags9.x > .5) normals[9] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(9), 0),_LTSettings9.x);
+            if(_LTFlags9.x > .5) normals[9] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(9), 0),_LTSettings9.x,_LTFlags9.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[9] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(9), dx, dy).rgb * _LTTint9.rgb;
             if(_LTSettings9.w > .5) masks[9] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(9), dx, dy).rgb;
-            if(_LTFlags9.x > .5) normals[9] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(9), dx, dy),_LTSettings9.x);
+            if(_LTFlags9.x > .5) normals[9] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(9), dx, dy),_LTSettings9.x,_LTFlags9.x);
 #endif
         }
+        if(weights[9]>.00001)LTApplyAsphaltCracks(9,coveragePosition,coverageDx,coverageDy,roadRight,colors[9],normals[9],masks[9]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[9]=LTRoadLayerGradient(9,normals[9],roadRight,projectionAxis);
     }
     colors[10]=0; normals[10]=0; masks[10]=float3(1,.5,_LTSettings10.z);
     [branch] if(weights[10] > .00001)
     {
-        float2 uv = position / max(_LTTiling10.xy, .001) + _LTTiling10.zw;
-        float2 dx=uvDx/max(_LTTiling10.xy,.001),dy=uvDy/max(_LTTiling10.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(10,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[10] = 0; normals[10] = float3(0,0,1); masks[10] = float3(1,.5,_LTSettings10.z);
-        if(weights[10] > 0.00001)
+        [branch] if(weights[10] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling10.xy, .001) + _LTTiling10.zw;
+            float2 dx=uvDx/max(_LTTiling10.xy,.001),dy=uvDy/max(_LTTiling10.xy,.001);
+            LTRoadMappedUV(10,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[10] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(10), 0).rgb * _LTTint10.rgb;
             if(_LTSettings10.w > .5) masks[10] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(10), 0).rgb;
-            if(_LTFlags10.x > .5) normals[10] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(10), 0),_LTSettings10.x);
+            if(_LTFlags10.x > .5) normals[10] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(10), 0),_LTSettings10.x,_LTFlags10.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[10] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(10), dx, dy).rgb * _LTTint10.rgb;
             if(_LTSettings10.w > .5) masks[10] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(10), dx, dy).rgb;
-            if(_LTFlags10.x > .5) normals[10] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(10), dx, dy),_LTSettings10.x);
+            if(_LTFlags10.x > .5) normals[10] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(10), dx, dy),_LTSettings10.x,_LTFlags10.x);
 #endif
         }
+        if(weights[10]>.00001)LTApplyAsphaltCracks(10,coveragePosition,coverageDx,coverageDy,roadRight,colors[10],normals[10],masks[10]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[10]=LTRoadLayerGradient(10,normals[10],roadRight,projectionAxis);
     }
     colors[11]=0; normals[11]=0; masks[11]=float3(1,.5,_LTSettings11.z);
     [branch] if(weights[11] > .00001)
     {
-        float2 uv = position / max(_LTTiling11.xy, .001) + _LTTiling11.zw;
-        float2 dx=uvDx/max(_LTTiling11.xy,.001),dy=uvDy/max(_LTTiling11.xy,.001);
-        float2 roadRight;
-        LTRoadMappedUV(11,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
+        float2 roadRight=float2(1,0);
         colors[11] = 0; normals[11] = float3(0,0,1); masks[11] = float3(1,.5,_LTSettings11.z);
-        if(weights[11] > 0.00001)
+        [branch] if(weights[11] > 0.00001)
         {
+            float2 uv = position / max(_LTTiling11.xy, .001) + _LTTiling11.zw;
+            float2 dx=uvDx/max(_LTTiling11.xy,.001),dy=uvDy/max(_LTTiling11.xy,.001);
+            LTRoadMappedUV(11,coveragePosition,coverageDx,coverageDy,uv,dx,dy,roadRight);
 #if defined(SHADER_STAGE_RAY_TRACING)
             colors[11] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(11), 0).rgb * _LTTint11.rgb;
             if(_LTSettings11.w > .5) masks[11] = SAMPLE_TEXTURE2D_ARRAY_LOD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(11), 0).rgb;
-            if(_LTFlags11.x > .5) normals[11] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(11), 0),_LTSettings11.x);
+            if(_LTFlags11.x > .5) normals[11] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_LOD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(11), 0),_LTSettings11.x,_LTFlags11.x);
 #else
             // Explicit gradients remain valid in weight-dependent branches.
             colors[11] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTColorArray,sampler_LTColorArray,uv,LTLayerSlice(11), dx, dy).rgb * _LTTint11.rgb;
             if(_LTSettings11.w > .5) masks[11] = SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTMaskArray,sampler_LTMaskArray,uv,LTLayerSlice(11), dx, dy).rgb;
-            if(_LTFlags11.x > .5) normals[11] = UnpackNormalRGB(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(11), dx, dy),_LTSettings11.x);
+            if(_LTFlags11.x > .5) normals[11] = LTUnpackLayerNormal(SAMPLE_TEXTURE2D_ARRAY_GRAD(_LTNormalArray,sampler_LTNormalArray,uv,LTLayerSlice(11), dx, dy),_LTSettings11.x,_LTFlags11.x);
 #endif
         }
+        if(weights[11]>.00001)LTApplyAsphaltCracks(11,coveragePosition,coverageDx,coverageDy,roadRight,colors[11],normals[11],masks[11]);
         [branch] if(_LTRoadProjectionEnabled>.5)
             normals[11]=LTRoadLayerGradient(11,normals[11],roadRight,projectionAxis);
     }
@@ -397,6 +432,19 @@ void LTSampleLayersMappedFrame(float2 coveragePosition, float2 coverageDx, float
         normalTS=normalize(n+float3(0,0,.00001));
         gradientLocal=LTProjectionGradient(normalTS,projectionAxis);
     }
+}
+
+#endif // Separate compiled implementation, not a runtime branch over both paths.
+
+// Keep planar and other existing callers on the same sampling implementation.
+void LTSampleLayersMappedFrame(float2 coveragePosition,float2 coverageDx,float2 coverageDy,
+    float2 position,float2 uvDx,float2 uvDy,int projectionAxis,
+    out float3 color,out float3 normalTS,out float ao,out float smoothness,out float metallic,
+    out float3 gradientLocal)
+{
+    float4 w0,w1,w2;LTReadLayerCoverage(coveragePosition,w0,w1,w2);
+    LTSampleLayersMappedFrameWithCoverage(coveragePosition,coverageDx,coverageDy,position,uvDx,uvDy,projectionAxis,
+        w0,w1,w2,color,normalTS,ao,smoothness,metallic,gradientLocal);
 }
 
 void LTSampleLayersMapped(float2 coveragePosition,float2 position,float2 uvDx,float2 uvDy,

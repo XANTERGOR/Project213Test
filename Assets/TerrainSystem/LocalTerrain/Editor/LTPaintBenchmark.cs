@@ -195,9 +195,10 @@ namespace LocalTerrainPrototype
                     var material=new Material(shader){name="Temporary GPU layer benchmark",hideFlags=HideFlags.HideAndDontSave};
                     var state=new SavedRenderer{renderer=r,original=r.sharedMaterials,test=material,filter=filter,mesh=filter.sharedMesh,bounds=r.localBounds};
                     renderers.Add(state);
-                    float w=world.source.size.x/world.chunksX,d=world.source.size.z/world.chunksZ;
+                    float w=world.ChunkSize.x,d=world.ChunkSize.y;
                     material.SetVector("_LTRect",new Vector4(chunk.x*w,chunk.z*d,w,d));
                     material.SetVector("_LTWorldSize",new Vector4(world.source.size.x,world.source.size.z,0,0));
+                    var extent=world.TerrainRect;material.SetVector("_LTGlobalRect",new Vector4(extent.xMin,extent.yMin,extent.width,extent.height));
                     material.SetFloat("_LTHeightBlend",world.layerHeightBlend);
                     for(int i=0;i<LTPaintRuntime.LayerCapacity;i++)BindLayer(material,layers[i],i,benchmarkArrays.mask);
                     benchmarkArrays.Bind(material,layers);

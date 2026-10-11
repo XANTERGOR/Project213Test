@@ -5,9 +5,11 @@ using UnityEngine;
 
 namespace LocalTerrainPrototype
 {
-    public enum LTRoadMode { Offroad, Asphalt }
+    // Append only: preserve serialized Offroad=0 and mesh Asphalt=1.
+    public enum LTRoadMode { Offroad, Asphalt, TerrainAsphalt, GeometricAsphalt }
     public enum LTRoadPattern { Solid, Tracks }
     public enum LTRoadProjection { World, Spline }
+    public enum LTRoadWheelProjection { Inherit, World, Spline }
 
     [Serializable]
     public struct LTRoadWheelTracks
@@ -17,8 +19,14 @@ namespace LocalTerrainPrototype
         [Min(.01f)] public float width;
         [Min(.01f)] public float separation;
         [Range(.01f,1)] public float softness;
+        public LTRoadWheelProjection projection;
         public bool independentTiling;
         public Vector2 tileSizeMetres,textureOffset;
+        public LTRoadProjection ResolveProjection(LTRoadProjection ground) => projection==LTRoadWheelProjection.Inherit?ground:
+            projection==LTRoadWheelProjection.Spline?LTRoadProjection.Spline:LTRoadProjection.World;
+        // World ground has no authored spline UVs to inherit: use the wheel controls directly.
+        public bool OwnSplineTiling(LTRoadProjection ground) => ResolveProjection(ground)==LTRoadProjection.Spline&&
+            (independentTiling||ground!=LTRoadProjection.Spline);
         public static LTRoadWheelTracks Default=>new LTRoadWheelTracks{strength=.85f,width=.65f,separation=1.8f,softness=.4f,clearStones=true,
             tileSizeMetres=new Vector2(6,4)};
     }
@@ -54,6 +62,14 @@ namespace LocalTerrainPrototype
     /// <summary>Managed spline construction and allocation-free terrain-local queries. No Unity object access.</summary>
     public static class LTRoadMath
     {
+        public static bool IsTerrainAsphalt(LTRoadMode mode)=>mode==LTRoadMode.TerrainAsphalt||mode==LTRoadMode.GeometricAsphalt;
+        // Mesh asphalt with ground blending must sample/paint the same world-space
+        // layer as terrain. An Offroad -> Asphalt switch can leave a hidden Spline
+        // setting behind. Resolve it without overwriting the user's Offroad setting;
+        // non-blended legacy roads and terrain-asphalt modes keep their routing.
+        public static LTRoadProjection ResolveGroundProjection(LTRoadMode mode,LTRoadProjection saved,bool groundBlend)
+            =>IsTerrainAsphalt(mode)?LTRoadProjection.Spline:
+                mode==LTRoadMode.Asphalt&&groundBlend?LTRoadProjection.World:saved;
         public const int MaxPoints = 1024;
         public const int MaxSamples = 32768;
         public const int TextureBakeBlockSize = 8;
@@ -80,6 +96,7 @@ namespace LocalTerrainPrototype
         }
 
         /// <summary>Value-only input. Asset identity belongs to paint; material assignment is handled by the caller.</summary>
+        [Serializable]
         public struct Settings
         {
             public LTRoadMode mode;
@@ -94,6 +111,7 @@ namespace LocalTerrainPrototype
             public float rutWidth, rutSeparation, rutDepth, edgeNoise, noiseSize;
             public int seed;
             public float sampleSpacing, terrainCellSize, meshChunkLength, textureRepeatMetres, surfaceOffset;
+            public float insetCellSize, insetLodReduction;
             public bool clearVegetation, clearStones;
             public bool vegetationOnlyWheelTracks;
             public bool straightStart,straightEnd;
@@ -104,6 +122,10 @@ namespace LocalTerrainPrototype
             // Optional full source-world transform fingerprint, even if relative transforms cancel out.
             public int sourceTransformHash;
             public LTRoadVariation variation;
+            public LTRoadAsphaltDamage asphaltDamage;
+            public float pitBevelWidth,pitBevelDepth,pitShapeVariation;
+            public bool connectedDamage;
+            public float connectedFloorAsphalt,repairPatchStrength;
             public LTRoadWheelTracks wheelTracks;
             public int wheelLayerId;
 
@@ -113,21 +135,25 @@ namespace LocalTerrainPrototype
                 rutWidth = .55f, rutSeparation = 1.8f, rutDepth = .08f,
                 edgeNoise = .2f, noiseSize = 3, seed = 12345,
                 sampleSpacing = 1, terrainCellSize = .5f, meshChunkLength = 32,
+                insetCellSize = 1, insetLodReduction = 1,
                 textureRepeatMetres = 4, surfaceOffset = .06f,
-                clearVegetation = true, vegetationFade = 1, variation=LTRoadVariation.Default,wheelTracks=LTRoadWheelTracks.Default
+                clearVegetation = true, vegetationFade = 1, variation=LTRoadVariation.Default,wheelTracks=LTRoadWheelTracks.Default,
+                asphaltDamage=LTRoadAsphaltDamage.Default
             };
 
             public void Validate()
             {
-                if (mode != LTRoadMode.Offroad && mode != LTRoadMode.Asphalt)
-                    throw Invalid("Choose Offroad or Asphalt mode.");
+                if (mode != LTRoadMode.Offroad && mode != LTRoadMode.Asphalt && !IsTerrainAsphalt(mode))
+                    throw Invalid("Choose Offroad, Asphalt, TerrainAsphalt or GeometricAsphalt mode.");
+                if(IsTerrainAsphalt(mode))asphaltDamage.Validate();
+                if(mode==LTRoadMode.GeometricAsphalt&&asphaltDamage.size>128)throw Invalid("Geometric Asphalt: pit size must not exceed 128 metres.");
                 if (pattern != LTRoadPattern.Solid && pattern != LTRoadPattern.Tracks)
                     throw Invalid("Choose Solid or Tracks pattern.");
                 if (projection != LTRoadProjection.World && projection != LTRoadProjection.Spline)
                     throw Invalid("Choose World or Spline projection.");
                 Range(textureOffset.x, -1e6f, 1e6f, "textureOffset.x");
                 Range(textureOffset.y, -1e6f, 1e6f, "textureOffset.y");
-                if(mode==LTRoadMode.Offroad&&projection==LTRoadProjection.Spline)
+                if(mode!=LTRoadMode.Asphalt&&projection==LTRoadProjection.Spline)
                     Range(textureAcrossMetres,0,100000,"textureAcrossMetres");
                 Range(width, .01f, 10000, "width");
                 Range(shoulderWidth, 0, 10000, "shoulderWidth");
@@ -140,6 +166,16 @@ namespace LocalTerrainPrototype
                 Range(noiseSize, .01f, 10000, "noiseSize");
                 Range(sampleSpacing, .01f, 10000, "sampleSpacing");
                 Range(terrainCellSize, .01f, 10000, "terrainCellSize");
+                if(mode==LTRoadMode.GeometricAsphalt)
+                {
+                    Range(insetCellSize,.05f,100,"insetCellSize");
+                    Range(insetLodReduction,0,2,"insetLodReduction");
+                    Range(pitBevelWidth,0,2,"pitBevelWidth");
+                    Range(pitBevelDepth,0,1,"pitBevelDepth");
+                    Range(pitShapeVariation,0,1,"pitShapeVariation");
+                    Range(connectedFloorAsphalt,0,1,"connectedFloorAsphalt");
+                    Range(repairPatchStrength,0,1,"repairPatchStrength");
+                }
                 Range(meshChunkLength, .01f, 100000, "meshChunkLength");
                 Range(textureRepeatMetres, .01f, 100000, "textureRepeatMetres");
                 Range(surfaceOffset, 0, 1000, "surfaceOffset");
@@ -147,11 +183,13 @@ namespace LocalTerrainPrototype
                 Range(junctionStartLength,0,100000,"junctionStartLength");Range(junctionEndLength,0,100000,"junctionEndLength");
                 if(mode==LTRoadMode.Offroad&&wheelTracks.enabled)
                 {
+                    if(wheelTracks.projection!=LTRoadWheelProjection.Inherit&&wheelTracks.projection!=LTRoadWheelProjection.World&&wheelTracks.projection!=LTRoadWheelProjection.Spline)
+                        throw Invalid("Choose Inherit, World or Spline for wheel projection.");
                     Range(wheelTracks.width,.01f,10000,"wheelTracks.width");Range(wheelTracks.separation,.01f,10000,"wheelTracks.separation");
                     Range(wheelTracks.strength,0,1,"wheelTracks.strength");Range(wheelTracks.softness,.01f,1,"wheelTracks.softness");
                     if(wheelTracks.separation<=wheelTracks.width||wheelTracks.separation+wheelTracks.width>width)
                         throw Invalid("Следы колёс: расстояние между центрами должно быть больше ширины одного следа; сумма расстояния и ширины следа должна помещаться в ширину дороги.");
-                    if(projection==LTRoadProjection.Spline&&wheelTracks.independentTiling)
+                    if(wheelTracks.OwnSplineTiling(projection))
                     {
                         Range(wheelTracks.tileSizeMetres.x,.01f,100000,"wheelTracks.tileSizeMetres.x");
                         Range(wheelTracks.tileSizeMetres.y,.01f,100000,"wheelTracks.tileSizeMetres.y");
@@ -177,12 +215,47 @@ namespace LocalTerrainPrototype
             readonly Sample[] data;
             readonly Node[] nodes;
             readonly Settings settings;
+            readonly LTRoadShoulderJoin startShoulder,endShoulder;
+            public readonly string FoundationKey=";";
+            public bool HasShoulderJoins=>startShoulder!=null||endShoulder!=null;
+            public float FoundationRadius=>Math.Max(MaxHalfWidth+shoulderWidth+blendWidth,Math.Max(startShoulder?.radius??0,endShoulder?.radius??0));
+            public bool HasFoundationBlend=>blendWidth>0||HasShoulderJoins;
+            public void FoundationWidths(Hit hit,out float shoulder,out float blend)
+            {
+                shoulder=shoulderWidth;blend=blendWidth;
+                if(startShoulder!=null&&hit.distance<startShoulder.length)startShoulder.Widths(hit.distance,out shoulder,out blend);
+                else if(endShoulder!=null&&length-hit.distance<endShoulder.length)endShoulder.Widths(length-hit.distance,out shoulder,out blend);
+            }
+            LTRoadShoulderJoin ShoulderAt(Hit hit,float x,float z,out float distance)
+            {
+                distance=hit.distance;
+                if(startShoulder!=null&&startShoulder.Contains(distance,x,z))return startShoulder;
+                distance=length-hit.distance;
+                return endShoulder!=null&&endShoulder.Contains(distance,x,z)?endShoulder:null;
+            }
+            bool BehindShoulder(Hit hit,float x,float z)=>
+                startShoulder!=null&&hit.distance<=0&&startShoulder.Behind(x,z)||
+                endShoulder!=null&&hit.distance>=length&&endShoulder.Behind(x,z);
+            public Snapshot WithShoulders(LTRoadShoulderJoin start,LTRoadShoulderJoin end)
+            {
+                if(start==null&&end==null)return this;
+                if(mode!=LTRoadMode.Asphalt)throw Invalid("Согласование обочин поддерживает только готовый Asphalt.");
+                if(start!=null&&end!=null&&start.reach+end.reach>=length)
+                    throw Invalid("Зоны согласования двух перекрёстков перекрываются: увеличьте расстояние между ними или отключите согласование на одном узле.");
+                return new Snapshot(this,start,end);
+            }
             public readonly ReadOnlyCollection<Sample> samples;
             public readonly Rect bounds;
             public readonly int geometryHash, paintHash, detailHash, projectionHash, wheelPaintHash;
+            // Persistent detail signatures carry asset references separately.
+            internal Settings DetailPlacementSettings
+            {
+                get {var value=settings;value.groundLayerId=value.groundLayerId==0?0:1;value.wheelLayerId=value.wheelLayerId==0?0:1;value.sourceTransformHash=0;return value;}
+            }
             readonly bool wheelLayerView;
             readonly int projectionFootprintHash;
             Snapshot wheelProjection;
+            public readonly LTRoadGeometryMath.Field geometricPits;
             public float width => settings.width;
             public float shoulderWidth => settings.shoulderWidth;
             public float blendWidth => settings.blendWidth;
@@ -195,20 +268,28 @@ namespace LocalTerrainPrototype
             public int seed => settings.seed;
             public float sampleSpacing => settings.sampleSpacing;
             public float terrainCellSize => settings.terrainCellSize;
+            public float insetCellSize => settings.insetCellSize;
+            public float insetLodReduction => settings.insetLodReduction;
             public float meshChunkLength => settings.meshChunkLength;
-            bool OwnWheelTiling=>wheelLayerView&&settings.wheelTracks.independentTiling&&mode==LTRoadMode.Offroad&&projection==LTRoadProjection.Spline;
+            bool OwnWheelTiling=>wheelLayerView&&mode==LTRoadMode.Offroad&&settings.wheelTracks.OwnSplineTiling(settings.projection);
             public float textureRepeatMetres => OwnWheelTiling?settings.wheelTracks.tileSizeMetres.y:settings.textureRepeatMetres;
             public float textureAcrossMetres => OwnWheelTiling?settings.wheelTracks.tileSizeMetres.x:
-                mode==LTRoadMode.Offroad&&projection==LTRoadProjection.Spline&&settings.textureAcrossMetres>0?Math.Max(.01f,settings.textureAcrossMetres):width;
+                mode!=LTRoadMode.Asphalt&&projection==LTRoadProjection.Spline&&settings.textureAcrossMetres>0?Math.Max(.01f,settings.textureAcrossMetres):width;
             public float surfaceOffset => settings.surfaceOffset;
             public LTRoadMode mode => settings.mode;
             public LTRoadPattern pattern => settings.pattern;
-            public LTRoadProjection projection => settings.projection;
+            public LTRoadProjection projection => wheelLayerView&&mode==LTRoadMode.Offroad?settings.wheelTracks.ResolveProjection(settings.projection):settings.projection;
+            public bool HasSplineProjection => projection==LTRoadProjection.Spline||!wheelLayerView&&mode==LTRoadMode.Offroad&&
+                settings.wheelTracks.enabled&&settings.wheelLayerId!=0&&settings.wheelTracks.ResolveProjection(settings.projection)==LTRoadProjection.Spline;
             public Vector2 textureOffset => OwnWheelTiling?settings.wheelTracks.textureOffset:settings.textureOffset;
             public bool clearVegetation => settings.clearVegetation;
             public bool clearStones => settings.clearStones;
             public float vegetationFade => settings.vegetationFade;
             public float length => data[data.Length - 1].distance;
+            public LTRoadAsphaltMath.Damage AsphaltDamage(Hit hit)=>IsTerrainAsphalt(mode)?
+                LTRoadAsphaltMath.Evaluate(settings.asphaltDamage,hit,width,length):default;
+            public float RepairPatch(Hit hit)=>mode==LTRoadMode.GeometricAsphalt&&settings.connectedDamage?
+                LTRoadAsphaltMath.RepairPatch(settings.asphaltDamage,hit,width,length)*settings.repairPatchStrength:0;
             bool Varied=>mode==LTRoadMode.Offroad&&settings.variation.enabled&&settings.variation.strength>0;
             public float MaxHalfWidth=>width*.5f*(1+(Varied?settings.variation.strength*settings.variation.widthAmount:0));
 
@@ -224,8 +305,22 @@ namespace LocalTerrainPrototype
                 }
                 Copy(0,nodes.Length);
                 return new LTRoadHeightKernel.Road{settings=settings,bounds=bounds,firstNode=nodeOffset,endNode=tree.Count,
-                    firstSample=sampleOffset,lastSample=samples.Count-1,length=length,maxHalfWidth=MaxHalfWidth};
+                    firstSample=sampleOffset,lastSample=samples.Count-1,length=length,maxHalfWidth=HasShoulderJoins?FoundationRadius-shoulderWidth-blendWidth:MaxHalfWidth,
+                    foundationStartReach=startShoulder?.reach??0,foundationEndReach=endShoulder?.reach??0};
             }
+
+            Snapshot(Snapshot source,LTRoadShoulderJoin start,LTRoadShoulderJoin end)
+            {
+                data=source.data;nodes=source.nodes;settings=source.settings;samples=source.samples;
+                startShoulder=start;endShoulder=end;FoundationKey=(start?.ContentKey??"")+";"+(end?.ContentKey??"");
+                int key=FoundationKey.GetHashCode();
+                geometryHash=Mix(source.geometryHash,key);paintHash=Mix(source.paintHash,key);detailHash=Mix(source.detailHash,key);
+                wheelPaintHash=source.wheelPaintHash;geometricPits=source.geometricPits;
+                projectionFootprintHash=Mix(source.projectionFootprintHash,key);projectionHash=Mix(source.projectionHash,key);
+                var b=source.bounds;
+                if(start!=null)b=Union(b,start.bounds);if(end!=null)b=Union(b,end.bounds);bounds=b;
+            }
+            static Rect Union(Rect a,Rect b)=>Rect.MinMaxRect(Math.Min(a.xMin,b.xMin),Math.Min(a.yMin,b.yMin),Math.Max(a.xMax,b.xMax),Math.Max(a.yMax,b.yMax));
 
             internal Snapshot(Sample[] source, Settings settings, int inputHash, int profileHash)
             {
@@ -236,13 +331,16 @@ namespace LocalTerrainPrototype
                 BuildNode(tree, 0, data.Length - 1);
                 nodes = tree.ToArray();
                 float radius = MaxHalfWidth + shoulderWidth + blendWidth;
+                if(mode==LTRoadMode.GeometricAsphalt)radius+=settings.asphaltDamage.size*.5f;
                 var root = nodes[0];
                 bounds = Rect.MinMaxRect(root.minX - radius, root.minZ - radius,
                     root.maxX + radius, root.maxZ + radius);
                 int uvHash=Add(Add(Add(inputHash,settings.sampleSpacing),width),MaxHalfWidth);
                 projectionFootprintHash=Add(Add(uvHash,shoulderWidth),blendWidth);
-                projectionHash=TextureHash(projectionFootprintHash,textureAcrossMetres,textureRepeatMetres,textureOffset);
+                projectionHash=TextureHash(projectionFootprintHash,textureAcrossMetres,textureRepeatMetres,textureOffset,projection);
                 Hashes(settings, inputHash, profileHash, out geometryHash, out paintHash, out detailHash);
+                if(mode==LTRoadMode.GeometricAsphalt)geometricPits=LTRoadGeometryMath.Build(this,settings.asphaltDamage,
+                    settings.pitBevelWidth,settings.pitBevelDepth,settings.pitShapeVariation,settings.connectedDamage,settings.connectedFloorAsphalt);
                 if(mode==LTRoadMode.Offroad&&clearVegetation&&settings.vegetationOnlyWheelTracks)
                 {
                     detailHash=Mix(detailHash,0x57484545);
@@ -264,19 +362,22 @@ namespace LocalTerrainPrototype
                     }
                     wheelPaintHash=Add(Mix(maskKey,settings.wheelLayerId),w.strength);
                     // Independent scaling/offset of the same continuous road frame.
-                    int wheelUV=w.independentTiling&&projection==LTRoadProjection.Spline?
-                        TextureHash(projectionFootprintHash,w.tileSizeMetres.x,w.tileSizeMetres.y,w.textureOffset):projectionHash;
+                    var wheelMapping=w.ResolveProjection(settings.projection);
+                    int wheelUV=w.OwnSplineTiling(settings.projection)?
+                        TextureHash(projectionFootprintHash,w.tileSizeMetres.x,w.tileSizeMetres.y,w.textureOffset,wheelMapping):
+                        TextureHash(projectionFootprintHash,wheelMapping==LTRoadProjection.Spline?textureAcrossMetres:width,
+                            textureRepeatMetres,textureOffset,wheelMapping);
                     wheelPaintHash=Mix(wheelPaintHash,wheelUV);
                     if(settings.wheelLayerId!=0)paintHash=Mix(paintHash,wheelPaintHash);
                     if(w.clearStones)detailHash=Mix(detailHash,maskKey);
                 }
             }
 
-            int TextureHash(int footprint,float across,float along,Vector2 offset)
+            int TextureHash(int footprint,float across,float along,Vector2 offset,LTRoadProjection mapping)
             {
                 // Unchanged defaults retain their old projection signature.
                 if(across!=width)footprint=Add(footprint,across);
-                return Mix(Add(Add(Add(footprint,along),offset.x),offset.y),(int)projection);
+                return Mix(Add(Add(Add(footprint,along),offset.x),offset.y),(int)mapping);
             }
 
             // Same immutable BVH/samples, with wheel coverage for ownership and an
@@ -284,10 +385,11 @@ namespace LocalTerrainPrototype
             Snapshot(Snapshot source)
             {
                 data=source.data;nodes=source.nodes;settings=source.settings;samples=source.samples;bounds=source.bounds;
+                geometricPits=source.geometricPits;
                 geometryHash=source.geometryHash;paintHash=source.wheelPaintHash;detailHash=source.detailHash;
                 wheelPaintHash=source.wheelPaintHash;wheelLayerView=true;
                 projectionFootprintHash=source.projectionFootprintHash;
-                projectionHash=TextureHash(projectionFootprintHash,textureAcrossMetres,textureRepeatMetres,textureOffset);
+                projectionHash=TextureHash(projectionFootprintHash,textureAcrossMetres,textureRepeatMetres,textureOffset,projection);
             }
             public Snapshot WheelLayerProjection()=>wheelProjection??(wheelProjection=new Snapshot(this));
 
@@ -330,21 +432,50 @@ namespace LocalTerrainPrototype
                 int segment = -1;
                 Nearest(0, x, z, ref best, ref segment, ref t);
                 if (segment < 0) return false;
+                hit=SampleHit(segment,x,z,t,best);
+                return true;
+            }
+
+            Hit SampleHit(int segment,float x,float z,float t,float best)
+            {
                 var a = data[segment]; var b = data[segment + 1];
                 var p = a.position + (b.position - a.position) * t;
                 var right = HorizontalUnit(a.right + (b.right - a.right) * t);
-                hit = new Hit { position = p, right = right,
+                return new Hit { position = p, right = right,
                     lateral = (x - p.x) * right.x + (z - p.z) * right.z,
                     radialDistance = (float)Math.Sqrt(best),
                     distance = a.distance + (b.distance - a.distance) * t,
                     bank = a.bank + (b.bank - a.bank) * t,
                     variationStrength=a.variationStrength+(b.variationStrength-a.variationStrength)*t };
-                return true;
             }
+
+            // A worker chooses only the segment. Reconstruct the hit on the same
+            // managed arithmetic path as the reference (no native UV/weight drift).
+            // -2 denotes a near tie and retains the original full BVH search.
+            public bool TrySampleSegment(float x,float z,int segment,out Hit hit)
+            {
+                hit=default;
+                if(!ResolveRasterSegment(x,z,segment,out int chosen,out float t,out float best))return false;
+                hit=SampleHit(chosen,x,z,t,best);return true;
+            }
+            internal bool ResolveRasterSegment(float x,float z,int segment,out int chosen,out float fraction,out float distance)
+            {
+                chosen=-1;fraction=0;distance=float.PositiveInfinity;
+                if(segment==-1||segment<-2||segment>=data.Length-1||!Finite(x)||!Finite(z)||Math.Abs(x)>1e7f||Math.Abs(z)>1e7f)return false;
+                int node=0;
+                if(segment>=0)while(nodes[node].left>=0)
+                    node=segment<nodes[nodes[node].left].end?nodes[node].left:nodes[node].right;
+                // EXACT original arithmetic, including Mono's ref/local rounding.
+                // The worker reduces a full BVH query to one leaf (<=8 segments).
+                // Only ambiguous results (-2) start from the root.
+                Nearest(node,x,z,ref distance,ref chosen,ref fraction);return chosen>=0;
+            }
+            internal Hit ResolvedRasterHit(int segment,float x,float z,float fraction,float distance)
+                =>SampleHit(segment,x,z,fraction,distance);
 
             bool TryInfluenceSample(float x, float z, out Hit hit)
             {
-                float radius = MaxHalfWidth + shoulderWidth + blendWidth;
+                float radius = FoundationRadius;
                 // Conservative guard for squared-distance rounding at the outer edge.
                 radius += Math.Max(.001f, radius * .00001f);
                 return TrySampleWithin(x, z, radius * radius, out hit);
@@ -355,6 +486,15 @@ namespace LocalTerrainPrototype
             public float DisplacementSuppression(float x,float z,float padding)
             {
                 if(!Finite(padding)||padding<0)throw Invalid("Suppression padding must be finite and non-negative.");
+                // Protect cut walls and the entire floor, including chips extending
+                // beyond the painted edge. The baker adds its bilinear guard too.
+                if(mode==LTRoadMode.GeometricAsphalt)padding+=settings.asphaltDamage.size*.5f;
+                if(HasShoulderJoins&&TrySample(x,z,out var joinedHit))
+                {
+                    if(BehindShoulder(joinedHit,x,z))return 0;
+                    FoundationWidths(joinedHit,out float s,out _);
+                    return 1-Mathf.SmoothStep(0,1,(joinedHit.radialDistance-width*.5f-padding)/Math.Max(.0001f,s));
+                }
                 float feather=Math.Max(.0001f,shoulderWidth);
                 float radius=width*.5f+padding+feather;
                 radius+=Math.Max(.001f,radius*.00001f);
@@ -369,6 +509,11 @@ namespace LocalTerrainPrototype
             {
                 uv = default; right = Vector2.right;
                 if (!TrySample(x, z, out var hit)) return false;
+                TextureCoordinates(hit,x,z,out uv,out right);return true;
+            }
+
+            public void TextureCoordinates(Hit hit,float x,float z,out Vector2 uv,out Vector2 right)
+            {
                 float along = hit.distance;
                 // XZ projection uses a horizontal unit tangent, while stored arc length
                 // includes height. Continue V at the adjacent segment's metres-per-XZ-metre.
@@ -384,7 +529,6 @@ namespace LocalTerrainPrototype
                 }
                 uv = new Vector2(hit.lateral / textureAcrossMetres + .5f, along / textureRepeatMetres) + textureOffset;
                 right = new Vector2(hit.right.x, hit.right.z).normalized;
-                return true;
             }
 
             /// <summary>Endpoint-grid texels needed by this road, including the
@@ -462,9 +606,12 @@ namespace LocalTerrainPrototype
                 if(settings.straightStart)rutFade=Math.Min(rutFade,Mathf.SmoothStep(0,1,hit.distance/Math.Max(.001f,settings.junctionStartLength)));
                 if(settings.straightEnd)rutFade=Math.Min(rutFade,Mathf.SmoothStep(0,1,(length-hit.distance)/Math.Max(.001f,settings.junctionEndLength)));
                 float weight = Fade(hit.radialDistance, HalfWidth(hit), shoulderWidth + blendWidth);
+                var shoulderJoin=ShoulderAt(hit,x,z,out float joinDistance);
+                if(shoulderJoin!=null)weight=shoulderJoin.TerrainWeight(joinDistance,hit,x,z,weight);
                 weight *= mode == LTRoadMode.Asphalt ? 1 : Math.Max(flatten,1-rutFade);
                 if (weight <= 0) return originalHeight;
                 float target = SurfaceHeight(hit, hit.lateral);
+                if(mode==LTRoadMode.TerrainAsphalt)target-=AsphaltDamage(hit).depression;
                 if (mode == LTRoadMode.Offroad && pattern == LTRoadPattern.Tracks)
                     target -= rutDepth * TrackWeight(hit, x, z)*rutFade;
                 else if(Varied&&settings.variation.solidRuts)
@@ -486,13 +633,25 @@ namespace LocalTerrainPrototype
             {
                 ground=wheels=0;
                 if(!InsideBounds(x,z)||!TryInfluenceSample(x,z,out var hit))return;
+                PaintWeights(hit,x,z,out ground,out wheels);
+            }
+
+            public LTRoadHeightKernel.Road PaintKernelData()=>new LTRoadHeightKernel.Road{settings=settings,bounds=bounds,length=length};
+            public void PaintWeights(Hit hit,float x,float z,out float ground,out float wheels)
+            {
+                ground=wheels=0;if(!InsideBounds(x,z))return;
                 if(HasWheelPaint)wheels=WheelCoverage(hit,x,z)*settings.wheelTracks.strength;
                 ground=wheelLayerView?wheels:PaintWeight(hit,x,z);
             }
 
             float PaintWeight(Hit hit,float x,float z)
             {
+                if(BehindShoulder(hit,x,z))return 0;
                 float coverage=Coverage(hit,x,z);
+                var shoulderJoin=ShoulderAt(hit,x,z,out float joinDistance);
+                if(shoulderJoin!=null)return shoulderJoin.Coverage(joinDistance,hit,x,z,coverage,shoulderJoin.sharedPaint);
+                if(mode==LTRoadMode.TerrainAsphalt)return coverage*(1-AsphaltDamage(hit).removed);
+                if(mode==LTRoadMode.GeometricAsphalt)return coverage*geometricPits.AsphaltCoverage(x,z);
                 if(coverage<=0||!Varied||settings.variation.patchStrength<=0)return coverage;
                 var v=settings.variation;
                 // Road-local metres, not UV repeats or chunk coordinates. Large patches
@@ -510,9 +669,20 @@ namespace LocalTerrainPrototype
                 bool stones = clearStones && (category & LTDetailCategory.Stones) != 0;
                 bool wheelStones=mode==LTRoadMode.Offroad&&settings.wheelTracks.enabled&&settings.wheelTracks.clearStones&&(category&LTDetailCategory.Stones)!=0;
                 if (!vegetation && !stones&&!wheelStones) return 0;
+                if(HasShoulderJoins&&InsideBounds(x,z)&&TryInfluenceSample(x,z,out var joinedHit))
+                {
+                    if(BehindShoulder(joinedHit,x,z))return 0;
+                    var join=ShoulderAt(joinedHit,x,z,out float distance);
+                    if(join!=null)return join.Coverage(distance,joinedHit,x,z,Coverage(joinedHit,x,z),join.Clears(category),stones?1:vegetationFade);
+                }
                 // Paint-only patches must not grow vegetation or leave stones in the
                 // carriageway, nor change the expensive placement/geometry signatures.
-                if(!Varied&&!wheelStones&&!wheelVegetation)return PaintWeight(x,z)*(stones?1:vegetationFade);
+                if(!Varied&&!wheelStones&&!wheelVegetation)
+                {
+                    if(IsTerrainAsphalt(mode))
+                        return InsideBounds(x,z)&&TryInfluenceSample(x,z,out var damageHit)?Coverage(damageHit,x,z)*(stones?1:vegetationFade):0;
+                    return PaintWeight(x,z)*(stones?1:vegetationFade);
+                }
                 if(!InsideBounds(x,z)||!TryInfluenceSample(x,z,out var hit))return 0;
                 float coverage=Coverage(hit,x,z),original=stones?coverage:0;
                 if(vegetation)original=Math.Max(original,wheelVegetation?WheelVegetationCoverage(hit):coverage*vegetationFade);
@@ -616,8 +786,10 @@ namespace LocalTerrainPrototype
                 if (!Finite(rect.xMin) || !Finite(rect.xMax) || !Finite(rect.yMin) || !Finite(rect.yMax)) return false;
                 float minX = Math.Min(rect.xMin, rect.xMax), maxX = Math.Max(rect.xMin, rect.xMax);
                 float minZ = Math.Min(rect.yMin, rect.yMax), maxZ = Math.Max(rect.yMin, rect.yMax);
-                float radius = MaxHalfWidth + shoulderWidth + blendWidth;
-                return IntersectsNode(0, minX - radius, minZ - radius, maxX + radius, maxZ + radius);
+                float radius = MaxHalfWidth+shoulderWidth+blendWidth;
+                if(mode==LTRoadMode.GeometricAsphalt)radius+=settings.asphaltDamage.size*.5f;
+                return IntersectsNode(0, minX - radius, minZ - radius, maxX + radius, maxZ + radius)||
+                    (startShoulder?.Intersects(rect)??false)||(endShoulder?.Intersects(rect)??false);
             }
 
             // Exact conservative input comparison for chunk geometry/density.
@@ -627,12 +799,18 @@ namespace LocalTerrainPrototype
             public bool SameTerrainRegion(Snapshot other,Rect rect)
             {
                 if(other==null)return false;
+                if(FoundationKey!=other.FoundationKey)return false;
+                // Collision rejection in the immutable pit field is global along
+                // the path. A remote bend can change which nearby pit is retained.
+                if(mode==LTRoadMode.GeometricAsphalt||other.mode==LTRoadMode.GeometricAsphalt)
+                    return mode==other.mode&&geometryHash==other.geometryHash;
                 var a=new List<int>();var b=new List<int>();
                 RegionLeaves(0,rect,a);other.RegionLeaves(0,rect,b);
                 if(a.Count==0&&b.Count==0)return true;
                 if(a.Count!=b.Count||!settings.Equals(other.settings))return false;
-                bool along=Varied||settings.straightStart||settings.straightEnd;
-                if((Varied||settings.straightEnd)&&length!=other.length)return false;
+                bool decorated=Varied||IsTerrainAsphalt(mode);
+                bool along=decorated||settings.straightStart||settings.straightEnd;
+                if((decorated||settings.straightEnd)&&length!=other.length)return false;
                 for(int k=0;k<a.Count;k++)
                 {
                     var left=nodes[a[k]];var right=other.nodes[b[k]];
@@ -641,7 +819,7 @@ namespace LocalTerrainPrototype
                     {
                         var x=data[left.start+i];var y=other.data[right.start+i];
                         if(!x.position.Equals(y.position)||!x.right.Equals(y.right)||x.bank!=y.bank||
-                            along&&x.distance!=y.distance||Varied&&x.variationStrength!=y.variationStrength)return false;
+                            along&&x.distance!=y.distance||decorated&&x.variationStrength!=y.variationStrength)return false;
                     }
                 }
                 return true;
@@ -653,7 +831,10 @@ namespace LocalTerrainPrototype
             public bool SamePaintRegion(Snapshot other,Rect rect)
             {
                 if(ReferenceEquals(this,other))return true;
+                if(other!=null&&FoundationKey!=other.FoundationKey)return false;
                 if(other==null||wheelLayerView!=other.wheelLayerView||!WeightSettings().Equals(other.WeightSettings()))return false;
+                if(mode==LTRoadMode.GeometricAsphalt||other.mode==LTRoadMode.GeometricAsphalt)
+                    return mode==other.mode&&geometryHash==other.geometryHash;
                 if(!Finite(rect.xMin)||!Finite(rect.xMax)||!Finite(rect.yMin)||!Finite(rect.yMax)||rect.width<0||rect.height<0)return false;
                 // Preserve the explicit InsideBounds gate, including exact edges.
                 if(Math.Max(rect.xMin,bounds.xMin)!=Math.Max(rect.xMin,other.bounds.xMin)||
@@ -663,17 +844,18 @@ namespace LocalTerrainPrototype
                 var a=new List<int>();var b=new List<int>();
                 PaintSegments(0,rect,a);other.PaintSegments(0,rect,b);
                 if(a.Count!=b.Count)return false;
-                bool along=Varied||settings.straightStart||settings.straightEnd;
+                bool decorated=Varied||IsTerrainAsphalt(mode);
+                bool along=decorated||settings.straightStart||settings.straightEnd;
                 float end=settings.straightEnd?settings.junctionEndLength:0;
                 float endFade=Varied?end+Math.Max(2,end):Math.Max(2,end);
                 for(int k=0;k<a.Count;k++)for(int j=0;j<2;j++)
                 {
                     var x=data[a[k]+j];var y=other.data[b[k]+j];
                     if(!x.position.Equals(y.position)||!x.right.Equals(y.right)||x.bank!=y.bank||
-                        along&&x.distance!=y.distance||Varied&&x.variationStrength!=y.variationStrength)return false;
+                        along&&x.distance!=y.distance||decorated&&x.variationStrength!=y.variationStrength)return false;
                     // A moved far endpoint is irrelevant where both end envelopes
                     // are saturated. Near either old/new cap, refresh conservatively.
-                    if((Varied||settings.straightEnd)&&length!=other.length&&
+                    if((decorated||settings.straightEnd)&&length!=other.length&&
                         (length-x.distance<endFade||other.length-y.distance<endFade))return false;
                 }
                 return true;
@@ -685,11 +867,12 @@ namespace LocalTerrainPrototype
                 // fades, layer assignment, profile and all noise/width controls.
                 var s=settings;s.textureRepeatMetres=0;s.textureAcrossMetres=0;s.textureOffset=Vector2.zero;
                 s.wheelTracks.independentTiling=false;s.wheelTracks.tileSizeMetres=Vector2.zero;s.wheelTracks.textureOffset=Vector2.zero;
+                s.wheelTracks.projection=LTRoadWheelProjection.Inherit;
                 return s;
             }
             void PaintSegments(int index,Rect rect,List<int> result)
             {
-                float radius=MaxHalfWidth+shoulderWidth+blendWidth;
+                float radius=FoundationRadius;
                 radius+=Math.Max(.001f,radius*.00001f);
                 var n=nodes[index];
                 bool Outside(float minX,float minZ,float maxX,float maxZ)=>
@@ -706,7 +889,7 @@ namespace LocalTerrainPrototype
             }
             void RegionLeaves(int index,Rect rect,List<int> result)
             {
-                float radius=MaxHalfWidth+shoulderWidth+blendWidth;
+                float radius=FoundationRadius;
                 radius+=Math.Max(.001f,radius*.00001f); // same guard as height queries
                 var n=nodes[index];
                 if(n.maxX<rect.xMin-radius||n.minX>rect.xMax+radius||n.maxZ<rect.yMin-radius||n.minZ>rect.yMax+radius)return;
@@ -878,6 +1061,9 @@ namespace LocalTerrainPrototype
             }
             geometry = common;
             geometry = Add(geometry, s.blendWidth); geometry = Add(geometry, s.terrainCellSize);
+            // Invalidate only mode 3: it now inserts an independently sampled ribbon.
+            if(s.mode==LTRoadMode.GeometricAsphalt)
+                geometry=Add(Add(Mix(geometry,0x49535231),s.insetCellSize),s.insetLodReduction);
             if (s.mode == LTRoadMode.Offroad)
             {
                 geometry = Add(geometry, s.flatten);
@@ -887,7 +1073,7 @@ namespace LocalTerrainPrototype
                     if(!tracks)geometry=Mix(geometry,variationKey);
                 }
             }
-            else
+            else if(s.mode==LTRoadMode.Asphalt)
             {
                 geometry = Add(geometry, s.meshChunkLength); geometry = Add(geometry, s.textureRepeatMetres);
                 geometry = Add(geometry, s.surfaceOffset);
@@ -896,7 +1082,7 @@ namespace LocalTerrainPrototype
             paint = Mix(paint, (int)s.projection);
             paint = Add(paint, s.textureOffset.x); paint = Add(paint, s.textureOffset.y);
             if (s.projection == LTRoadProjection.Spline) paint = Add(paint, s.textureRepeatMetres);
-            if(s.mode==LTRoadMode.Offroad&&s.projection==LTRoadProjection.Spline&&s.textureAcrossMetres>0)
+            if(s.mode!=LTRoadMode.Asphalt&&s.projection==LTRoadProjection.Spline&&s.textureAcrossMetres>0)
                 paint=Add(paint,s.textureAcrossMetres);
             if(varied&&v.patchStrength>0)
             {
@@ -905,6 +1091,25 @@ namespace LocalTerrainPrototype
             }
             detail = Mix(Mix(mask, s.clearVegetation ? 1 : 0), s.clearStones ? 1 : 0);
             if (s.clearVegetation) detail = Add(detail, s.vegetationFade);
+            if(IsTerrainAsphalt(s.mode))
+            {
+                int damage=Mix(profileHash,s.asphaltDamage.GeometryHash());
+                geometry=Mix(geometry,damage);paint=Add(Mix(paint,damage),s.asphaltDamage.cracks);
+                if(s.mode==LTRoadMode.GeometricAsphalt)
+                {
+                    // Bevel does not move the paint silhouette. Shape changes do.
+                    if(!s.connectedDamage&&s.pitBevelWidth>0&&s.pitBevelDepth>0)
+                        geometry=Add(Add(Mix(geometry,0x42455631),s.pitBevelWidth),s.pitBevelDepth);
+                    if(!s.connectedDamage&&s.pitShapeVariation>0)
+                    {geometry=Add(Mix(geometry,0x53485031),s.pitShapeVariation);paint=Add(Mix(paint,0x53485031),s.pitShapeVariation);}
+                    if(s.connectedDamage)
+                    {
+                        geometry=Mix(geometry,0x434E4331);
+                        paint=Add(Add(Mix(paint,0x434E4331),s.connectedFloorAsphalt),s.repairPatchStrength);
+                    }
+                }
+                // Clearing remains the whole road footprint, including missing pavement.
+            }
         }
 
         static int AddPoint(int hash, LTRoadPoint point)

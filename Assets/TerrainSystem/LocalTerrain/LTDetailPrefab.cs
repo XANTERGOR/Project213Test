@@ -13,6 +13,23 @@ namespace LocalTerrainPrototype
             public int submesh;
             public Material material;
             public Matrix4x4 localMatrix;
+            // Same placement anchor across all LODs, even with offset child pivots.
+            public Vector3 grassRootInPart;
+            MaterialPropertyBlock grassProperties;
+            public const string GrassRootProperty="_LTGrassRootInObject";
+            public bool SupportsGrassColor=>material&&material.HasProperty(GrassRootProperty);
+            public MaterialPropertyBlock GrassProperties
+            {
+                get
+                {
+                    if(grassProperties==null)
+                    {
+                        grassProperties=new MaterialPropertyBlock();
+                        grassProperties.SetVector(GrassRootProperty,grassRootInPart);
+                    }
+                    return grassProperties;
+                }
+            }
             public ShadowCastingMode castShadows;
             public bool receiveShadows;
             public int layer;
@@ -86,6 +103,7 @@ namespace LocalTerrainPrototype
                         if(!material){errors.Add(renderer.name+": пустой материал.");continue;}
                         if(!material.enableInstancing)warnings.Add(material.name+": GPU Instancing выключен; материал не изменён.");
                         level.parts.Add(new Part{mesh=mesh,submesh=sub,material=material,localMatrix=matrix,
+                            grassRootInPart=matrix.inverse.MultiplyPoint3x4(Vector3.zero),
                             castShadows=renderer.shadowCastingMode,receiveShadows=renderer.receiveShadows,
                             layer=renderer.gameObject.layer,renderingLayerMask=renderer.renderingLayerMask,
                             lightProbes=renderer.lightProbeUsage,reflectionProbes=renderer.reflectionProbeUsage,

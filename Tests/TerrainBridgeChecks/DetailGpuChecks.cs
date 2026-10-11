@@ -28,12 +28,20 @@ partial class Checks
         Require(gpu.Contains("if(!Prepare(source,group,view)){PendingGroups++;RecordFallback(source,\"Ожидание GPU upload / выделения буферов.\");return false;}"),"partial uploads never submit incomplete GPU groups");
         Require(gpu.Contains("AllocatedBytes-ReleasedBytes==ResidentBytes"),"memory audit checks total allocation/free balance");
         Require(gpu.Contains("selection.prefabMode==part.castShadows&&selection.mode==draw.mode")&&gpu.Contains("selection.lod==lod"),"shared visibility retains LOD and source/draw shadow partitions");
-        Require(gpu.Contains("if(!draw.selection.culled)")&&gpu.Contains("foreach(var selection in view.selections)selection.culled=false"),"one dispatch per selection per camera call");
+        Require(gpu.Contains("if(!draw.selection.culled)")&&gpu.Contains("selection.culled=false"),"each selection culled once per camera call");
         Require(gpu.Contains("foreach(var selection in view.selections)Count(selection.visible)"),"shared append buffers counted once");
         var importer=File.ReadAllText(root+"Editor/LTDetailGpuShaderImporter.cs");
         Require(importer.Contains("material.SetTexture(property,Presence(source.GetTexture(property)))")&&importer.Contains("if(!source)return null"),"retained shader variants preserve texture presence without unrelated texture libraries");
         Require(File.ReadAllText(root+"Resources/LTDetailGpu/BaseProps.ltdetailshader").Contains("8ce045feb4d898749ad119ec3bb00567")&&
             File.ReadAllText(root+"Resources/LTDetailGpu/HdrpLit.ltdetailshader").Contains("6e4ae4064600d784cac1e41a9e6f2e59"),"stone and wood adapters target audited source shader GUIDs");
+        using(var definition=System.Text.Json.JsonDocument.Parse(File.ReadAllText(root+"Resources/LTDetailGpu/RockBase.ltdetailshader")))
+        {
+            string sourceGuid=definition.RootElement.GetProperty("sourceGuid").GetString();
+            Require(sourceGuid=="1c350693c470c3e4d86beae57119aa7f"&&
+                Regex.IsMatch(File.ReadAllText("Assets/DA/GrassUltimate/Rock_Scatter/Base_Shader.shadergraph.meta"),@"(?m)^guid: "+sourceGuid+@"\r?$"),
+                "rock graph adapter resolves the authored source graph");
+        }
+        Require(File.ReadAllText(root+"Editor/LTDetailGpuCheck.cs").Contains("\"RockBase\""),"native shader checks include rock graph adapter");
         var upload=new LTDetailUploadBudget();upload.Begin(1,1,1920,2);
         Require(upload.UploadCount(100,192,2048)==10,"upload byte budget limits chunk");
         upload.Spend(.4,960,1);upload.Begin(1,1,1920,2);
@@ -44,7 +52,7 @@ partial class Checks
         upload.Spend(0,0,2);Require(!upload.CanAllocate&&upload.UploadCount(3,192,2048)==3,"allocation cap independent of upload byte cap");
         upload.Begin(3,1,192,2);Require(upload.UploadCount(100,192,2048)==1,"large groups make bounded progress");
         upload.Spend(0,192);Require(upload.UploadCount(100,192,2048)==0,"exhausted byte quota cannot overshoot");
-        foreach(var file in new[]{"LTDetailGpuData.cs","LTDetailGpuRenderer.cs","LTDetailGpuShader.cs","Editor/LTDetailGpuShaderImporter.cs","Editor/LTDetailGpuCheck.cs","Shaders/LTDetailIndirect.hlsl","Resources/LTDetailCull.compute","Resources/LTDetailGpu","Resources/LTDetailGpu/GrassWind.ltdetailshader","Resources/LTDetailGpu/BaseProps.ltdetailshader","Resources/LTDetailGpu/HdrpLit.ltdetailshader"})
+        foreach(var file in new[]{"LTDetailGpuData.cs","LTDetailGpuRenderer.cs","LTDetailGpuShader.cs","Editor/LTDetailGpuShaderImporter.cs","Editor/LTDetailGpuCheck.cs","Shaders/LTDetailIndirect.hlsl","Resources/LTDetailCull.compute","Resources/LTDetailGpu","Resources/LTDetailGpu/GrassWind.ltdetailshader","Resources/LTDetailGpu/BaseProps.ltdetailshader","Resources/LTDetailGpu/HdrpLit.ltdetailshader","Resources/LTDetailGpu/RockBase.ltdetailshader"})
             Require(Regex.IsMatch(File.ReadAllText(root+file+".meta"),@"(?m)^guid: [0-9a-f]{32}\r?$"),"valid Unity GUID: "+file);
         Console.WriteLine("GPU data layout and source-contract checks passed (native shader/cull tests are separate).");
     }

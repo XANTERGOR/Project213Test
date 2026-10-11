@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using LocalTerrainPrototype;
 using UnityEngine;
 
@@ -122,12 +123,79 @@ partial class Checks
         Require(dispose.Contains("if(IsCompleted)Release()")&&!dispose.Contains("handle.Complete()"),"cancel never blocks on unfinished job");
         var editor=File.ReadAllText("Assets/TerrainSystem/LocalTerrain/Editor/LTEditor.cs");
         Require(editor.Contains("while(!job.IsCompleted)yield return LTBuildStep.Waiting")&&editor.Contains("using(var job=new LTLODJobWork(input))"),"poll then read, including iterator-dispose lifetime");
-        Require(editor.Contains("beforeAssemblyReload += StopLODJobs")&&editor.Contains("quitting += StopLODJobs")&&editor.Contains("static void StopLODJobs(){CancelAllBuilds();LTLODJobWork.Drain();LTHeightJobWork.Drain();}"),"domain shutdown joins owned workers");
+        LODShutdownWiringChecks(editor);
         var tick=editor.Substring(editor.IndexOf("static void Tick()"));
         Require(tick.IndexOf("LTLODJobWork.CollectRetired()")<tick.IndexOf("EditorApplication.isPlayingOrWillChangePlaymode"),"retired jobs are collected even in play mode or during compilation");
         Require(slices>300,"preparation has frequent cooperative slices");
         Console.WriteLine($"PASS LOD job scalar/input: {comparisons} exact reference levels, {slices} slices, protection/borders, snapshot isolation, cancellation and source lifetime guards. NOT a native Burst/Jobs execution test.");
         LODJobBenchmark();
+    }
+    // Source wiring contract, not a native domain-reload/JobHandle execution test.
+    // Keep it scoped to the actual handlers, independent of formatting/comments
+    // and of unrelated extra cleanup calls such as clearing the capture cache.
+    static bool LODShutdownWiringMatches(string editor,string recovery)
+    {
+        string Compact(string text)
+        {
+            text=Regex.Replace(text,@"@""(?:""""|[^""])*""|""(?:\\.|[^""\\])*""|'(?:\\.|[^'\\])*'|//[^\r\n]*|/\*[\s\S]*?\*/","");
+            return Regex.Replace(text,@"\s+","");
+        }
+        string Section(string source,string start,string end)
+        {
+            int first=source.IndexOf(start,StringComparison.Ordinal);if(first<0)return "";
+            int last=source.IndexOf(end,first+start.Length,StringComparison.Ordinal);
+            return last<0?"":source.Substring(first,last-first);
+        }
+        editor=Compact(editor);recovery=Compact(recovery);
+        string init=Section(editor,"staticLTEditorEngine()","staticvoidCancelAllBuilds()");
+        string before=Section(recovery,"staticvoidBeforeTerrainAssemblyReload()","staticstringReloadWorldEligibility(");
+        if(!init.Contains("AssemblyReloadEvents.beforeAssemblyReload+=BeforeTerrainAssemblyReload;")||
+            !init.Contains("EditorApplication.quitting+=StopLODJobs;")||
+            !before.Contains("try{")||!before.EndsWith("finally{StopLODJobs();}}",StringComparison.Ordinal))return false;
+        // Only unconditional, sequential cleanup calls in this small barrier.
+        // A conditional/early-return replacement must not pass as a valid Drain.
+        var stop=Regex.Match(editor,@"staticvoidStopLODJobs\(\)\{(?<calls>(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\(\);)+)\}");
+        if(!stop.Success)return false;
+        var calls=stop.Groups["calls"].Value;
+        int cancel=calls.IndexOf("CancelAllBuilds();",StringComparison.Ordinal);
+        int clear=calls.IndexOf("ClearMeshCaptureCaches();",StringComparison.Ordinal);
+        int lod=calls.IndexOf("LTLODJobWork.Drain();",StringComparison.Ordinal);
+        int height=calls.IndexOf("LTHeightJobWork.Drain();",StringComparison.Ordinal);
+        return cancel>=0&&clear>cancel&&lod>cancel&&height>cancel;
+    }
+    static void LODShutdownWiringChecks(string editor)
+    {
+        string recovery=File.ReadAllText("Assets/TerrainSystem/LocalTerrain/Editor/LTEditorReloadRecovery.cs");
+        int checks=0;void Check(bool ok,string why){checks++;Require(ok,"LOD shutdown wiring: "+why);}
+        Check(LODShutdownWiringMatches(editor,recovery),"reload checkpoint finally and quitting must join both worker pools after cancellation");
+        Check(LODShutdownWiringMatches(editor.Replace(";",";\n\t").Replace("{","{ /* cleanup */ "),
+            recovery.Replace(";",";\n\t").Replace("{","{ /* handoff */ ")),"formatting/comments changed the contract");
+        void Reject(string oldText,string newText,bool inRecovery=false)
+        {
+            string target=inRecovery?recovery:editor;
+            Check(target.Contains(oldText),"mutation fixture not found: "+oldText);
+            string changed=target.Replace(oldText,newText);
+            Check(!LODShutdownWiringMatches(inRecovery?editor:changed,inRecovery?changed:recovery),"unsafe mutation accepted: "+oldText);
+        }
+        Reject("AssemblyReloadEvents.beforeAssemblyReload += BeforeTerrainAssemblyReload;","");
+        Reject("AssemblyReloadEvents.beforeAssemblyReload += BeforeTerrainAssemblyReload;","AssemblyReloadEvents.beforeAssemblyReload += StopLODJobs;");
+        Reject("EditorApplication.quitting += StopLODJobs;","");
+        Reject("finally{StopLODJobs();}","finally{}",true);
+        Reject("finally{StopLODJobs();}","finally{if(false)StopLODJobs();}",true);
+        Reject("finally{StopLODJobs();}","StopLODJobs();",true); // outside finally: checkpoint failure skips shutdown
+        Reject("finally{StopLODJobs();}","finally{} // finally{StopLODJobs();}",true);
+        Reject("finally{StopLODJobs();}","finally{Log(\"finally{StopLODJobs();}\");}",true);
+        Reject("CancelAllBuilds();ClearMeshCaptureCaches();","ClearMeshCaptureCaches();");
+        Reject("ClearMeshCaptureCaches();LTLODJobWork.Drain();","LTLODJobWork.Drain();");
+        Reject("LTLODJobWork.Drain();","");
+        Reject("LTHeightJobWork.Drain();","");
+        Reject("LTHeightJobWork.Drain();","if(false)LTHeightJobWork.Drain();");
+        Reject("LTLODJobWork.Drain();","return;LTLODJobWork.Drain();");
+        Reject("LTLODJobWork.Drain();","/* LTLODJobWork.Drain(); */");
+        Reject("LTHeightJobWork.Drain();","Log(\"LTHeightJobWork.Drain();\");");
+        Reject("CancelAllBuilds();ClearMeshCaptureCaches();LTLODJobWork.Drain();LTHeightJobWork.Drain();",
+            "LTLODJobWork.Drain();LTHeightJobWork.Drain();CancelAllBuilds();ClearMeshCaptureCaches();");
+        Console.WriteLine($"PASS LOD shutdown wiring: {checks} assertions; current reload/finally/quit chain, both drains, cache cleanup and cancellation order; missing, conditional, commented and quoted cleanup rejected. Source contract only, not native worker execution.");
     }
     static void LODJobBenchmark()
     {

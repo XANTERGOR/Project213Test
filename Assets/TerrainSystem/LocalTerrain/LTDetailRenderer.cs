@@ -8,8 +8,9 @@ namespace LocalTerrainPrototype
 {
     [ExecuteAlways, DisallowMultipleComponent, RequireComponent(typeof(LTWorld))]
     [AddComponentMenu("Local Terrain/Detail Renderer")]
-    public sealed class LTDetailRenderer : MonoBehaviour
+    public sealed partial class LTDetailRenderer : MonoBehaviour
     {
+        readonly LTRoadVegetationMask roadMeshMasks=new LTRoadVegetationMask();
         [Tooltip("Общий seed. Расстановка не зависит от камеры и порядка списка.")] public int seed=12345;
         [Min(0),Tooltip("Множитель плотности. Увеличение добавляет объекты, сохраняя прежние позиции.")] public float densityMultiplier=1;
         [Min(1),Tooltip("Размер ячейки отсечения, м. Не меняет позиции кандидатов на фиксированной метровой решётке.")] public int cellSize=16;
@@ -23,6 +24,10 @@ namespace LocalTerrainPrototype
         [Tooltip("Отображать в Scene View, независимо от игровых камер.")] public bool sceneView=true;
         [Tooltip("Проверять изменения раз в секунду. Иначе перестройка вручную через меню компонента.")] public bool autoRefresh=true;
         [Tooltip("GPU indirect: постоянные буферы, GPU culling/LOD. Адаптированы DA_Grass_WIND, BaseShaderProps и HDRP/Lit; остальные шейдеры используют CPU. Windows D3D11/12, без XR. Индивидуальные классические Light Probes не поддерживаются; сравните освещение. Исходные материалы не меняются.")] public bool gpuDetails;
+        [InspectorName("Кэш материалов по уведомлениям"),Tooltip("Экспериментальная опция, по умолчанию выключена. Только материалы из списка ниже. Каждый скрипт, меняющий их свойства, обязан вызывать LTDetailMaterialNotifications.NotifyChanged после записи или использовать Mutate. Inspector, Undo и переимпорт учитываются редактором.")] public bool gpuMaterialNotifications;
+        [InspectorName("Объединять GPU-отсечение"),Tooltip("Вычислять видимость и LOD один раз на пакет до восьми списков вместо отдельного расчёта для каждого LOD/режима теней. Количество и качество не меняются. Выключите для сравнения со старым алгоритмом.")]
+        public bool gpuUnifiedCulling=true;
+        [InspectorName("Материалы с уведомлениями"),Tooltip("Явный список источников из префабов растительности. Не добавляйте материалы, которые меняет неизвестный скрипт. Пустой список ничего не кэширует; исходные ассеты не изменяются.")] public Material[] gpuNotifiedMaterials=Array.Empty<Material>();
         [Range(16,512),Tooltip("Лимит буферов GPU-детализации на этот мир, МиБ. При нехватке группа остаётся на CPU. Не включает меши, текстуры, материалы и накладные расходы драйвера.")] public int gpuMemoryMiB=128;
         [Range(.25f,10),Tooltip("Мягкий CPU-бюджет подготовки/загрузки GPU-буферов за игровой кадр или обновление редактора, общий для камер этого мира. Отдельный вызов драйвера может превысить бюджет. Ожидающие группы временно рисуются CPU.")] public float gpuUploadMilliseconds=1;
         [Range(1,16),Tooltip("Максимум данных матриц, загружаемых на GPU за кадр/обновление редактора, МиБ. Не включает выделение пустых выходных буферов. Порция — до 2048 экземпляров.")] public int gpuUploadMiB=2;
@@ -58,6 +63,7 @@ namespace LocalTerrainPrototype
         public long GpuBytes=>gpuRenderer?.ResidentBytes??0;
         public int GpuDrawCalls=>gpuRenderer?.DrawCalls??0;
         public int GpuCullDispatches=>gpuRenderer?.CullDispatches??0;
+        public int GpuUnifiedCullDispatches=>gpuRenderer?.UnifiedCullDispatches??0;
         public int GpuCandidates=>gpuRenderer?.Candidates??0;
         public int GpuFallbackGroups=>gpuRenderer?.FallbackGroups??0;
         public string GpuStatus=>gpuRenderer?.Status;
@@ -68,6 +74,9 @@ namespace LocalTerrainPrototype
         public int GpuGroupCount=>gpuRenderer?.GroupCount??0;
         public int GpuViewCount=>gpuRenderer?.ViewCount??0;
         public int GpuMaterialCount=>gpuRenderer?.MaterialCount??0;
+        public int GpuNotifiedMaterialCount=>gpuRenderer?.NotifiedMaterialCount??0;
+        public int GpuMaterialSyncs=>gpuRenderer?.MaterialSyncs??0;
+        public int GpuMaterialReuses=>gpuRenderer?.MaterialReuses??0;
         public int GpuPendingGroups=>gpuRenderer?.PendingGroups??0;
         public long GpuUploadBytes=>gpuRenderer?.UploadBytes??0;
         public double GpuUploadMilliseconds=>gpuRenderer?.UploadMilliseconds??0;
@@ -92,9 +101,10 @@ namespace LocalTerrainPrototype
         {
             public LTDetailDrawState state;
             public LTDetailPrefab.Part part;
-            public bool Equals(DrawKey other)=>state.Equals(other.state);
+            public Vector3 grassRoot;
+            public bool Equals(DrawKey other)=>state.Equals(other.state)&&grassRoot.Equals(other.grassRoot);
             public override bool Equals(object other)=>other is DrawKey key&&Equals(key);
-            public override int GetHashCode()=>state.GetHashCode();
+            public override int GetHashCode()=>unchecked(state.GetHashCode()*397^grassRoot.GetHashCode());
         }
         static readonly Unity.Profiling.ProfilerMarker TickMarker=new Unity.Profiling.ProfilerMarker("LT.Details.Tick");
         static readonly Unity.Profiling.ProfilerMarker StreamingMarker=new Unity.Profiling.ProfilerMarker("LT.Details.Streaming");
@@ -103,6 +113,14 @@ namespace LocalTerrainPrototype
         static readonly Unity.Profiling.ProfilerMarker RenderMarker=new Unity.Profiling.ProfilerMarker("LT.Details.RenderCPU");
         static readonly Unity.Profiling.ProfilerMarker SubmitMarker=new Unity.Profiling.ProfilerMarker("LT.Details.Submit");
         static readonly Unity.Profiling.ProfilerMarker GraphicsMarker=new Unity.Profiling.ProfilerMarker("LT.Details.GraphicsSubmit");
+        // CPU scopes only, including GPU command preparation; these are NOT GPU timings.
+        // One scope per camera/group/batch, never per plant in the hot selection loop.
+        static readonly Unity.Profiling.ProfilerMarker GpuBeginMarker=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.BeginCPU");
+        static readonly Unity.Profiling.ProfilerMarker GpuPathMarker=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.TryRenderCPU");
+        static readonly Unity.Profiling.ProfilerMarker LevelSetupMarker=new Unity.Profiling.ProfilerMarker("LT.Details.CPU.LevelSetup");
+        static readonly Unity.Profiling.ProfilerMarker SelectionMarker=new Unity.Profiling.ProfilerMarker("LT.Details.CPU.Selection");
+        static readonly Unity.Profiling.ProfilerMarker FlushMarker=new Unity.Profiling.ProfilerMarker("LT.Details.CPU.BatchFlush");
+        static readonly Unity.Profiling.ProfilerMarker InstanceDataMarker=new Unity.Profiling.ProfilerMarker("LT.Details.CPU.InstanceData");
         static long Timestamp()=>System.Diagnostics.Stopwatch.GetTimestamp();
         static double Milliseconds(long start)=>(Timestamp()-start)*(1000.0/System.Diagnostics.Stopwatch.Frequency);
         string status="Ожидание поверхности.";
@@ -110,6 +128,16 @@ namespace LocalTerrainPrototype
         readonly LTPaintTerrain terrain=new LTPaintTerrain();
         readonly Dictionary<Vector2Int,Cell> cells=new Dictionary<Vector2Int,Cell>();
         readonly Dictionary<GameObject,RecipeCache> recipes=new Dictionary<GameObject,RecipeCache>();
+        internal bool UsesGrassTerrainTint
+        {
+            get
+            {
+                foreach(var cache in recipes.Values)if(cache.recipe!=null)
+                    foreach(var level in cache.recipe.levels)foreach(var part in level.parts)
+                        if(part.SupportsGrassColor&&LTGrassTerrainMap.Requested(part.material))return true;
+                return false;
+            }
+        }
         readonly Plane[] planes=new Plane[6];
         // Conservative Unity limit including object-to-world and inverse matrices.
         readonly Matrix4x4[] drawMatrices=new Matrix4x4[511];
@@ -141,19 +169,32 @@ namespace LocalTerrainPrototype
             public string id;public int hash;public Matrix4x4 inverse;public Rect rect;public Vector2 size;
             public bool ellipse,allLayers;public float falloff;public LTDetailCategory categories;
             public LTDetailStampMode mode;public LTSurfaceLayer[] layers;
+            [NonSerialized] public LTRoadJunctionMath.Snapshot junction;
             public float Weight(Vector3 p,LTDetailSurface.Tile tile,float[] weights)
             {
                 var q=inverse.MultiplyPoint3x4(p);float allowed=allLayers?1:0;
                 if(!allLayers)for(int i=0;i<tile.layers.Length;i++)if(Array.IndexOf(layers,tile.layers[i])>=0)allowed+=weights[i];
-                return LTDetailMath.AreaWeight(q.x,q.z,size.x,size.y,ellipse,falloff)*Mathf.Clamp01(allowed);
+                float area=junction!=null?junction.Weight(q.x,q.z):LTDetailMath.AreaWeight(q.x,q.z,size.x,size.y,ellipse,falloff);
+                return area*Mathf.Clamp01(allowed);
             }
+        }
+        static Stamp JunctionRemoval(LTRoadJunction node,LTRoadJunctionMath.Snapshot data)
+        {
+            float radius=data.coreRadius+data.blend;
+            var removal=new Stamp{id="junction:"+node.GetInstanceID(),rect=data.bounds,
+                inverse=Matrix4x4.Translate(-data.centre)*node.World.transform.worldToLocalMatrix,
+                size=Vector2.one*(2*radius),ellipse=true,falloff=data.blend/radius,allLayers=true,
+                categories=(node.clearVegetation?LTDetailCategory.Vegetation:0)|(node.clearStones?LTDetailCategory.Stones:0),mode=LTDetailStampMode.Remove};
+            removal.hash=Mix(data.hash,(int)removal.categories);
+            if(data.footprint!=null){removal.junction=data;removal.inverse=node.World.transform.worldToLocalMatrix;}
+            return removal;
         }
         struct Instance
         {
             public Matrix4x4 matrix;public Bounds bounds;public Vector3 position,lodPosition;public float lodSize;public uint id;
             // Preserve the original orientation and sampling point, avoiding ratio drift
             // and offset-along-normal errors when repeatedly changing size.
-            public Quaternion rotation;public Vector2 maskPosition;
+            public Quaternion rotation;public Vector2 maskPosition;public float scale;
         }
         struct Selection { public int index;public bool inView,shadowsInRange; }
         struct LevelFlags { public bool color,caster; }
@@ -185,6 +226,7 @@ namespace LocalTerrainPrototype
         sealed class Cell
         {
             public int hash,placementHash,count;public long cachedMatrixBytes;public double lastWanted;public float shadowRange;public Bounds bounds,originBounds;public readonly List<Group> groups=new List<Group>();
+            public string savedInputKey;public UnityEngine.Object[] savedReferences;public List<Source> sources;public bool fromSaved;
         }
         static int Mix(int a,int b)=>unchecked(a*397^b);
         static bool Touches(Rect a,Rect b)=>a.xMin<b.xMax&&a.xMax>b.xMin&&a.yMin<b.yMax&&a.yMax>b.yMin;
@@ -202,13 +244,15 @@ namespace LocalTerrainPrototype
             RenderPipelineManager.beginCameraRendering-=Render;
 #if UNITY_EDITOR
             UnityEditor.EditorApplication.update-=EditorTick;
+            ReleaseReloadPlacement();
 #endif
             Clear();
         }
         void Clear()
         {
+            if(world)world.DetailPaintRuntime?.GrassTerrain.Dispose();
             gpuRenderer?.Dispose();gpuRenderer=null;
-            (generation as IDisposable)?.Dispose();generation=null;cells.Clear();recipes.Clear();terrain.Clear();instanceCount=0;
+            (generation as IDisposable)?.Dispose();generation=null;cells.Clear();recipes.Clear();terrain.Clear();roadMeshMasks.Clear();instanceCount=0;
             cachedMatrixBytes=0;batchQueue.Clear();submissionCamera=null;
             motionData=null;
             planned.Clear();wanted.Clear();nextPlan=0;streamDirty=true;
@@ -242,7 +286,7 @@ namespace LocalTerrainPrototype
             gpuUploadMilliseconds=Mathf.Clamp(gpuUploadMilliseconds,.25f,10);gpuUploadMiB=Mathf.Clamp(gpuUploadMiB,1,16);
         }
         [ContextMenu("Перестроить детализацию")]
-        public void Rebuild(){requested=true;blocked=false;recipes.Clear();rebuildRevision++;}
+        public void Rebuild(){requested=true;blocked=false;recipes.Clear();rebuildRevision++;bypassSavedPlacement=true;}
         // Re-capture updated terrain/road masks; per-cell hashes retain unaffected
         // placements, prefab recipes and GPU groups. Unlike Rebuild, no global revision bump.
         public void RequestSurfaceRefresh(){requested=true;blocked=false;}
@@ -264,12 +308,16 @@ namespace LocalTerrainPrototype
         }
         void TickCore()
         {
+#if UNITY_EDITOR
+            if(placementWorldOperation)return;
+#endif
             if(!world||!world.isActiveAndEnabled||!world.source||!world.generatedRoot||!world.enableLayerPainting)
             {if(cells.Count>0||generation!=null)Clear();status="Нужен активный LTWorld с геометрией и покраской слоёв.";requested=true;return;}
             if(!SystemInfo.supportsInstancing){status="GPU Instancing не поддерживается.";return;}
             try
             {
                 long streamingStart=Timestamp();
+                world.DetailPaintRuntime?.GrassTerrain.Advance();
                 using(StreamingMarker.Auto())
                 try{UpdateStreaming();}
                 finally{LastStreamingMilliseconds=Milliseconds(streamingStart);}
@@ -304,6 +352,7 @@ namespace LocalTerrainPrototype
                             if(!generation.MoveNext())
                             {
                                 (generation as IDisposable)?.Dispose();generation=null;
+                                bypassSavedPlacement=false;
                                 status=$"Готово: {instanceCount:N0} экземпляров; загружено {cells.Count}, нужно {wanted.Count} ячеек.\n"+string.Join("\n",messages);
 #if UNITY_EDITOR
                                 UnityEditor.SceneView.RepaintAll();
@@ -378,8 +427,8 @@ namespace LocalTerrainPrototype
                 if(view&&view.camera)AddCamera(view.camera);
 #endif
             bool wasValid=planValid;
-            planValid=LTDetailStreaming.Plan(cameraPositions,new Vector2(world.source.size.x,world.source.size.z),
-                cellSize,maxDistance+preloadDistance,maxCells,planned);
+            planValid=LTDetailStreaming.Plan(cameraPositions,world.TerrainRect.size,
+                cellSize,maxDistance+preloadDistance,maxCells,planned,world.TerrainRect.min);
             if(!planValid)
             {
                 (generation as IDisposable)?.Dispose();generation=null;
@@ -404,12 +453,12 @@ namespace LocalTerrainPrototype
             Bounds PriorityBounds(Vector2Int key)
             {
                 if(cells.TryGetValue(key,out var cell)&&cell.count>0)return cell.bounds;
-                var rect=LTDetailStreaming.CellRect(key,cellSize,new Vector2(world.source.size.x,world.source.size.z));
+                var rect=LTDetailStreaming.CellRect(key,cellSize,world.TerrainRect.size,world.TerrainRect.min);
                 return TransformBounds(new Bounds(new Vector3(rect.center.x,(minY+maxY)*.5f,rect.center.y),
                     new Vector3(rect.width,maxY-minY,rect.height)),worldMatrix);
             }
-            LTDetailStreaming.Prioritize(planned,streamingViews,new Vector2(world.source.size.x,world.source.size.z),
-                cellSize,maxDistance,PriorityBounds,cells.ContainsKey);
+            LTDetailStreaming.Prioritize(planned,streamingViews,world.TerrainRect.size,
+                cellSize,maxDistance,PriorityBounds,cells.ContainsKey,world.TerrainRect.min);
         }
         LTDetailPrefab Recipe(GameObject prefab)
         {
@@ -443,21 +492,29 @@ namespace LocalTerrainPrototype
             messages.Clear();
             var nearChunks=new List<LTChunk>();
             var chunkKeys=new HashSet<Vector2Int>();
-            float chunkWidth=world.source.size.x/world.chunksX,chunkDepth=world.source.size.z/world.chunksZ;
+            float chunkWidth=world.ChunkSize.x,chunkDepth=world.ChunkSize.y;
             foreach(var chunk in world.generatedRoot.GetComponentsInChildren<LTChunk>())
             {
                 var rect=new Rect(chunk.x*chunkWidth,chunk.z*chunkDepth,chunkWidth,chunkDepth);
                 foreach(var key in planned)
-                    if(Touches(rect,LTDetailStreaming.CellRect(key,cellSize,new Vector2(world.source.size.x,world.source.size.z))))
+                    if(Touches(rect,LTDetailStreaming.CellRect(key,cellSize,world.TerrainRect.size,world.TerrainRect.min)))
                     {nearChunks.Add(chunk);chunkKeys.Add(new Vector2Int(chunk.x,chunk.z));break;}
             }
             var surface=world.DetailPaintRuntime.CaptureDetailSurface(world,chunkKeys);
+#if UNITY_EDITOR
+            if(placementWorldOperation&&surface.tiles.Count!=nearChunks.Count)
+                throw new InvalidOperationException("Не все карты покраски готовы. Дождитесь завершения перестроения мира.");
+#endif
             if(planned.Count==0)
             {
                 terrain.Clear();status="Нет камер рядом с террейном; дальний кэш освобождается с задержкой.";return;
             }
             if(surface.tiles.Count==0){Clear();status="Карты слоёв ещё не готовы.";requested=true;return;}
-            var chunks=nearChunks.ToArray();terrain.Update(world,chunks);
+            var chunks=nearChunks.ToArray();
+#if UNITY_EDITOR
+            if(!placementSelectionOnly)
+#endif
+                terrain.Update(world,chunks);
             if(Vector3.Distance(world.transform.lossyScale,Vector3.one)>.001f||Quaternion.Angle(world.transform.rotation,Quaternion.identity)>.01f)
                 throw new InvalidOperationException("LTWorld должен иметь Rotation=0 и Scale=1. Перенос мира поддерживается.");
             var sources=new List<Source>();var stamps=new List<Stamp>();
@@ -474,7 +531,11 @@ namespace LocalTerrainPrototype
                     string owner=stamp==null?"layer":stamp.id;
                     if(string.IsNullOrEmpty(entry.Id)||!ids.Add(owner+":"+entry.Id))
                         throw new InvalidOperationException($"Пустой/повторяющийся ID записи внутри {(layer?layer.name:owner)}. Исправьте записи этого слоя/штампа.");
-                    var recipe=Recipe(entry.prefab);if(recipe==null)continue;
+                    var recipe=Recipe(entry.prefab);
+#if UNITY_EDITOR
+                    if(recipe==null&&placementWorldOperation)throw new InvalidOperationException(string.Join("\n",messages));
+#endif
+                    if(recipe==null)continue;
                     var copy=JsonUtility.FromJson<LTDetailEntry>(JsonUtility.ToJson(entry));
                     copy.ResolveDensityMask(commonMask);
                     if(copy.shaderFade)messages.Add(entry.prefab.name+": Shader Fade пока заменён дискретным отсечением.");
@@ -492,13 +553,14 @@ namespace LocalTerrainPrototype
             {
                 if(!node.isActiveAndEnabled||node.World!=world)continue;
                 LTRoadJunctionMath.Snapshot data;
-                try{data=node.Capture();}catch(ArgumentException){continue;}
-                float radius=data.coreRadius+data.blend;
-                var removal=new Stamp{id="junction:"+node.GetInstanceID(),rect=data.bounds,
-                    inverse=Matrix4x4.Translate(-data.centre)*world.transform.worldToLocalMatrix,
-                    size=Vector2.one*(2*radius),ellipse=true,falloff=data.blend/radius,allLayers=true,
-                    categories=(node.clearVegetation?LTDetailCategory.Vegetation:0)|(node.clearStones?LTDetailCategory.Stones:0),mode=LTDetailStampMode.Remove};
-                removal.hash=Mix(data.hash,(int)removal.categories);junctionRemovals.Add(removal);
+                try{data=node.Capture();}catch(ArgumentException)
+                {
+#if UNITY_EDITOR
+                    if(placementWorldOperation)throw;
+#endif
+                    continue;
+                }
+                junctionRemovals.Add(JunctionRemoval(node,data));
             }
             var active=new List<LTDetailStamp>();
             foreach(var s in FindObjectsByType<LTDetailStamp>(FindObjectsInactive.Exclude,FindObjectsSortMode.None))
@@ -536,11 +598,26 @@ namespace LocalTerrainPrototype
         }
         IEnumerator Generate(LTDetailSurface surface,LTChunk[] chunks,List<Source> sources,List<Stamp> stamps,int common,Matrix4x4 worldMatrix,HashSet<Vector2Int> preparedKeys)
         {
+#if UNITY_EDITOR
+            if(placementSelectionOnly)
+            {
+                foreach(var key in planned)
+                {
+                    var area=LTDetailStreaming.CellRect(key,cellSize,world.TerrainRect.size,world.TerrainRect.min);
+                    if(PlacementAreaMayContainDetails(area,surface,sources))placementSelectedCells.Add(key);
+                    yield return null;
+                }
+                yield break;
+            }
+#endif
             var roads=new List<LTRoadMath.Snapshot>();
-            foreach(var road in world.GetComponentsInChildren<LTRoad>())
+            var roadObjects=world.GetComponentsInChildren<LTRoad>();
+            var meshMasks=roadMeshMasks.Capture(roadObjects,world);
+            foreach(var road in roadObjects)
                 if(road.isActiveAndEnabled&&road.World==world)
                     roads.Add(road.Capture(world));
             var weights=new float[LTPaintRuntime.LayerCapacity];int visits=0;
+            var placementKeys=new PlacementKeyContext(this,surface,worldMatrix);
             var normalMatrix=worldMatrix.inverse.transpose;
             var attempted=new HashSet<Vector2Int>();
             while(true)
@@ -552,26 +629,42 @@ namespace LocalTerrainPrototype
                 foreach(var candidate in planned)if(preparedKeys.Contains(candidate)&&!attempted.Contains(candidate)){key=candidate;found=true;break;}
                 if(!found)yield break;
                 attempted.Add(key);
-                var rect=LTDetailStreaming.CellRect(key,cellSize,new Vector2(world.source.size.x,world.source.size.z));
+                var rect=LTDetailStreaming.CellRect(key,cellSize,world.TerrainRect.size,world.TerrainRect.min);
                 var localTiles=surface.tiles.FindAll(t=>Touches(rect,t.rect));
                 var localRoads=roads.FindAll(r=>r.Intersects(rect));
+                var localMeshMasks=meshMasks.FindAll(m=>m.footprint.Intersects(rect));
                 var localSources=sources.FindAll(s=>s.stamp!=null?Touches(rect,s.stamp.rect):localTiles.Exists(t=>Array.IndexOf(t.layers,s.layer)>=0));
                 int hash=common;
                 foreach(var t in localTiles){hash=Mix(hash,t.coverage);hash=Mix(hash,t.surface);}
                 foreach(var chunk in chunks)
                 {
                     if(!chunk||!chunk.mesh)continue;
-                    float w=world.source.size.x/world.chunksX,d=world.source.size.z/world.chunksZ;
+                    float w=world.ChunkSize.x,d=world.ChunkSize.y;
                     if(Touches(rect,new Rect(chunk.x*w,chunk.z*d,w,d)))
                     {hash=Mix(hash,chunk.mesh.GetInstanceID());hash=Mix(hash,chunk.updatedAt.GetHashCode());hash=Mix(hash,chunk.transform.localToWorldMatrix.GetHashCode());}
                 }
                 foreach(var s in stamps)if(Touches(rect,s.rect))hash=Mix(hash,s.hash);
                 foreach(var road in localRoads)hash=Mix(hash,road.detailHash);
+                foreach(var mask in localMeshMasks)hash=Mix(hash,mask.hash);
                 int placementHash=hash;
                 foreach(var s in localSources){hash=Mix(hash,s.hash);placementHash=Mix(placementHash,s.placementHash);}
                 cells.TryGetValue(key,out var old);
                 if(old!=null&&old.hash==hash){yield return null;continue;}
-                var cell=new Cell{hash=hash,placementHash=placementHash};int candidates=0;
+                var inputKey=placementKeys.Key(key,rect,localTiles,localSources,stamps,localRoads,localMeshMasks,out var references);
+                var cell=new Cell{hash=hash,placementHash=placementHash,savedInputKey=inputKey,savedReferences=references,sources=localSources};int candidates=0;
+                var saved=MatchingPlacement(key,rect,inputKey,references,localSources.Count);
+#if UNITY_EDITOR
+                if(placementValidationOnly)
+                {
+                    if(saved==null)throw new InvalidOperationException($"Ячейка {key}: расстановка отсутствует, устарела или повреждена. Запеките зоны детализации заново.");
+                    placementValidatedCells++;yield return null;continue;
+                }
+                if(placementIncremental&&saved!=null)
+                {
+                    placementReusedCell=saved;yield return null;continue;
+                }
+#endif
+                cell.fromSaved=saved!=null;
                 bool scaleOnly=old!=null&&old.placementHash==placementHash;
                 foreach(var source in localSources)
                 {
@@ -579,8 +672,8 @@ namespace LocalTerrainPrototype
                         throw new InvalidOperationException("Плотность превышает бюджет кандидатов.");
                     var entry=source.entry;var recipe=source.recipe;
                     var previous=scaleOnly?old.groups.Find(g=>g.source.layer==source.layer&&g.source.owner==source.owner&&g.source.entry.Id==entry.Id):null;
-                    if(scaleOnly&&previous==null)continue; // Previously empty groups stay empty.
-                    if(previous!=null&&previous.source.hash==source.hash)
+                    if(saved==null&&scaleOnly&&previous==null)continue; // Previously empty groups stay empty.
+                    if(saved==null&&previous!=null&&previous.source.hash==source.hash)
                     {
                         IncludeGroup(cell,previous);cell.groups.Add(previous);
                         cell.cachedMatrixBytes+=(long)previous.instances.Count*64*previous.partMatrices.Count;
@@ -588,7 +681,21 @@ namespace LocalTerrainPrototype
                     }
                     var group=new Group{source=source,selected=new List<Selection>[recipe.levels.Count],levelFlags=new LevelFlags[recipe.levels.Count]};
                     for(int i=0;i<group.selected.Length;i++)group.selected[i]=new List<Selection>();
-                    if(previous!=null)
+                    if(saved!=null)
+                    {
+                        int sourceIndex=localSources.IndexOf(source);
+                        var data=Array.Find(saved.groups,g=>g.source==sourceIndex);
+                        if(data!=null)foreach(var item in data.items)
+                        {
+                            if(++visits%32==0){yield return null;if(!wanted.Contains(key))yield break;}
+                            AddSavedItem(group,item);
+                        }
+                        IncludeGroup(cell,group);
+                        cells.TryGetValue(key,out var resident);
+                        if(instanceCount-(resident?.count??0)+cell.count>maxInstances)TrimCache(true);
+                        if(instanceCount-(resident?.count??0)+cell.count>maxInstances)throw new InvalidOperationException("Превышен Max Instances при загрузке сохранённой расстановки.");
+                    }
+                    else if(previous!=null)
                     {
                         foreach(var item in previous.instances)
                         {
@@ -598,7 +705,7 @@ namespace LocalTerrainPrototype
                             var matrix=Matrix4x4.TRS(item.position,item.rotation,recipe.rootScale*scale);
                             var bounds=TransformBounds(recipe.bounds,matrix);bounds.Expand(2*entry.deformationBoundsPadding);
                             float rootScale=Mathf.Max(Mathf.Abs(recipe.rootScale.x),Mathf.Max(Mathf.Abs(recipe.rootScale.y),Mathf.Abs(recipe.rootScale.z)));
-                            var updated=item;updated.matrix=matrix;updated.bounds=bounds;
+                            var updated=item;updated.matrix=matrix;updated.bounds=bounds;updated.scale=scale;
                             updated.lodPosition=matrix.MultiplyPoint3x4(recipe.lodReferencePoint);updated.lodSize=recipe.lodSize*scale*rootScale;
                             if(group.instances.Count==0){group.bounds=bounds;group.originBounds=new Bounds(item.position,Vector3.zero);}
                             else{group.bounds.Encapsulate(bounds);group.originBounds.Encapsulate(item.position);}
@@ -637,6 +744,8 @@ namespace LocalTerrainPrototype
                             }
                             weight*=LTDetailMath.DensityMask(entry,px,pz,source.seed,out float maskScale);
                             foreach(var road in localRoads)weight*=1-road.ClearWeight(px,pz,entry.category);
+                            if(weight>0&&(entry.category&LTDetailCategory.Vegetation)!=0)
+                                foreach(var mask in localMeshMasks)if(mask.footprint.Contains(px,pz)){weight=0;break;}
                             if(!LTDetailMath.Accept(id,weight*entry.probability))continue;
                             var normalWS=normalMatrix.MultiplyVector(normal).normalized;
                             float scale=Mathf.Lerp(entry.scaleRange.x,entry.scaleRange.y,LTDetailMath.Unit(id,3));
@@ -650,7 +759,7 @@ namespace LocalTerrainPrototype
                             var origin=(Vector3)matrix.GetColumn(3);
                             if(group.instances.Count==0){group.bounds=bounds;group.originBounds=new Bounds(origin,Vector3.zero);}
                             else{group.bounds.Encapsulate(bounds);group.originBounds.Encapsulate(origin);}
-                            group.instances.Add(new Instance{matrix=matrix,position=origin,bounds=bounds,id=id,rotation=rotation,maskPosition=new Vector2(px,pz),lodPosition=matrix.MultiplyPoint3x4(recipe.lodReferencePoint),lodSize=recipe.lodSize*scale*rootScale});
+                            group.instances.Add(new Instance{matrix=matrix,position=origin,bounds=bounds,id=id,rotation=rotation,scale=scale,maskPosition=new Vector2(px,pz),lodPosition=matrix.MultiplyPoint3x4(recipe.lodReferencePoint),lodSize=recipe.lodSize*scale*rootScale});
                             if(cell.count==0){cell.bounds=bounds;cell.originBounds=new Bounds(origin,Vector3.zero);}
                             else{cell.bounds.Encapsulate(bounds);cell.originBounds.Encapsulate(origin);}
                             cell.count++;
@@ -711,14 +820,24 @@ namespace LocalTerrainPrototype
         }
         void Render(ScriptableRenderContext context,Camera camera)
         {
+#if UNITY_EDITOR
+            if(LTDetailBenchmarkIsolation.Skip(camera))return;
+            if(placementWorldOperation)return;
+#endif
             if(!this||!isActiveAndEnabled||!world||!world.isActiveAndEnabled||!world.enableLayerPainting||!camera||camera.cameraType==CameraType.Preview)return;
             if(camera.cameraType==CameraType.SceneView&&!sceneView)return;
             ResetRenderStatistics();LastCamera=camera.name;
             long start=Timestamp();
             if(gpuDetails)
             {
+                using(GpuBeginMarker.Auto())
+                {
                 if(gpuRenderer==null)gpuRenderer=new LTDetailGpuRenderer();
+                gpuRenderer.UnifiedCulling=gpuUnifiedCulling;
+                gpuRenderer.GrassTerrain=world.DetailPaintRuntime?.GrassTerrain;
+                gpuRenderer.ConfigureMaterialNotifications(gpuMaterialNotifications,gpuNotifiedMaterials);
                 gpuRenderer.Begin(gpuMemoryMiB,Application.isPlaying?Time.frameCount:gpuEditorFrame,gpuUploadMilliseconds,gpuUploadMiB);
+                }
             }
             else if(gpuRenderer!=null){gpuRenderer.Dispose();gpuRenderer=null;}
             batchQueue.Begin();submissionCamera=camera;
@@ -738,6 +857,7 @@ namespace LocalTerrainPrototype
         void RenderCamera(Camera camera)
         {
             GeometryUtility.CalculateFrustumPlanes(camera,planes);
+            if(gpuDetails&&gpuRenderer!=null)gpuRenderer.PrepareCameraPass(camera,planes);
             var position=camera.transform.position;var forward=camera.transform.forward;
             int cameraMask=camera.cullingMask;bool orthographic=camera.orthographic;
             float orthoSize=camera.orthographicSize,fov=camera.fieldOfView,lodBias=QualitySettings.lodBias;
@@ -762,7 +882,12 @@ namespace LocalTerrainPrototype
                     if(LTDetailMath.CanSkipOffscreen(groupInView,group.originBounds,position,group.shadowRange,maxDistance))
                     {SkipInstances(group.instances.Count);continue;}
                     bool anyColor=false,anyCaster=false;
+                    using(GpuPathMarker.Auto())
+                    {
                     if(gpuDetails&&gpuRenderer!=null&&gpuRenderer.TryRender(group,camera,planes,maxDistance))continue;
+                    }
+                    using(LevelSetupMarker.Auto())
+                    {
                     for(int lod=0;lod<recipe.levels.Count;lod++)
                     {
                         group.selected[lod].Clear();var flags=new LevelFlags();
@@ -774,8 +899,11 @@ namespace LocalTerrainPrototype
                             }
                         group.levelFlags[lod]=flags;anyColor|=flags.color;anyCaster|=flags.caster;
                     }
+                    }
                     if((!anyColor&&!anyCaster)||(!groupInView&&!anyCaster))
                     {SkipInstances(group.instances.Count);continue;}
+                    using(SelectionMarker.Auto())
+                    {
                     for(int i=0;i<group.instances.Count;i++)
                     {
                         LastTestedInstances++;
@@ -802,6 +930,7 @@ namespace LocalTerrainPrototype
                         group.selected[lod].Add(new Selection{index=i,inView=inView,shadowsInRange=shadowsInRange});
                         LastSelectedInstances++;
                     }
+                    }
                     long submitStart=Timestamp();
                     using(SubmitMarker.Auto())
                     try{SubmitGroup(camera,cameraMask,group,pair.Key);}
@@ -810,6 +939,7 @@ namespace LocalTerrainPrototype
             }
             long flushStart=Timestamp();
             using(SubmitMarker.Auto())
+            using(FlushMarker.Auto())
             try{batchQueue.Flush(emitMerged);}
             finally{LastSubmissionMilliseconds+=Milliseconds(flushStart);}
         }
@@ -834,7 +964,7 @@ namespace LocalTerrainPrototype
                     if(part.castShadows==ShadowCastingMode.ShadowsOnly&&mode==ShadowCastingMode.Off)continue;
                     rp.shadowCastingMode=mode;
                     int count=0,accepted=0;
-                    var key=new DrawKey{part=part,state=new LTDetailDrawState{
+                    var key=new DrawKey{part=part,grassRoot=part.SupportsGrassColor?part.grassRootInPart:Vector3.zero,state=new LTDetailDrawState{
                         mesh=part.mesh.GetInstanceID(),material=part.material.GetInstanceID(),submesh=part.submesh,
                         layer=part.layer,shadow=(int)mode,receiveShadows=part.receiveShadows,renderingLayerMask=part.renderingLayerMask,
                         lightProbes=(int)part.lightProbes,reflectionProbes=(int)part.reflectionProbes,motionVectors=(int)part.motionVectors,
@@ -874,11 +1004,21 @@ namespace LocalTerrainPrototype
         }
         void DrawInstances(RenderParams parameters,LTDetailPrefab.Part part,Matrix4x4[] matrices,int count)
         {
+            using(InstanceDataMarker.Auto())
+            {
+            // A shared per-part offset, not a material/array per instance. Batching
+            // keys include this offset so merged draws cannot pick another root.
+            if(part.SupportsGrassColor)
+            {
+                parameters.matProps=part.GrassProperties;
+                LTGrassTerrainMap.Bind(parameters.matProps,world.DetailPaintRuntime?.GrassTerrain);
+            }
             // Static instances must provide explicit transform history. The matrix-only
             // path produced false motion and flicker in HDRP (confirmed by scene A/B).
             // Vertex animation remains shader-owned; do not enable Precomputed Velocity.
             if(motionData==null)motionData=new LTDetailMotionData[drawMatrices.Length];
             LTDetailMotionData.FillStatic(matrices,motionData,count);
+            }
             using(GraphicsMarker.Auto())
                 Graphics.RenderMeshInstanced(parameters,part.mesh,part.submesh,motionData,count);
         }

@@ -6,6 +6,9 @@ partial class Checks
 {
     static void PaintChecks()
     {
+        PaintCycleCaptureChecks();
+        PaintPreparationChecks();
+        PaintReuseChecks();
         PaintChangeScopeChecks();
         RoadUpdateCycleChecks();
         PaintingWorkChecks();

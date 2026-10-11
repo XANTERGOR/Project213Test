@@ -91,7 +91,7 @@ namespace LocalTerrainPrototype
                 if(tile==null||tile.coverage!=detailCoverage||tile.surface!=state.surfaceHash||
                     !ReferenceEquals(tile.roadProjection,roadProjection))
                 {
-                    float w=world.source.size.x/world.chunksX,d=world.source.size.z/world.chunksZ;
+                    float w=world.ChunkSize.x,d=world.ChunkSize.y;
                     tile=new LTDetailSurface.Tile{rect=new Rect(pair.Key.x*w,pair.Key.z*d,w,d),
                         coverage=detailCoverage,surface=state.surfaceHash,layers=state.detailLayers,roadProjection=roadProjection,
                         weights0=new LTDetailSurface.Image(state.weights0),weights1=new LTDetailSurface.Image(state.weights1),

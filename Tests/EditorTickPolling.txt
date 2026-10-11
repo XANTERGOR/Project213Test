@@ -1,0 +1,67 @@
+Editor Tick polling - 2026-10-10
+
+User scope: investigate/fix Editor Tick CPU spikes. No deferred standalone-player
+vegetation streaming/performance/memory work or quality presets resumed.
+
+Evidence before this change:
+Logs/FrameProfiles/flight-20261009-222754-203-e0e03bae
+343 analyzed frames, partial capture / 500000 report-marker limit, GPU recording
+off. LTEditorEngine.Tick: mean 0.306 ms, max 16.391 ms; highest reported frames
+include ~11.3-11.5 ms Tick self. Capture contains 12510 GetComponentNullErrorMessage
+calls and 32280 direct GC.Alloc samples. Detect has 41550 direct GC.Alloc samples.
+Allocation calls are NOT bytes; missing-component work alone does NOT explain the
+entire 16 ms spike. The coarse scopes below identify previously unmarked work.
+
+Implemented:
+- Optional live TryGetComponent lookups in stamp/hole traversal, paint hierarchy,
+  and LTPaintStamp Road/Junction properties. No negative-result cache, no stale
+  component references. Disabled/inactive paint registration rules unchanged.
+- Indexed Transform traversal retains depth-first sibling order, generated-root
+  and nested-world exclusions, and disabled-height child traversal.
+- Exact chunk layout comparison with reused list/dictionaries. Every poll still
+  reads current components and validates out-of-grid/duplicate coordinates.
+  Unchanged layout avoids sorting, signature serialization and temporary sets.
+  Changed layout uses the original canonical string and invalidation path.
+  Direct coordinate edits, activation, replacement, deletion and explicit null
+  invalidation remain detectable. No event-only or hash-collision shortcut.
+- Coarse, allocation-free ProfilerMarker scopes: LT.Editor.Poll, WorldScan,
+  PollLOD, ReloadResume, ChunkLayout, BuildAdvance, CoarseAdvance, PaintPoll,
+  Colliders, SeamBake. Not per vertex/chunk/plant.
+- Poll interval, geometry/paint cadence, budgets, queue decisions, scene data and
+  output settings unchanged. Removing only the new profiling wrappers reproduces
+  the pre-change Tick body modulo whitespace. Capture Walk differs only by the
+  allowlisted optional lookups and indexed traversal (verified against snapshot).
+
+Verification:
+dotnet run --project Tests/TerrainBridgeChecks -- --editor-tick
+PASS 256010 assertions, 3000 randomized exact legacy layout decisions;
+1000 warm 256-chunk pure bookkeeping polls: 0 managed allocated bytes.
+This is NOT a zero-allocation claim for the entire Unity Tick or native query.
+
+Managed regressions: --editor-reload (297), --mesh-stamp-cache (2034),
+--chunk-grid (6 layouts/96 mixed LOD states), --hole-stamp, --road-projection,
+--detail-placement (30), all passed. See Logs/TickSpikes-regressions.log.
+Unity-reference C# build: 0 errors. Initial build: 6 existing warnings; final
+incremental Editor build: 3 existing warnings. Logs/TickSpikes-final-build.log.
+Native Unity import, owned preview validation and new live timing still pending.
+
+Native validation menu:
+Tools > Local Terrain > Validate Editor Tick Polling (no scene changes)
+Owned preview objects only. Does not call Tick, rebuild geometry, paint, bake,
+save scenes/assets, change quality or operate on user objects. Checks native
+list-query parity, chunk edits/replacement/deactivation/expansion/errors, pending
+state preservation, hierarchy traversal, live optional companion add/remove, and
+disabled/inactive paint ownership. Records/checks source/settings/scene hashes,
+dirty flags, root counts and active scene before/after.
+
+After validation, let terrain/vegetation settle, then repeat the five-second
+SceneView flight: Record GPU OFF, scene GPU Details ON, settings unchanged.
+Compare Tick/Poll maxima and child scopes, GetComponentNullErrorMessage counts,
+GC bytes/frame, and average times. Full peak elimination is NOT yet established.
+GPU and terrain LOD timings are separate; scopes' nested inclusive totals must
+not be added together. Keep the incomplete capture caveat when comparing runs.
+
+Safety audit: 309 original scene/source/settings/package files hashed. Only the
+five intended source files changed: LTEditor, LTChunkManagement, LTHoleStampEditor,
+LTWorld, LTPaintStamp. New helper/profiling/preview-check files have unique GUIDs.
+No missing files, user scene/settings/locked packages unchanged at handoff.

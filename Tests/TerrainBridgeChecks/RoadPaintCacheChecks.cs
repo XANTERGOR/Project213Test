@@ -115,7 +115,8 @@ partial class Checks
         var runtime=File.ReadAllText(root+"LTPaintRuntime.cs");var capture=File.ReadAllText(root+"LTPaintCpuCapture.cs");
         Require(runtime.Contains("SamePaintRoads(state.weightRoads,weightRoads,rect)")&&runtime.Contains("state.weightHash!=weightInput"),"production uses regional road and nonroad dependencies");
         Require(runtime.Contains("weightInput=Mix(weightInput,Id(layer))")&&runtime.Contains("Id(stamp.SecondaryLayer)"),"palette/slot changes participate in invalidation");
-        Require(runtime.IndexOf("BakeRoadProjection(world,rect,stamps,layers,state,asphaltInputs)")<runtime.IndexOf("if(!bakeWeights)"),"UV/suppression update even when weights are reused");
+        int projectionCall=runtime.IndexOf("BakeRoadProjection(world,rect,stamps,layers,state,asphaltInputs,raster)");
+        Require(projectionCall>=0&&projectionCall<runtime.IndexOf("if(!bakeWeights)"),"UV/suppression update even when weights are reused");
         Require(runtime.Contains("coverage=Mix(coverage,road.geometryHash)")&&runtime.Contains("values.Add(road.Capture(world).paintHash)"),"density, UV and material consumers retain full road dependencies");
         Require(runtime.Contains("state.weightHash=weightInput;state.weightRoads=weightRoads.ToArray()")&&runtime.Contains("catch(InvalidOperationException error)"),"successful updates capture snapshots; failure removes owned state");
         foreach(string stage in new[]{"RoadProjection","RoadUVCompute","RoadUVUpload","WeightCompute","WeightUpload"})Require(capture.Contains(stage),"split stage "+stage);

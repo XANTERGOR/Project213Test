@@ -50,7 +50,7 @@ namespace LocalTerrainPrototype
         static IEnumerator<LTBuildStep> runner;
         static LTHeightJobCheck()
         {AssemblyReloadEvents.beforeAssemblyReload+=Stop;EditorApplication.quitting+=Stop;}
-        [MenuItem("Tools/Local Terrain/Validate Height Jobs (no scene changes)")]
+        // Archived validation menu: Tools/Local Terrain/Validate Height Jobs (no scene changes)
         static void Run()
         {
             if(runner!=null){Debug.Log("Height job validation is already running.");return;}

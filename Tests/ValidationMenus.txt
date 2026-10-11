@@ -1,0 +1,156 @@
+Validation menu cleanup (2026-10-10)
+
+User-requested removal of obsolete Validate commands from Tools > Local Terrain.
+55 registrations before; 49 removed; 6 current diagnostics retained.
+No validation implementation, data asset, source GUID, scene or log was deleted.
+Frame Profiler, normal editor tools and the existing Checks submenu are unchanged.
+The old entries are recorded as "Archived validation menu:" comments at their
+original methods. Restore an individual entry by replacing its comment with:
+    [UnityEditor.MenuItem("<the recorded full menu path>")]
+No ProjectSettings or scripting defines need to be changed.
+Existing older test documents may still refer to the archived menu paths.
+
+Retained:
+Current junction work adds one focused command (old archived menus stay archived):
+- Tools/Local Terrain/Validate Junction Foundation LOD (no scene changes)
+
+Original six retained diagnostics:
+- Tools/Local Terrain/Validate Editor Capture Polling (no scene changes)
+- Tools/Local Terrain/Validate Editor Tick Polling (no scene changes)
+- Tools/Local Terrain/Validate Editor Reload Recovery (no scene changes)
+- Tools/Local Terrain/Validate Mesh Stamp Capture Cache (no scene changes)
+- Tools/Local Terrain/Validate GPU Detail CPU Preparation (no scene changes)
+- Tools/Local Terrain/Validate LOD Index Copy (no scene changes)
+
+Archived:
+- Tools/Local Terrain/Validate Detail Batch Editing (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTDetailBatchCheck.cs
+- Tools/Local Terrain/Validate Chunk Grid (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTChunkGridCheck.cs
+- Tools/Local Terrain/Validate Mesh Instance Ownership
+  Assets/TerrainSystem/LocalTerrain/Editor/LTEditor.cs
+- Tools/Local Terrain/Validate Mesh Bridges
+  Assets/TerrainSystem/LocalTerrain/Editor/LTEditor.cs
+- Tools/Local Terrain/Validate Eight Layer Shader
+  Assets/TerrainSystem/LocalTerrain/Editor/LTEditor.cs
+- Tools/Local Terrain/Validate Saved Detail Placement (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTDetailPlacementCheckMenu.cs
+- Tools/Local Terrain/Validate Height Jobs (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTHeightJobCheck.cs
+- Tools/Local Terrain/Validate Grass Terrain Color (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTGrassTerrainCheck.cs
+- Tools/Local Terrain/Validate Grass Root Tint (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTGrassRootTintCheck.cs
+- Tools/Local Terrain/Validate Grass Color (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTGrassRootTintCheck.cs
+- Tools/Local Terrain/Validate Hole Stamp (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTHoleStampCheck.cs
+- Tools/Local Terrain/Validate LOD Jobs (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTLODJobCheck.cs
+- Tools/Local Terrain/Validate Saved Layer Arrays
+  Assets/TerrainSystem/LocalTerrain/Editor/LTLayerArraySaving.cs
+- Tools/Local Terrain/Validate Paint Weight Jobs (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTPaintWeightCheck.cs
+- Tools/Local Terrain/Validate Rock Paint Jobs (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTPaintWeightCheck.cs
+- Tools/Local Terrain/Validate Paint Preparation Jobs (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTPaintWeightCheck.cs
+- Tools/Local Terrain/Validate Automatic Road Prefab LOD (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadAutoLODCheck.cs
+- Tools/Local Terrain/Validate Automatic Road Joints (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadAutomaticJointCheck.cs
+- Tools/Local Terrain/Validate Authored Road LOD Ends (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadCollarCheck.cs
+- Tools/Local Terrain/Validate Road Rendering
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadCheck.cs
+- Tools/Local Terrain/Validate Road Dimension Preview (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadDimensionPreviewCheck.cs
+- Tools/Local Terrain/Validate Road Fuse (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadFuseCheck.cs
+- Tools/Local Terrain/Validate Worn Asphalt (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadGeometryCheck.cs
+- Tools/Local Terrain/Validate Geometric Asphalt (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadGeometryCheck.cs
+- Tools/Local Terrain/Validate Road Ground Blend (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadGroundBlendCheck.cs
+- Tools/Local Terrain/Validate Road Shader Graph Blend (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadGraphGroundCheck.cs
+- Tools/Local Terrain/Validate Junction Mesh Depth (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionDepthCheck.cs
+- Tools/Local Terrain/Validate Junction Ground Blend (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionGroundBlendCheck.cs
+- Tools/Local Terrain/Validate Junction Profile Fit (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionProfileFitCheck.cs
+- Tools/Local Terrain/Validate Junction Mesh Foundation (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionFoundationCheck.cs
+- Tools/Local Terrain/Validate Authored Junction Prefab (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionPrefabCheck.cs
+- Tools/Local Terrain/Validate Simple Junction Workflow (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionPrefabCheck.cs
+- Tools/Local Terrain/Validate Road Layer Projections (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadLayerProjectionCheck.cs
+- Tools/Local Terrain/Validate Road Module Ends (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadModuleEndsCheck.cs
+- Tools/Local Terrain/Validate Road Modules and Grass (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadModuleEndsCheck.cs
+- Tools/Local Terrain/Validate Road Paint Jobs (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadRasterCheck.cs
+- Tools/Local Terrain/Validate Road Shoulder Joins (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadShoulderJoinCheck.cs
+- Tools/Local Terrain/Validate Automatic Road Ground Blend (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadTerrainBlendCheck.cs
+- Tools/Local Terrain/Validate Terrain Asphalt (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadTerrainAsphaltCheck.cs
+- Tools/Local Terrain/Validate Road Segment Cleanup (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadSegmentCleanupCheck.cs
+- Tools/Local Terrain/Validate Road Foundation LOD (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRoadTerrainLODNativeCheck.cs
+- Tools/Local Terrain/Validate Joint Rock Terrain LOD (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRockSeamCheck.cs
+- Tools/Local Terrain/Validate Mesh Stamp Terrain LOD (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRockTerrainLODCheck.cs
+- Tools/Local Terrain/Validate Rock Transition (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTRockTransitionCheck.cs
+- Tools/Local Terrain/Validate LOD Border Mask Cache (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTSpatialMaskCacheCheck.cs
+- Tools/Local Terrain/Validate LOD Neighbour Lookup (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTSpatialMaskCacheCheck.cs
+- Tools/Local Terrain/Validate Stamp Density Mask (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTStampDensityCheck.cs
+- Tools/Local Terrain/Validate Stamp Manager (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTStampManagerCheck.cs
+- Tools/Local Terrain/Validate Stamp Preview (no scene changes)
+  Assets/TerrainSystem/LocalTerrain/Editor/LTStampPreviewCheck.cs
+
+Verification:
+- Exact source audit excludes only the intended attributes/comments: test method
+  bodies and all other menu registrations are unchanged.
+- LocalLODQueueChecks now uses the following method declaration to delimit
+  DeferredChunkLODs, rather than depending on a visible MenuItem attribute.
+- Compilation: Logs/ValidationMenuCleanup-build.log.
+- Targeted managed checks: Logs/ValidationMenuCleanup-checks.log.
+- C# build passed with 0 errors / 3 existing warnings in this incremental run.
+  Editor Capture (2050 assertions), Editor Tick (256010 assertions), and hole
+  fixtures passed. The expanded --hole-lod-regression command then FAILED in
+  LODJobChecks.cs:125 ("domain shutdown joins owned workers"): the old static
+  assertion still expects beforeAssemblyReload += StopLODJobs and the old
+  exact StopLODJobs body, predating BeforeTerrainAssemblyReload and mesh cache
+  clearing. Those production lines and that assertion were not changed here.
+  Failure log retained; no claim that the entire regression bundle passed.
+  Follow-up (2026-10-10, user-authorized): replaced that obsolete assertion with
+  scoped checks of BeforeTerrainAssemblyReload's finally -> StopLODJobs chain,
+  quitting hook, cancellation/cache cleanup and both worker drains. Added 17
+  negative source mutations plus formatting/comment tolerance: 36 assertions.
+  The old failure log remains historical; rerun results are in
+  Logs/LODShutdownWiring-checks.log and Logs/LODShutdownWiring-regressions.log.
+  No production reload code was changed to satisfy the test.
+  Confirmed rerun: --lod-jobs PASS (36 wiring assertions, 420 scalar levels),
+  --hole-lod-regression PASS through all hole/road/spatial/local queue checks,
+  --editor-reload PASS 297. These are managed/source-contract checks, not a
+  new native reload experiment or a live-scene performance measurement.
+- Added --local-lod-queue to run the adjusted menu-independent test directly:
+  PASS, including 144 exact geometry comparisons, 15028 height/density checks
+  and independent queue/version/lifetime checks.
+  Logs/ValidationMenuCleanup-local-queue.log.
+- Native Unity menu refresh occurs on the next script compilation. No Unity
+  instance was launched, scene saved, or old validation executed by this cleanup.

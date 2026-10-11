@@ -13,7 +13,7 @@ namespace LocalTerrainPrototype
     // Prototype: planar XZ heightfield, editor-only evaluation, balanced adaptive mesh output.
     // Any roll/pitch, negative scale or rotated world is intentionally rejected.
     [InitializeOnLoad]
-    public static class LTEditorEngine
+    public static partial class LTEditorEngine
     {
         [DrawGizmo(GizmoType.Selected | GizmoType.NonSelected | GizmoType.Pickable)]
         static void DrawMeshStampIcon(LTMeshStamp stamp,GizmoType type)
@@ -70,13 +70,25 @@ namespace LocalTerrainPrototype
             }
             finally{Gizmos.matrix=oldMatrix;Gizmos.color=oldColor;}
         }
+        sealed class TopologyInput
+        {
+            public LTChunk chunk;public List<Vector3Int> source,render;public List<int> border;public int version;
+            public LTBalancedForest.PlanSnapshot snapshot;
+            public bool Matches(LTChunk c)=>chunk==c&&source==c.sourceLeaves&&render==c.renderLeaves&&border==c.borderStitches&&version==EditorUtility.GetDirtyCount(c);
+        }
         sealed class State
         {
+            public readonly LTMeshStampGeometryCache meshCapture=new LTMeshStampGeometryCache();
             public List<Stamp> previous = new List<Stamp>();
             public List<Density> densities = new List<Density>();
             public HashSet<int> dirty = new HashSet<int>();
             public string config;
             public bool initialized;
+            public bool reloadRestoreAttempted,reloadDensityPending;
+            public string chunkLayout;
+            public readonly List<LTChunk> chunkScan=new List<LTChunk>();
+            public readonly LTChunkLayoutProbe chunkProbe=new LTChunkLayoutProbe();
+            public HashSet<int> liveChunks=new HashSet<int>();
             public long revision;
             public readonly LTStagedBuild build=new LTStagedBuild();
             public readonly LTChunkLODQueue chunkLODs=new LTChunkLODQueue();
@@ -94,9 +106,12 @@ namespace LocalTerrainPrototype
             public bool cycleActive;
             public int cycleMeshPasses,cyclePaintPasses;
             public double cycleMeshMs,cyclePaintMs,cycleColliderMs;
+            public readonly LTPaintCpuCapture.Cycle cyclePaint=new LTPaintCpuCapture.Cycle();
             public HashSet<int> colliders = new HashSet<int>();
             public BoundaryCache boundaryCache=new BoundaryCache();
             public LTBalancedForest.InternalPlanCache balanceCache=new LTBalancedForest.InternalPlanCache();
+            public readonly LTBalancedForest.TopologyCache topologyCache=new LTBalancedForest.TopologyCache();
+            public Dictionary<int,TopologyInput> topologyInputs=new Dictionary<int,TopologyInput>();
             public Dictionary<int,SeamChunkCache> seamCache=new Dictionary<int,SeamChunkCache>();
             public Dictionary<int,RockOutputCache> rockOutputs=new Dictionary<int,RockOutputCache>();
         }
@@ -104,12 +119,16 @@ namespace LocalTerrainPrototype
         {
             public LTRoadMath.Snapshot road;
             public int id;public string signature;public Rect bounds;public float cellSize;public List<LTStampMesh.Zone> zones;
+            public string maskKey;public LTStampDensityMask maskData;
         }
         sealed class Stamp
         {
+            public LTHoleStampSnapshot hole;
             public LTRoadJunctionMath.Snapshot junction;
             public LTRoadMath.Snapshot road;
             public bool fixedRoadSurface;
+            public LTRoadTerrainSurface roadTerrainSurface;
+            public string roadTerrainKey;
             public int id;
             public string signature;
             public Rect bounds;
@@ -120,6 +139,9 @@ namespace LocalTerrainPrototype
             public Vector2 size;
             public float strength, edge, height, blend, reference;
             public bool maskIsHeight,affectHeight,densityZone;public float densityCellSizeMin,densityCellSizeMax;
+            public LTStampDensityMode densityMode;public Texture2D densityMask;
+            public bool densityMaskInvert;public Vector2 densityMaskRange;public float densityMaskPower;
+            public string densityMaskKey;
             public Texture2D mask;
             public bool meshStamp,meshCutTerrain,meshTrimRock;
             public LTMeshConformMode meshMode;
@@ -144,7 +166,7 @@ namespace LocalTerrainPrototype
         }
         static readonly Dictionary<int, State> states = new Dictionary<int, State>();
         static readonly Dictionary<string,string> assetInputHashes=new Dictionary<string,string>();
-        static string AssetInputHash(UnityEngine.Object asset)
+        internal static string AssetInputHash(UnityEngine.Object asset)
         {
             string path=asset?AssetDatabase.GetAssetPath(asset):"";
             if(string.IsNullOrEmpty(path))return "";
@@ -156,27 +178,28 @@ namespace LocalTerrainPrototype
         {
             LTWorld.EditorOwnsPainting=OwnsPainting;
             EditorApplication.update += Tick;
+            EditorApplication.hierarchyChanged += ()=>{foreach(var world in Worlds())world.NotifyChunkLayoutChanged();};
             // Upgrade already-generated terrain after recompilation, without
             // rebuilding positions, normals, colliders, or any rock meshes.
             EditorApplication.delayCall += RepairLoadedTerrainTangents;
             // Snapshot diff detects undo as well as ordinary changes, including deleted/reordered stamps.
             Undo.undoRedoPerformed += () => {
-                foreach(var state in states.Values){CancelBuilds(state);state.revision++;state.boundaryCache.Clear();}
+                ClearMeshCaptureCaches();
+                foreach(var state in states.Values){CancelBuilds(state);state.revision++;state.boundaryCache.Clear();state.topologyInputs.Clear();}
                 nextPoll = 0; SceneView.RepaintAll();
             };
-            AssemblyReloadEvents.beforeAssemblyReload += StopLODJobs;
+            InitializeReloadRecovery();
+            AssemblyReloadEvents.beforeAssemblyReload += BeforeTerrainAssemblyReload;
             EditorApplication.quitting += StopLODJobs;
             EditorApplication.projectChanged += () => {
                 // Our own generated-LOD imports also raise this event. Compare
                 // actual input assets on the next Detect; do not cancel every job.
                 assetInputHashes.Clear();
-                foreach(var state in states.Values)
-                {
-                    state.boundaryCache.Clear();
-                }
+                // Boundary/seam entries validate their own mesh dependency hash.
+                // Keep geometry and edge totals across unrelated/coarse imports.
             };
             EditorApplication.playModeStateChanged += s => {
-                if (s == PlayModeStateChange.ExitingEditMode) FlushAll();
+                if (s == PlayModeStateChange.ExitingEditMode){FlushAll();ClearMeshCaptureCaches();}
                 if (s == PlayModeStateChange.EnteredEditMode){CancelAllBuilds();states.Clear();}
             };
             EditorSceneManager.sceneSaving += (scene, path) => FlushAll();
@@ -185,11 +208,14 @@ namespace LocalTerrainPrototype
         {
             foreach(var state in states.Values)CancelBuilds(state);
         }
-        static void StopLODJobs(){CancelAllBuilds();LTLODJobWork.Drain();LTHeightJobWork.Drain();}
+        static void StopLODJobs(){CancelAllBuilds();ClearMeshCaptureCaches();LTLODJobWork.Drain();LTHeightJobWork.Drain();}
         static void CancelBuilds(State state)
         {state.build.Cancel(state.dirty);state.chunkLODs.CancelAll(state.dirty);}
         static void DirtyChunk(State state,int id)
-        {state.dirty.Add(id);state.heightSamples.Invalidate(id);state.chunkLODs.Touch(id);}
+        {
+            if(state.chunkLayout!=null&&!state.liveChunks.Contains(id))return;
+            state.dirty.Add(id);state.heightSamples.Invalidate(id);state.chunkLODs.Touch(id);
+        }
         static LTWorld[] Worlds() => UnityEngine.Object.FindObjectsByType<LTWorld>(FindObjectsSortMode.None)
             .Where(w => w.gameObject.scene.IsValid() && w.gameObject.scene.isLoaded && !EditorUtility.IsPersistent(w)
                 && !PrefabUtility.IsPartOfPrefabAsset(w) && UnityEditor.SceneManagement.PrefabStageUtility.GetPrefabStage(w.gameObject) == null).ToArray();
@@ -235,47 +261,68 @@ namespace LocalTerrainPrototype
             SceneView.RepaintAll();
             Debug.Log($"Local Terrain: repaired XZ tangents on {repaired} terrain/LOD meshes. Positions, normals, UVs and rock meshes unchanged. Undo is available; save assets to persist.");
         }
-        static List<Stamp> Capture(LTWorld w)
+        static List<Stamp> Capture(LTWorld w,bool readOnlyPreview=false)
         {
-            var list = new List<Stamp>();
-            Walk(w.transform, w, list);
-            foreach(var node in w.GetComponentsInChildren<LTRoadJunction>())
+            using(captureMarker.Auto())
             {
-                if(!node.isActiveAndEnabled||node.World!=w)continue;
+                var cache=readOnlyPreview?null:GetState(w).meshCapture;
+                cache?.Begin();
                 try
                 {
-                    var snapshot=node.Capture();var ids=new HashSet<int>(node.Roads().Select(r=>r.GetInstanceID()));
-                    int index=list.FindIndex(s=>ids.Contains(s.id));if(index<0)index=list.Count;
-                    list.Insert(index,new Stamp{id=node.GetInstanceID(),signature="junction:"+snapshot.hash+":"+node.surface,bounds=snapshot.bounds,affectHeight=true,junction=snapshot,
-                        fixedRoadSurface=LTLODMesh.RequiresFixedRoadSurface(node.surface)});
+                    var list = new List<Stamp>();
+                    Walk(w.transform, w, list,readOnlyPreview,cache);
+                    using(captureJunctionMarker.Auto())
+                    foreach(var node in w.GetComponentsInChildren<LTRoadJunction>())
+                    {
+                        if(!node.isActiveAndEnabled||node.World!=w)continue;
+                        try
+                        {
+                            var snapshot=node.Capture();var ids=new HashSet<int>(node.Roads().Select(r=>r.GetInstanceID()));
+                            string terrainKey=null;LTRoadTerrainSurface surface=null;
+                            if(!readOnlyPreview&&node.surface==LTRoadMode.Asphalt)
+                                surface=LTRoadJunctionTerrainLODCapture.Capture(node,w,out terrainKey);
+                            int index=list.FindIndex(s=>ids.Contains(s.id));if(index<0)index=list.Count;
+                            list.Insert(index,new Stamp{id=node.GetInstanceID(),signature="junction-mesh-clearance-lod-v1:"+snapshot.hash+":"+node.surface+":"+terrainKey,
+                                bounds=surface==null?snapshot.bounds:LTRoadTerrainSurface.Union(snapshot.bounds,surface.Bounds),affectHeight=true,junction=snapshot,
+                                fixedRoadSurface=LTLODMesh.RequiresFixedRoadSurface(node.surface),roadTerrainSurface=surface,roadTerrainKey=terrainKey});
+                        }
+                        catch(ArgumentException error){node.status=error.Message;}
+                    }
+                    cache?.End();return list;
                 }
-                catch(ArgumentException error){node.status=error.Message;}
+                catch{cache?.Clear();throw;}
             }
-            return list;
         }
-        static void Walk(Transform t, LTWorld w, List<Stamp> result)
+        static void Walk(Transform t, LTWorld w, List<Stamp> result,bool readOnlyPreview=false,LTMeshStampGeometryCache cache=null)
         {
             // Explicit depth-first sibling traversal defines the application order.
-            foreach (Transform child in t)
+            for(int childIndex=0;childIndex<t.childCount;childIndex++)
             {
+                var child=t.GetChild(childIndex);
                 if (!child.gameObject.activeInHierarchy || child == w.generatedRoot) continue;
-                if (child.GetComponent<LTWorld>()) continue;
-                if(child.GetComponent<LTRoadGenerated>()||child.GetComponent<LTRoadJunctionGenerated>())continue;
-                var road=child.GetComponent<LTRoad>();
+                if (child.TryGetComponent<LTWorld>(out _)) continue;
+                if(child.TryGetComponent<LTRoadGenerated>(out _)||child.TryGetComponent<LTRoadJunctionGenerated>(out _))continue;
+                if(!readOnlyPreview)CaptureHole(child,w,result);
+                child.TryGetComponent<LTRoad>(out var road);
                 if(road&&road.enabled)
                 {
+                    using var roadScope=captureRoadMarker.Auto();
                     // Invalid paths are displayed by the road inspector; never reuse stale geometry.
                     try
                     {
                         var snapshot=road.Capture(w);
-                        result.Add(new Stamp{id=road.GetInstanceID(),signature="road:"+snapshot.geometryHash,
-                            bounds=snapshot.bounds,affectHeight=true,road=snapshot,fixedRoadSurface=LTLODMesh.RequiresFixedRoadSurface(snapshot.mode)});
+                        string terrainKey=null;LTRoadTerrainSurface surface=null;
+                        if(!readOnlyPreview&&snapshot.mode==LTRoadMode.Asphalt)surface=LTRoadTerrainLODCapture.Capture(road,w,snapshot,out terrainKey);
+                        result.Add(new Stamp{id=road.GetInstanceID(),signature="road:"+snapshot.geometryHash+":"+terrainKey,
+                            bounds=surface==null?snapshot.bounds:LTRoadTerrainSurface.Union(snapshot.bounds,surface.Bounds),affectHeight=true,road=snapshot,
+                            fixedRoadSurface=LTLODMesh.RequiresFixedRoadSurface(snapshot.mode),roadTerrainSurface=surface,roadTerrainKey=terrainKey});
                     }
                     catch(ArgumentException) { }
                 }
-                var s = child.GetComponent<LTHeightStamp>();
+                child.TryGetComponent<LTHeightStamp>(out var s);
                 if (s && s.enabled)
                 {
+                    using var heightScope=captureHeightMarker.Auto();
                     var up = child.up;
                     if (Vector3.Dot(up, Vector3.up) < 0.9999f || child.lossyScale.x <= 0 || child.lossyScale.y <= .00001f || child.lossyScale.z <= 0)
                         continue;
@@ -290,91 +337,61 @@ namespace LocalTerrainPrototype
                     }
                     string sig = EditorJsonUtility.ToJson(s) + matrix.ToString("R")
                         + (s.mask ? s.mask.imageContentsHash.ToString()+AssetInputHash(s.mask) : "");
+                    var densityTexture=s.densityMask?s.densityMask:s.mask;
+                    string densityKey=s.densityZone&&s.densityMode==LTStampDensityMode.Mask&&densityTexture
+                        ? densityTexture.GetInstanceID()+":"+densityTexture.imageContentsHash+":"+densityTexture.updateCount+":"+AssetInputHash(densityTexture)+":"+
+                            densityTexture.isReadable+":"+densityTexture.width+":"+densityTexture.height+":"+
+                            s.densityMaskInvert+":"+s.densityMaskRange.ToString("R")+":"+s.densityMaskPower.ToString("R") : "";
+                    sig+=densityKey;
                     result.Add(new Stamp { id = s.GetInstanceID(), signature = sig,
                         inverse = matrix.inverse, bounds = Rect.MinMaxRect(min.x, min.z, max.x, max.z),
                         size = s.size, shape = s.shape, operation = s.operation, strength = s.strength,
                         edge = Mathf.Max(.001f, s.edgeFalloff), height = matrix.MultiplyPoint3x4(Vector3.zero).y * matrix.MultiplyVector(Vector3.up).magnitude,
                         blend = s.blendAmount, reference = s.multiplyReference, maskIsHeight = s.maskIsHeight, mask = s.mask, affectHeight=s.affectHeight && (!s.mask||s.mask.isReadable), densityZone=s.densityZone, densityCellSizeMin=s.densityCellSizeMin, densityCellSizeMax=s.densityCellSizeMax,
+                        densityMode=s.densityMode,densityMask=densityTexture,densityMaskKey=densityKey,
+                        densityMaskInvert=s.densityMaskInvert,densityMaskRange=s.densityMaskRange,densityMaskPower=s.densityMaskPower,
                         });
                 }
-                var meshStamp=child.GetComponent<LTMeshStamp>();
-                var meshFilter=child.GetComponent<MeshFilter>();
-                if(meshStamp&&meshStamp.enabled&&meshFilter)
+                child.TryGetComponent<LTMeshStamp>(out var meshStamp);
+                if(meshStamp&&meshStamp.enabled&&child.TryGetComponent<MeshFilter>(out var meshFilter))
                 {
+                    using var meshScope=captureMeshMarker.Auto();
                     var assignedMesh=meshFilter.sharedMesh;
                     // Duplicating a GameObject copies sharedMesh. It is not ownership:
                     // never adopt another stamp's output or treat it as source geometry.
                     bool assignedPreview=assignedMesh&&meshStamp.sourceMesh&&assignedMesh!=meshStamp.sourceMesh&&
-                        (assignedMesh.hideFlags&HideFlags.DontSaveInEditor)!=0;
-                    if(assignedMesh&&!assignedPreview&&assignedMesh!=meshStamp.generatedTrimmedMesh&&assignedMesh!=meshStamp.sourceMesh)
+                        ((assignedMesh.hideFlags&HideFlags.DontSaveInEditor)!=0||
+                         (meshStamp.renderAsset&&meshStamp.renderAsset.Owns(assignedMesh))||
+                         (meshStamp.renderOutput!=null&&meshStamp.renderOutput.Owns(assignedMesh)));
+                    bool useAssigned=assignedMesh&&!assignedPreview&&assignedMesh!=meshStamp.generatedTrimmedMesh&&assignedMesh!=meshStamp.sourceMesh;
+                    if(useAssigned&&!readOnlyPreview)
                     {
                         meshStamp.sourceMesh=assignedMesh;EditorUtility.SetDirty(meshStamp);
                     }
-                    var sourceMesh=meshStamp.sourceMesh?meshStamp.sourceMesh:assignedMesh;
-                    if(!sourceMesh){Walk(child,w,result);continue;}
+                    var sourceMesh=useAssigned?assignedMesh:meshStamp.sourceMesh?meshStamp.sourceMesh:assignedMesh;
+                    if(!sourceMesh){Walk(child,w,result,readOnlyPreview,cache);continue;}
                     var matrix=w.transform.worldToLocalMatrix*child.localToWorldMatrix;
-                    var sourceVertices=sourceMesh.vertices;
-                    var vertices=new Vector3[sourceVertices.Length];
-                    Vector3 min=new Vector3(float.MaxValue,float.MaxValue,float.MaxValue),max=new Vector3(float.MinValue,float.MinValue,float.MinValue);
-                    for(int i=0;i<vertices.Length;i++){vertices[i]=matrix.MultiplyPoint3x4(sourceVertices[i]);min=Vector3.Min(min,vertices[i]);max=Vector3.Max(max,vertices[i]);}
-                    var sourceTriangles=sourceMesh.triangles;
-                    var contactTriangles=new List<int>();
-                    var edgeCounts=new Dictionary<long,int>();
-                    var edgeVertices=new Dictionary<long,Vector2Int>();
-                    var weldedIds=new int[vertices.Length];
-                    var weldedByPosition=new Dictionary<Vector3Int,int>();
-                    int nextWeldedId=0;
-                    for(int i=0;i<vertices.Length;i++)
-                    {
-                        // FBX meshes commonly duplicate vertices at UV/normal seams. Treat
-                        // coincident copies as one vertex when extracting the contact outline.
-                        var positionKey=new Vector3Int(
-                            Mathf.RoundToInt(vertices[i].x*1000),
-                            Mathf.RoundToInt(vertices[i].y*1000),
-                            Mathf.RoundToInt(vertices[i].z*1000));
-                        if(!weldedByPosition.TryGetValue(positionKey,out int weldedId))
-                        {
-                            weldedId=nextWeldedId++;
-                            weldedByPosition.Add(positionKey,weldedId);
-                        }
-                        weldedIds[i]=weldedId;
-                    }
-                    Action<int,int> addEdge=(a,b)=>
-                    {
-                        int wa=weldedIds[a],wb=weldedIds[b];
-                        int lo=Math.Min(wa,wb),hi=Math.Max(wa,wb);long key=((long)lo<<32)|(uint)hi;
-                        edgeCounts[key]=edgeCounts.TryGetValue(key,out int count)?count+1:1;
-                        edgeVertices[key]=new Vector2Int(a,b);
-                    };
-                    for(int i=0;i+2<sourceTriangles.Length;i+=3)
-                    {
-                        int ia=sourceTriangles[i],ib=sourceTriangles[i+1],ic=sourceTriangles[i+2];
-                        Vector3 normal=Vector3.Cross(vertices[ib]-vertices[ia],vertices[ic]-vertices[ia]);
-                        if(normal.y>=-.000001f)continue;
-                        contactTriangles.Add(ia);contactTriangles.Add(ib);contactTriangles.Add(ic);
-                        addEdge(ia,ib);addEdge(ib,ic);addEdge(ic,ia);
-                    }
-                    var boundaryEdges=new List<int>();
-                    foreach(var pair in edgeCounts)if(pair.Value==1)
-                    {var edge=edgeVertices[pair.Key];boundaryEdges.Add(edge.x);boundaryEdges.Add(edge.y);}
+                    var geometry=CaptureMeshGeometry(meshStamp.GetInstanceID(),sourceMesh,matrix,cache);
+                    var min=geometry.min;var max=geometry.max;
                     float blend=Mathf.Max(0,meshStamp.blendDistance);
                     float meshExtent=Mathf.Max(blend,meshStamp.terrainCutOffset)+.001f;
-                    string sig=EditorJsonUtility.ToJson(meshStamp)+matrix.ToString("R")+sourceMesh.GetInstanceID()+":"+sourceMesh.vertexCount+":"+sourceTriangles.Length+":"+EditorUtility.GetDirtyCount(sourceMesh)+":"+AssetInputHash(sourceMesh);
+                    string sig="split-rock-v7-lod-before-atlas:"+EditorJsonUtility.ToJson(meshStamp)+matrix.ToString("R")+sourceMesh.GetInstanceID()+":"+sourceMesh.vertexCount+":"+geometry.triangles.Length+":"+EditorUtility.GetDirtyCount(sourceMesh)+":"+AssetInputHash(sourceMesh)+":content:"+geometry.contentHash;
                     result.Add(new Stamp{id=meshStamp.GetInstanceID(),signature=sig,meshStamp=true,affectHeight=meshStamp.affectHeight,meshMode=meshStamp.mode,
                         meshComponent=meshStamp,meshSource=sourceMesh,meshTrimRock=meshStamp.trimRockInsideTerrain||meshStamp.mode==LTMeshConformMode.Cave,
-                        bounds=Rect.MinMaxRect(min.x-meshExtent,min.z-meshExtent,max.x+meshExtent,max.z+meshExtent),meshFootprintBounds=Rect.MinMaxRect(min.x,min.z,max.x,max.z),meshVertices=vertices,meshTriangles=contactTriangles.ToArray(),meshAllTriangles=sourceTriangles,meshBoundaryEdges=boundaryEdges.ToArray(),
+                        bounds=Rect.MinMaxRect(min.x-meshExtent,min.z-meshExtent,max.x+meshExtent,max.z+meshExtent),meshFootprintBounds=Rect.MinMaxRect(min.x,min.z,max.x,max.z),meshVertices=geometry.vertices,meshTriangles=geometry.contactTriangles,meshAllTriangles=geometry.triangles,meshBoundaryEdges=geometry.boundaryEdges,
                         meshCutOffset=Mathf.Max(.01f,meshStamp.terrainCutOffset),meshRetopoHeight=Mathf.Max(.01f,meshStamp.rockRetopoHeight),meshWeldDistance=Mathf.Max(0,meshStamp.weldDistance),
                         meshBlendDistance=blend,
                         meshGridDensityMultiplier=Mathf.Max(.1f,meshStamp.gridDensityMultiplier),meshCutTerrain=meshStamp.cutTerrain||meshStamp.mode==LTMeshConformMode.Cave});
                 }
-                Walk(child, w, result);
+                Walk(child, w, result,readOnlyPreview,cache);
             }
         }
         static float MeshContactCell(float density)=>1f/Mathf.Max(.1f,density);
         static List<Density> CaptureDensity(LTWorld w,State state)
         {
             var result=new List<Density>();
-            float baseCell=Mathf.Max(.000001f,Mathf.Max(w.source.size.x/w.chunksX,w.source.size.z/w.chunksZ)/Mathf.Max(1,w.cellsPerChunk));
+            var previous=state.densities.ToDictionary(d=>d.id);
+            float baseCell=Mathf.Max(.000001f,Mathf.Max(w.ChunkSize.x,w.ChunkSize.y)/Mathf.Max(1,w.cellsPerChunk));
             foreach(var stamp in state.previous)
             {
                 if(stamp.junction!=null)
@@ -388,7 +405,8 @@ namespace LocalTerrainPrototype
                 {
                     var road=stamp.road;float cell=road.terrainCellSize;
                     var roadZones=new List<LTStampMesh.Zone>{new LTStampMesh.Zone{bounds=road.bounds,
-                        cellSize=cell,edgeCellSize=cell,customCellSize=(x,z)=>cell,coverageIntersects=road.Intersects}};
+                        cellSize=cell,edgeCellSize=cell,customCellSize=(x,z)=>cell,
+                        minimumCellSize=region=>LTRoadInsetMesh.TerrainDensity(road,region),coverageIntersects=road.Intersects}};
                     result.Add(new Density{id=stamp.id,road=road,bounds=road.bounds,cellSize=cell,zones=roadZones,signature=stamp.signature});
                     continue;
                 }
@@ -412,10 +430,22 @@ namespace LocalTerrainPrototype
                 var zones=new List<LTStampMesh.Zone>();
                 float minCell=Mathf.Max(.000001f,stamp.densityCellSizeMin);
                 float maxCell=Mathf.Max(minCell,stamp.densityCellSizeMax);
-                zones.Add(new LTStampMesh.Zone{bounds=stamp.bounds,inverse=stamp.inverse,size=stamp.size,shape=stamp.shape,cellSize=minCell,edgeCellSize=maxCell});
+                LTStampDensityMask maskData=null;string maskKey=null;
+                if(stamp.densityMode==LTStampDensityMode.Mask)
+                {
+                    // Missing/unreadable masks do not silently turn into a shape zone.
+                    // The inspector explains how to enable the requested mode.
+                    if(!stamp.densityMask||!stamp.densityMask.isReadable)continue;
+                    maskKey=stamp.densityMaskKey;
+                    if(previous.TryGetValue(stamp.id,out var old)&&old.maskKey==maskKey)maskData=old.maskData;
+                    if(maskData==null)maskData=LTStampDensityMask.Capture(stamp.densityMask,stamp.densityMaskInvert,stamp.densityMaskRange,stamp.densityMaskPower);
+                    zones.Add(maskData.CreateZone(stamp.bounds,stamp.inverse,stamp.size,stamp.shape,minCell,maxCell));
+                }
+                else zones.Add(new LTStampMesh.Zone{bounds=stamp.bounds,inverse=stamp.inverse,size=stamp.size,shape=stamp.shape,cellSize=minCell,edgeCellSize=maxCell});
                 result.Add(new Density{id=stamp.id,bounds=stamp.bounds,cellSize=minCell,zones=zones,
+                    maskKey=maskKey,maskData=maskData,
                     signature=flat.ToString("R")+stamp.size.ToString("R")+stamp.shape+minCell.ToString("R")+maxCell.ToString("R")+
-                        ""});
+                        ":"+stamp.densityMode+":"+maskKey});
             }
             if(w.enableLayerPainting&&w.enableLayerDisplacement&&(w.refineDisplacementFootprints||w.RegularMaskGridActive))
             {
@@ -445,6 +475,11 @@ namespace LocalTerrainPrototype
                         signature="paint-coverage:"+grid.hash+":"+bounds.ToString("R")+":"+cell.ToString("R")+":boundary:"+boundaryCell.ToString("R")});
                 }
             }
+            // Hole resolution is mandatory, not a user density override. Keep
+            // these constraints last so a coarse stamp cannot hide a small cut.
+            foreach(var stamp in state.previous)if(stamp.hole!=null)
+                result.Add(new Density{id=stamp.id,bounds=stamp.bounds,cellSize=stamp.hole.CellSize,signature=stamp.signature,
+                    zones=new List<LTStampMesh.Zone>{stamp.hole.CreateZone()}});
             return result;
         }
         static void MarkDensity(LTWorld w,State state,Rect bounds,LTRoadMath.Snapshot road=null,LTRoadMath.Snapshot other=null)
@@ -458,6 +493,11 @@ namespace LocalTerrainPrototype
         }
         static void DetectDensity(LTWorld w,State state)
         {
+            // A reload checkpoint includes the last COMPLETE coverage baseline.
+            // Comparing it to an empty/partly restored paint runtime would dirty
+            // the terrain again solely because its transient masks disappeared.
+            if(state.reloadDensityPending)return;
+            if(w.PaintingPending)return; // do not refine from a partly published paint revision
             var next=CaptureDensity(w,state);var old=state.densities.ToDictionary(d=>d.id);var current=next.ToDictionary(d=>d.id);
             bool changed=false;
             foreach(var a in state.densities)if(!current.TryGetValue(a.id,out var b)||a.signature!=b.signature){MarkDensity(w,state,a.bounds,a.road,b?.road);changed=true;}
@@ -482,26 +522,29 @@ namespace LocalTerrainPrototype
         {
             // Selected CPU preview: consistent diagonals in regular cells and
             // boundary-preserving triangulation of all balanced transition cells.
-            if(w.IsRegularMaskGridChunk(chunk%w.chunksX,chunk/w.chunksX))return r=>true;
+            if(w.IsRegularMaskGridChunk(w.ChunkCoordinate(chunk).x,w.ChunkCoordinate(chunk).y))return r=>true;
             if(w.enableLayerDisplacement&&w.FineDisplacementBaseActive&&
-                w.DisplacementCoverage.Any(c=>c.x==chunk%w.chunksX&&c.z==chunk/w.chunksX))return r=>true;
+                w.DisplacementCoverage.Any(c=>c.x==w.ChunkCoordinate(chunk).x&&c.z==w.ChunkCoordinate(chunk).y))return r=>true;
             if(!w.enableLayerDisplacement||!w.refineDisplacementFootprints||!w.displacementBoundaryPrototype||!w.displacementTransitionDiagonals)return null;
-            int x=chunk%w.chunksX,z=chunk/w.chunksX;
+            int x=w.ChunkCoordinate(chunk).x,z=w.ChunkCoordinate(chunk).y;
             if(x!=w.displacementBoundaryChunk.x||z!=w.displacementBoundaryChunk.y)return null;
             // Cover regular cells as well: the old boundary-only predicate never
             // touched the checkerboard eight-way hubs inside the painted region.
             return r=>true;
         }
-        static string Config(LTWorld w) => (w.source ? w.source.GetInstanceID() : 0) + ":" + w.chunksX + ":" + w.chunksZ
-            + ":source-version:"+(w.source?EditorUtility.GetDirtyCount(w.source):0)
-            + ":source-asset:"+AssetInputHash(w.source)
-            + ":source-layout:"+(w.source?w.source.resolution+":"+w.source.size.ToString("R")+":"+
-                (w.source.heights==null?0:System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(w.source.heights)):"")
+        static string Config(LTWorld w,bool reloadStable=false) => (w.source ? w.source.GetInstanceID() : 0) + ":" + w.chunksX + ":" + w.chunksZ
+            + ":grid:"+w.chunkOrigin+":"+w.ChunkSize.ToString("R")
+            + (reloadStable?":source-content:"+ReloadSourceKey(w.source):
+                ":source-version:"+(w.source?EditorUtility.GetDirtyCount(w.source):0)
+                + ":source-asset:"+AssetInputHash(w.source)
+                + ":source-layout:"+(w.source?w.source.resolution+":"+w.source.size.ToString("R")+":"+
+                    (w.source.heights==null?0:System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(w.source.heights)):""))
             + ":root:"+(w.generatedRoot?w.generatedRoot.GetInstanceID():0)+":"+w.transform.localToWorldMatrix.ToString("R")
             + ":regular-mask-grid:"+w.RegularMaskGridActive+":"+w.regularMaskGridChunk+":"+w.regularMaskGridStep.ToString("R")
             + ":fine-base:"+w.FineDisplacementBaseActive
             + ":spatial-lod-v2:"+w.UseSpatialLODs+":"+w.SpatialLODDivisions
             + ":offroad-height-error-lod-v1"
+            + ":asphalt-mesh-clearance-lod-v2"
             + ":transition-v2:"+w.displacementTransitionDiagonals+":"+w.displacementBoundaryPrototype+":"+w.displacementBoundaryChunk
             + ":" + w.cellsPerChunk + ":" + w.adaptive + ":" + w.maxVerticesPerChunk + ":" + w.maxHeightError + ":" + (w.material ? w.material.GetInstanceID() : 0)
             + ":" + w.enableLODs + ":" + (w.lods==null?"null":string.Join(";",w.lods.Select(l=>l==null?"null":l.simplificationSteps+":"+l.maxHeightError.ToString("R"))));
@@ -513,15 +556,15 @@ namespace LocalTerrainPrototype
         static bool Overlap(Rect a, Rect b) => a.xMin <= b.xMax && a.xMax >= b.xMin && a.yMin <= b.yMax && a.yMax >= b.yMin;
         static Rect ChunkRect(LTWorld w, int id)
         {
-            float dx = w.source.size.x / w.chunksX, dz = w.source.size.z / w.chunksZ;
-            return new Rect(id % w.chunksX * dx, id / w.chunksX * dz, dx, dz);
+            float dx = w.ChunkSize.x, dz = w.ChunkSize.y;
+            var coordinate=w.ChunkCoordinate(id);return new Rect(coordinate.x*dx,coordinate.y*dz,dx,dz);
         }
         static Rect Expanded(Rect r, float x, float z) => Rect.MinMaxRect(r.xMin-x, r.yMin-z, r.xMax+x, r.yMax+z);
         static void Mark(LTWorld w, State s, Rect r, LTRoadMath.Snapshot road=null,LTRoadMath.Snapshot other=null)
         {
             // One-sample halo: central-difference normals need neighbouring surface samples.
-            float hx = w.source.size.x / (w.chunksX * w.cellsPerChunk);
-            float hz = w.source.size.z / (w.chunksZ * w.cellsPerChunk);
+            float hx = w.ChunkSize.x / w.cellsPerChunk;
+            float hz = w.ChunkSize.y / w.cellsPerChunk;
             r = Expanded(r, hx, hz);
             for (int id = 0; id < w.chunksX * w.chunksZ; id++)
             {
@@ -532,15 +575,26 @@ namespace LocalTerrainPrototype
                 { DirtyChunk(s,id); w.displacementGeometry.Touch(id); }
             }
         }
+        static void BeginCycle(LTWorld w,State s)
+        {
+            w.rockSeamBakePending=true;w.InvalidateRockSeams();
+            s.cycleActive=true;s.cycleMeshPasses=s.cyclePaintPasses=0;
+            s.cycleMeshMs=s.cyclePaintMs=s.cycleColliderMs=0;
+            s.cyclePaint.Reset(w.paintCpu.CompletedTicks);
+            w.lastEditorPaintCycleStages=w.lastEditorPaintStages=null;
+            s.heightSamples.ResetStatistics();s.heightJobFallbacks=0;
+        }
         static void Detect(LTWorld w, State s, List<Stamp> current)
         {
+            DetectChunkLayout(w,s);
             string config = Config(w);
-            w.displacementGeometry.Configure(w.chunksX,w.chunksZ,w.source.size.x/w.chunksX,w.source.size.z/w.chunksZ,
-                config+"|"+w.transform.localToWorldMatrix.ToString("R"));
+            w.displacementGeometry.Configure(w.chunksX,w.chunksZ,w.ChunkSize.x,w.ChunkSize.y,
+                config+"|"+w.transform.localToWorldMatrix.ToString("R"),w.TerrainRect.min);
             bool configChanged=!s.initialized||s.config!=config;
             if (!s.initialized || s.config != config)
             {
                 CancelBuilds(s);s.revision++;
+                s.topologyInputs.Clear();s.topologyCache.Clear();
                 for (int i = 0; i < w.chunksX*w.chunksZ; i++) DirtyChunk(s,i);
                 s.initialized = true; s.config = config; s.lastChange = EditorApplication.timeSinceStartup;
             }
@@ -549,10 +603,10 @@ namespace LocalTerrainPrototype
             bool changed = false;
             foreach (var a in s.previous)
                 if (!after.TryGetValue(a.id, out var b) || a.signature != b.signature)
-                { Mark(w,s,a.bounds,a.road,b?.road); changed = true; }
+                { bool surfaceChanged=a.roadTerrainKey!=b?.roadTerrainKey;Mark(w,s,a.bounds,surfaceChanged?null:a.road,surfaceChanged?null:b?.road); changed = true; }
             foreach (var b in current)
                 if (!before.TryGetValue(b.id, out var a) || a.signature != b.signature)
-                { Mark(w,s,b.bounds,b.road,a?.road); changed = true; }
+                { bool surfaceChanged=b.roadTerrainKey!=a?.roadTerrainKey;Mark(w,s,b.bounds,surfaceChanged?null:b.road,surfaceChanged?null:a?.road); changed = true; }
             // Only inverted pairs matter for reorder. Insertion/deletion does not dirty unrelated stamps.
             var oldOrder = s.previous.Select(a=>a.id).Where(after.ContainsKey).ToArray();
             var newOrder = current.Select(a=>a.id).Where(before.ContainsKey).ToArray();
@@ -572,12 +626,13 @@ namespace LocalTerrainPrototype
             if(changed) s.lastChange = EditorApplication.timeSinceStartup;
             if(changed||configChanged)
             {
-                s.cycleActive=true;s.cycleMeshPasses=s.cyclePaintPasses=0;
-                s.cycleMeshMs=s.cyclePaintMs=s.cycleColliderMs=0;
-                s.heightSamples.ResetStatistics();
+                s.reloadDensityPending=false;
+                BeginCycle(w,s);
             }
             s.previous = current;
             DetectDensity(w,s);
+            s.dirty.IntersectWith(s.liveChunks);
+            s.colliders.IntersectWith(s.liveChunks);
         }
         static void Tick()
         {
@@ -587,7 +642,9 @@ namespace LocalTerrainPrototype
             double now = EditorApplication.timeSinceStartup;
             if (now < nextPoll) return;
             nextPoll = now + .1;
-            var worlds = Worlds();
+            using var pollScope=pollMarker.Auto();
+            LTWorld[] worlds;
+            using(worldScanMarker.Auto())worlds=Worlds();
             var live = new HashSet<int>(worlds.Select(w=>w.GetInstanceID()));
             foreach (int id in states.Keys.Where(id=>!live.Contains(id)).ToArray())
             {CancelBuilds(states[id]);states.Remove(id);}
@@ -595,21 +652,19 @@ namespace LocalTerrainPrototype
             {
                 var state = GetState(w);
                 if (!w.source || !w.generatedRoot || !ValidTransform(w)||!w.isActiveAndEnabled||!w.autoUpdate)
-                {CancelBuilds(state);continue;}
-                w.UpdateLOD();
+                {CancelBuilds(state);state.meshCapture.Clear();continue;}
+                using(pollLODMarker.Auto())w.UpdateLOD();
                 try
                 {
-                    bool isEditing=GUIUtility.hotControl!=0;
+                    bool isEditing=GUIUtility.hotControl!=0||LTStampSizeHandles.IsEditing(w);
                     var detectionTimer=Stopwatch.StartNew();
                     var current=Capture(w);
-                    Detect(w,state,current);
+                    using(reloadResumeMarker.Auto())TryResumeAfterReload(w,state,current);
+                    using(detectMarker.Auto())Detect(w,state,current);
                     w.lastDetectionMilliseconds=(float)detectionTimer.Elapsed.TotalMilliseconds;
                     if(state.dirty.Count>0&&!state.cycleActive)
                     {
-                        state.cycleActive=true;state.cycleMeshPasses=state.cyclePaintPasses=0;
-                        state.cycleMeshMs=state.cyclePaintMs=state.cycleColliderMs=0;
-                        state.heightSamples.ResetStatistics();
-                        state.heightJobFallbacks=0;
+                        BeginCycle(w,state);
                     }
                     bool rebuilt=false;
                     // Detect ran before advancing: a changed snapshot can never
@@ -638,7 +693,7 @@ namespace LocalTerrainPrototype
                             // LOD0 publication always yields a frame, even if fast.
                             do
                             {
-                                rebuilt|=state.build.Advance(state.revision,state.dirty);
+                                using(buildAdvanceMarker.Auto())rebuilt|=state.build.Advance(state.revision,state.dirty);
                                 if(!state.build.Active){rebuilt=true;break;}
                             }while(!rebuilt&&!state.build.Waiting&&stageTimer.Elapsed.TotalMilliseconds<4);
                             state.cycleMeshMs+=stageTimer.Elapsed.TotalMilliseconds;
@@ -649,7 +704,7 @@ namespace LocalTerrainPrototype
                         if(!rebuilt&&!state.build.Active&&state.dirty.Count==0&&state.chunkLODs.Count>0)
                         {
                             var stageTimer=Stopwatch.StartNew();bool published=false;
-                            do{published|=state.chunkLODs.Advance(state.dirty);}
+                            do{using(coarseAdvanceMarker.Auto())published|=state.chunkLODs.Advance(state.dirty);}
                             while(!published&&!state.chunkLODs.Waiting&&state.dirty.Count==0&&state.chunkLODs.Count>0&&stageTimer.Elapsed.TotalMilliseconds<4);
                             state.cycleMeshMs+=stageTimer.Elapsed.TotalMilliseconds;
                             if(published)SceneView.RepaintAll();
@@ -664,24 +719,36 @@ namespace LocalTerrainPrototype
                         // mesh bypasses it so its material/coverage is published together.
                         if(rebuilt||EditorApplication.timeSinceStartup-state.lastPaint>=.15)
                         {
-                            var stageTimer=Stopwatch.StartNew();w.UpdatePainting(true);
+                            long previousPaintTick=w.paintCpu.CompletedTicks;
+                            var stageTimer=Stopwatch.StartNew();
+                            using(paintPollMarker.Auto())w.UpdatePainting(true,true);
                             state.lastPaint=EditorApplication.timeSinceStartup;
-                            if(state.cycleActive){state.cyclePaintMs+=stageTimer.Elapsed.TotalMilliseconds;state.cyclePaintPasses++;}
-                            if(rebuilt||(w.paintCpu.LastTick!=null&&(w.paintCpu.LastTick.weightBakes>0||w.paintCpu.LastTick.weightReuses>0||w.paintCpu.LastTick.roadProjectionBakes>0)))
-                                w.lastEditorPaintStages=w.paintCpu.LastTickStatus;
-                            DetectDensity(w,state);
-                            if(state.dirty.Count==0&&state.colliders.Count>0&&EditorApplication.timeSinceStartup-state.lastChange>.35)
+                            double paintMilliseconds=stageTimer.Elapsed.TotalMilliseconds;
+                            bool freshPaintTick=w.paintCpu.CompletedTicks>previousPaintTick;
+                            if(state.cycleActive)
                             {
-                                stageTimer.Restart();UpdateColliders(w,state);state.cycleColliderMs+=stageTimer.Elapsed.TotalMilliseconds;
+                                state.cyclePaintMs+=paintMilliseconds;state.cyclePaintPasses++;
+                                state.cyclePaint.Record(w.paintCpu.CompletedTicks,freshPaintTick?w.paintCpu.LastTick:null,paintMilliseconds,w.PaintingPending);
+                            }
+                            if(freshPaintTick&&(rebuilt||w.paintCpu.LastTick.HasMaskWork))
+                                w.lastEditorPaintStages=w.paintCpu.LastTickStatus;
+                            if(!w.PaintingPending){state.reloadDensityPending=false;DetectDensity(w,state);}
+                            if(!w.PaintingPending&&state.dirty.Count==0&&state.colliders.Count>0&&EditorApplication.timeSinceStartup-state.lastChange>.35)
+                            {
+                                stageTimer.Restart();using(colliderPollMarker.Auto())UpdateColliders(w,state);state.cycleColliderMs+=stageTimer.Elapsed.TotalMilliseconds;
                             }
                         }
                     }
+                    if(!isEditing&&state.dirty.Count==0&&!state.build.Active&&state.chunkLODs.Count==0&&!w.PaintingPending)
+                        using(seamPollMarker.Auto())LTRockSeamBaker.Bake(w);
                     if(state.cycleActive)
                     {
-                        bool settled=state.dirty.Count==0&&state.colliders.Count==0&&!state.build.Active&&state.chunkLODs.Count==0;
+                        bool settled=state.dirty.Count==0&&state.colliders.Count==0&&!state.build.Active&&state.chunkLODs.Count==0&&!w.PaintingPending;
+                        w.lastEditorPaintCycleStages=state.cyclePaint.Status(settled);
                         w.lastEditorUpdateCycle=$"Цикл обновления: {(settled?"завершён":"уточнение / ожидание")}\n"+
                             $"Геометрия: {state.cycleMeshPasses} проходов / {state.cycleMeshMs:F1} мс\n"+
                             $"Покраска и маски: {state.cyclePaintPasses} проходов / {state.cyclePaintMs:F1} мс\n"+
+                            (w.PaintingPending?"Покраска/UV: ожидается фоновый поиск сплайна или расчёт весов.\n":"")+
                             $"Коллайдеры: {state.cycleColliderMs:F1} мс. Ожидают чанки: {state.dirty.Count}.\n"+
                             (state.build.Active?$"Поэтапная сборка r{state.revision}: {(state.build.Lod0Ready?"LOD0 показан; расчёт остальных LOD":"подготовка LOD0 и стыков")}; чанков: {state.build.PendingCount}.\n":"")+
                             $"Локальные LOD: в очереди {state.chunkLODs.Count}; завершено {state.chunkLODs.Completed}; отброшено {state.chunkLODs.Discarded} (за сессию).\n"+
@@ -703,12 +770,13 @@ namespace LocalTerrainPrototype
         public static void Refresh(LTWorld w, bool all, bool saveAssets = true)
         {
             if (!w.source || !w.generatedRoot || !ValidTransform(w)) return;
-            var s = GetState(w);CancelBuilds(s);
+            var s = GetState(w);CancelBuilds(s);s.meshCapture.Clear();
+            s.reloadDensityPending=false;s.reloadRestoreAttempted=true;
             if(all){s.heightSource=null;s.heightSamples.Clear();}
             var detectionTimer=Stopwatch.StartNew(); Detect(w,s,Capture(w));
             w.lastDetectionMilliseconds=(float)detectionTimer.Elapsed.TotalMilliseconds;
-            if (all) for (int i=0;i<w.chunksX*w.chunksZ;i++) s.dirty.Add(i);
-            Rebuild(w,s); UpdateColliders(w,s);
+            if (all) s.dirty.UnionWith(s.liveChunks);
+            Rebuild(w,s); UpdateColliders(w,s);LTRockSeamBaker.Bake(w);
             if(saveAssets)AssetDatabase.SaveAssets();
         }
         static void FlushAll()
@@ -796,9 +864,18 @@ namespace LocalTerrainPrototype
         }
         static bool CutTerrainAt(LTWorld world,List<Stamp> stamps,float x,float z)
         {
-            float terrainHeight=0;bool sampled=false;
+            float terrainHeight=0,volumeHeight=0;bool sampled=false,volumeSampled=false;
             foreach(var s in stamps)
             {
+                if(s.hole!=null)
+                {
+                    if(s.hole.RequiresHeight)
+                    {
+                        if(x<s.bounds.xMin||x>s.bounds.xMax||z<s.bounds.yMin||z>s.bounds.yMax)continue;
+                        if(!volumeSampled){volumeHeight=Evaluate(world,stamps,x,z);volumeSampled=true;}
+                    }
+                    if(s.hole.Contains(x,volumeHeight,z))return true;continue;
+                }
                 if(!s.meshStamp||!s.meshCutTerrain)continue;
                 if(x<s.bounds.xMin||x>s.bounds.xMax||z<s.bounds.yMin||z>s.bounds.yMax)continue;
                 if(!(s.meshTrimRock&&s.contactSegments!=null)&&!sampled)
@@ -809,6 +886,13 @@ namespace LocalTerrainPrototype
         }
         public static float SampleHeightForRoad(LTWorld world,float x,float z)
             =>CreateHeightSamplerForRoad(world)(x,z);
+        // Read-only capture: skips hole processing and mesh-source adoption. Same
+        // heightfield used for volume cuts, before shader displacement and holes.
+        internal static Func<float,float,float> CreateHolePreviewHeightSampler(LTWorld world)
+        {
+            var stamps=Capture(world,true);
+            return (x,z)=>Evaluate(world,stamps,x,z);
+        }
         public static Func<float,float,float> CreateHeightSamplerForRoad(LTWorld world)
         {
             if(!world||!world.source)return (x,z)=>0;
@@ -971,10 +1055,11 @@ namespace LocalTerrainPrototype
             r.tangent=new Vector4(tangent3.x,tangent3.y,tangent3.z,r.tangent.w>=0?1:-1);
             r.uv=Vector2.LerpUnclamped(a.uv,b.uv,t);r.distance=0;return r;
         }
-        static void PrepareContactContours(LTWorld world,List<Stamp> stamps)
+        static void PrepareContactContours(LTWorld world,List<Stamp> stamps,Stamp only=null)
         {
             foreach(var stamp in stamps)
             {
+                if(only!=null&&!ReferenceEquals(stamp,only))continue;
                 if(!stamp.meshStamp||!stamp.meshCutTerrain||!stamp.meshTrimRock)continue;
                 var vertices=new RockClipVertex[stamp.meshVertices.Length];
                 for(int i=0;i<vertices.Length;i++)
@@ -1112,7 +1197,10 @@ namespace LocalTerrainPrototype
         sealed class ChunkBoundaryData
         {
             public Mesh mesh;public int dirtyVersion;public Matrix4x4 matrix;
+            public string assetHash;
+            public LTBoundaryCacheKey Key=>new LTBoundaryCacheKey(dirtyVersion,matrix,assetHash);
             public Vector3[] points,normals;
+            public Vector3Int[] keys;
             public List<(int count,int a,int b)> edges;
             public Dictionary<Vector3Int,List<int>> pointIndices;
             public ChunkBoundaryData WithNormals(Vector3[] localNormals,int version,Matrix4x4 normalMatrix)
@@ -1120,14 +1208,14 @@ namespace LocalTerrainPrototype
                 var transformed=new Vector3[points.Length];
                 for(int i=0;i<transformed.Length;i++)
                     transformed[i]=i<localNormals.Length?normalMatrix.MultiplyVector(localNormals[i]).normalized:Vector3.up;
-                return new ChunkBoundaryData{mesh=mesh,dirtyVersion=version,matrix=matrix,
-                    points=points,edges=edges,normals=transformed,pointIndices=pointIndices};
+                return new ChunkBoundaryData{mesh=mesh,dirtyVersion=version,matrix=matrix,assetHash=assetHash,
+                    points=points,keys=keys,edges=edges,normals=transformed,pointIndices=pointIndices};
             }
         }
         static Vector3Int BoundaryPointKey(Vector3 p)=>new Vector3Int(Mathf.RoundToInt(p.x*1000),Mathf.RoundToInt(p.y*1000),Mathf.RoundToInt(p.z*1000));
         static (Vector3Int a,Vector3Int b) BoundaryEdgeKey(Vector3 a,Vector3 b)
         {
-            var x=BoundaryPointKey(a);var y=BoundaryPointKey(b);
+            var x=LTRoadGeometryBoundary.PointKey(a);var y=LTRoadGeometryBoundary.PointKey(b);
             bool swap=x.x>y.x||(x.x==y.x&&(x.y>y.y||(x.y==y.y&&x.z>y.z)));
             return swap?(y,x):(x,y);
         }
@@ -1142,7 +1230,7 @@ namespace LocalTerrainPrototype
             {
                 foreach(var edge in data.edges)
                 {
-                    var key=BoundaryEdgeKey(data.points[edge.a],data.points[edge.b]);
+                    var ordered=new LTRoadGeometryBoundary.Edge(data.keys[edge.a],data.keys[edge.b]);var key=(ordered.a,ordered.b);
                     edgeTotals.TryGetValue(key,out int total);total+=sign*edge.count;
                     if(total<0)throw new InvalidOperationException("Negative cached boundary edge count.");
                     if(total==0)edgeTotals.Remove(key);else edgeTotals[key]=total;
@@ -1177,41 +1265,58 @@ namespace LocalTerrainPrototype
         static ChunkBoundaryData BuildChunkBoundary(Vector3[] vertices,Vector3[] normals,int[] indices,Matrix4x4 matrix,Matrix4x4 normalMatrix)
         {
             var data=new ChunkBoundaryData{matrix=matrix,points=new Vector3[vertices.Length],normals=new Vector3[vertices.Length]};
+            var relative=new Vector3[vertices.Length];
+            data.keys=new Vector3Int[vertices.Length];var offset=new Vector3(matrix.m03,matrix.m13,matrix.m23);
             var ids=new int[vertices.Length];var positions=new Dictionary<Vector3Int,int>();
+            var referenced=new bool[vertices.Length];foreach(int index in indices)referenced[index]=true;
             data.pointIndices=new Dictionary<Vector3Int,List<int>>();
             for(int i=0;i<vertices.Length;i++)
             {
                 var p=data.points[i]=matrix.MultiplyPoint3x4(vertices[i]);
+                relative[i]=matrix.MultiplyVector(vertices[i]);
                 data.normals[i]=i<normals.Length?normalMatrix.MultiplyVector(normals[i]).normalized:Vector3.up;
-                var key=new Vector3Int(Mathf.RoundToInt(p.x*1000),Mathf.RoundToInt(p.y*1000),Mathf.RoundToInt(p.z*1000));
+                // A spatial mesh's vertex bank also contains OTHER LODs. They
+                // must not choose the position/normal of the current contour
+                // merely by colliding with its 0.1 mm key after transformation.
+                if(!referenced[i])continue;
+                var key=data.keys[i]=LTRoadGeometryBoundary.TranslatedKey(relative[i],offset);
                 if(!data.pointIndices.TryGetValue(key,out var uses))data.pointIndices[key]=uses=new List<int>();
                 uses.Add(i);
-                if(!positions.TryGetValue(key,out int id))positions[key]=id=i;
+                var localKey=LTRoadGeometryBoundary.PointKey(relative[i]);
+                if(!positions.TryGetValue(localKey,out int id))positions[localKey]=id=i;
                 ids[i]=id;
             }
             var edges=new Dictionary<long,(int count,int a,int b)>(EdgeKeyComparer.Instance);
-            for(int i=0;i+2<indices.Length;i+=3)for(int k=0;k<3;k++)
+            for(int i=0;i+2<indices.Length;i+=3)
             {
-                int a=ids[indices[i+k]],b=ids[indices[i+(k+1)%3]];long key=MeshEdge(a,b);
-                edges.TryGetValue(key,out var use);edges[key]=(use.count+1,a,b);
+                int x=ids[indices[i]],y=ids[indices[i+1]],z=ids[indices[i+2]];
+                // An intersection sliver can collapse under the boundary cache's
+                // topology key. It must not contribute two phantom uses to
+                // the remaining edge and hide an otherwise valid contour.
+                if(x==y||y==z||z==x)continue;
+                for(int k=0;k<3;k++)
+                {
+                    int a=ids[indices[i+k]],b=ids[indices[i+(k+1)%3]];long key=MeshEdge(a,b);
+                    edges.TryGetValue(key,out var use);edges[key]=(use.count+1,a,b);
+                }
             }
             // Keep counts > 1 too: another chunk must not turn an internal or
             // non-manifold edge into an apparent opening during global merging.
-            data.edges=edges.Values.ToList();return data;
+            data.edges=LTRoadGeometryBoundary.NormalizeChunkEdges(relative,edges.Values.ToList());return data;
         }
         static Dictionary<int,List<RockClipVertex>> TerrainBoundarySegments(LTWorld world,List<Stamp> stamps,List<PendingMesh> pending,RockTimings parentTimings,BoundaryCache cache,Dictionary<Vector3Int,Vector3> seamNormals)
         {
             var detail=new RockTimings();detail.Start();
             int cacheHits=0,cacheMisses=0;
+            var misses=new int[Enum.GetValues(typeof(LTBoundaryCacheMiss)).Length];
             var liveChunks=world.generatedRoot.GetComponentsInChildren<LTChunk>();
             var liveIds=new HashSet<int>(liveChunks.Select(c=>c.GetInstanceID()));
             foreach(int id in cache.Keys.Where(id=>!liveIds.Contains(id)).ToArray())cache.RemoveChunk(id);
             var points=new List<Vector3>();var pointIds=new Dictionary<Vector3Int,int>();
             var normalSums=new Dictionary<int,Vector3>();
             var boundaryData=new List<ChunkBoundaryData>();
-            Func<Vector3,int> pointId=p=>
+            Func<Vector3Int,Vector3,int> pointId=(key,p)=>
             {
-                var key=new Vector3Int(Mathf.RoundToInt(p.x*1000),Mathf.RoundToInt(p.y*1000),Mathf.RoundToInt(p.z*1000));
                 if(pointIds.TryGetValue(key,out int id))return id;
                 id=points.Count;pointIds.Add(key,id);points.Add(p);return id;
             };
@@ -1223,13 +1328,17 @@ namespace LocalTerrainPrototype
                 var replacement=pending?.FirstOrDefault(p=>p.chunk==chunk);
                 Matrix4x4 toTerrain=world.transform.worldToLocalMatrix*chunk.transform.localToWorldMatrix;
                 int version=EditorUtility.GetDirtyCount(chunk.mesh);
-                bool hit=replacement==null&&cache.TryGetValue(chunkId,out var cached)&&cached.mesh==chunk.mesh&&
-                    cached.dirtyVersion==version&&cached.matrix.Equals(toTerrain);
+                string assetHash=AssetInputHash(chunk.mesh);
+                bool present=cache.TryGetValue(chunkId,out var cached);
+                var reason=LTBoundaryCacheKey.Compare(replacement!=null,present,present&&cached.mesh==chunk.mesh,
+                    present?cached.Key:default,new LTBoundaryCacheKey(version,toTerrain,assetHash));
+                bool hit=reason==LTBoundaryCacheMiss.None;
                 ChunkBoundaryData data;
                 if(hit){data=cache[chunkId];cacheHits++;}
                 else
                 {
                     cacheMisses++;
+                    misses[(int)reason]++;
                     var vertices=replacement!=null?replacement.vertices:chunk.mesh.vertices;
                     var indices=replacement!=null?replacement.indices:chunk.mesh.triangles;
                     Vector3[] normals;
@@ -1241,7 +1350,7 @@ namespace LocalTerrainPrototype
                     }
                     else normals=chunk.mesh.normals;
                     data=BuildChunkBoundary(vertices,normals,indices,toTerrain,toTerrain.inverse.transpose);
-                    data.mesh=chunk.mesh;data.dirtyVersion=version;
+                    data.mesh=chunk.mesh;data.dirtyVersion=version;data.assetHash=assetHash;
                     detail.Lap("Boundary: changed chunk data / cache lookup");
                     cache.Replace(chunkId,data);
                     detail.Lap("Boundary: subtract old + add new edge counts");
@@ -1261,21 +1370,27 @@ namespace LocalTerrainPrototype
                 if(!data.pointIndices.TryGetValue(key,out var uses))continue;
                 foreach(int i in uses)
                 {
-                    int id=pointId(data.points[i]);
+                    int id=pointId(key,data.points[i]);
                     normalSums[id]=normalSums.TryGetValue(id,out var existing)?existing+data.normals[i]:data.normals[i];
                     mergedVertices++;
                 }
             }
             detail.Lap("Boundary: merge cached points + normals");
             parentTimings.Append($"Boundary points: {mergedVertices} merged / {boundaryData.Sum(d=>d.points.Length)} cached vertices");
+            // Road damage partitions can put several short edges opposite one
+            // long edge. Normalize geometric uses across ALL chunks, including
+            // unchanged cached neighbours, before the strict closed-loop check.
+            var candidates=openEdges.Select(e=>new LTRoadGeometryBoundary.Edge(e.Key.a,e.Key.b,e.Value)).ToArray();
+            var normalized=LTRoadGeometryBoundary.Resolve(candidates,key=>points[pointIds[key]],out int splitEdges);
+            detail.Lap("Boundary: collinear edge accounting");
+            parentTimings.Append($"Boundary T-junction accounting: {splitEdges} split candidates; {openEdges.Length} -> {normalized.Count} unmatched segments");
             var result=new List<RockClipVertex>();
             // Stable contour starts regardless of cache insertion/removal history.
-            foreach(var pair in openEdges)
+            foreach(var edge in normalized)
             {
-                if(pair.Value!=1)continue;
-                int ia=pointIds[pair.Key.a],ib=pointIds[pair.Key.b];
-                result.Add(new RockClipVertex{position=points[ia],normal=seamNormals.TryGetValue(pair.Key.a,out var na)?na:normalSums[ia].normalized});
-                result.Add(new RockClipVertex{position=points[ib],normal=seamNormals.TryGetValue(pair.Key.b,out var nb)?nb:normalSums[ib].normalized});
+                int ia=pointIds[edge.a],ib=pointIds[edge.b];
+                result.Add(new RockClipVertex{position=points[ia],normal=seamNormals.TryGetValue(BoundaryPointKey(points[ia]),out var na)?na:normalSums[ia].normalized});
+                result.Add(new RockClipVertex{position=points[ib],normal=seamNormals.TryGetValue(BoundaryPointKey(points[ib]),out var nb)?nb:normalSums[ib].normalized});
             }
             // Identify whole closed contours, never crop individual edges by Bounds:
             // a neighbouring stamp's rim can cross the current stamp's Bounds.
@@ -1310,6 +1425,7 @@ namespace LocalTerrainPrototype
             detail.Lap("Boundary: stamp ownership");
             parentTimings.Append("Boundary details (included in extraction):\n"+detail);
             parentTimings.Append($"Boundary cache: {cacheHits} reused / {cacheMisses} rebuilt chunks");
+            parentTimings.Append($"Boundary misses: proposed {misses[(int)LTBoundaryCacheMiss.Proposed]}; missing/cold {misses[(int)LTBoundaryCacheMiss.Missing]}; mesh {misses[(int)LTBoundaryCacheMiss.Mesh]}; transform {misses[(int)LTBoundaryCacheMiss.Transform]}; revision {misses[(int)LTBoundaryCacheMiss.Revision]}; asset {misses[(int)LTBoundaryCacheMiss.Asset]}");
             parentTimings.children.Add(detail);
             return boundaries;
         }
@@ -1748,6 +1864,8 @@ namespace LocalTerrainPrototype
         static void RestoreSourceRock(LTMeshStamp component)
         {
             if(!component)return;
+            if(component.renderOutput!=null&&component.renderOutput.owner==component)component.renderOutput.Dispose();component.renderOutput=null;
+            component.renderAsset=null;
             var filter=component.GetComponent<MeshFilter>();
             if(filter&&component.sourceMesh)filter.sharedMesh=component.sourceMesh;
             var renderer=component.GetComponent<MeshRenderer>();
@@ -1771,7 +1889,7 @@ namespace LocalTerrainPrototype
             component.generatedMeshOwner=component.GetInstanceID();
             return generated;
         }
-        [MenuItem("Tools/Local Terrain/Validate Mesh Instance Ownership")]
+        // Archived validation menu: Tools/Local Terrain/Validate Mesh Instance Ownership
         public static void ValidateMeshInstanceOwnership()
         {
             GameObject first=null,second=null;var allocated=new HashSet<Mesh>();
@@ -1829,14 +1947,15 @@ namespace LocalTerrainPrototype
         {
             if(cache==null||!cache.TryGetValue(stamp.id,out var old))return false;
             var component=stamp.meshComponent;var filter=component.GetComponent<MeshFilter>();
-            if(!filter||!old.output||old.output!=component.generatedTrimmedMesh||filter.sharedMesh!=old.output||
+            if(!filter||!old.output||old.output!=component.generatedTrimmedMesh||component.renderOutput==null||
+                component.renderOutput.owner!=component||!component.renderOutput.Owns(filter.sharedMesh)||
                 component.generatedMeshOwner!=component.GetInstanceID()||old.source!=stamp.meshSource||
                 old.sourceVersion!=EditorUtility.GetDirtyCount(stamp.meshSource)||old.outputVersion!=EditorUtility.GetDirtyCount(old.output)||
                 old.signature!=stamp.signature||old.config!=Config(world)||
                 old.authoring!=world.displacementGeometry.RegionSignature(stamp.bounds,0))return false;
             // Include neighbouring geometry: shared normals at a rock contact can
             // change even when its own chunk retained the same topology.
-            var region=Expanded(stamp.bounds,world.source.size.x/world.chunksX,world.source.size.z/world.chunksZ);
+            var region=Expanded(stamp.bounds,world.ChunkSize.x,world.ChunkSize.y);
             return !pending.Any(p=>Overlap(region,ChunkRect(world,p.id)))&&!changedSurface.Any(id=>Overlap(region,ChunkRect(world,id)));
         }
         sealed class RockTimings
@@ -1875,7 +1994,7 @@ namespace LocalTerrainPrototype
                 if(!stamp.meshStamp||!stamp.meshComponent||!stamp.meshSource)continue;
                 if(allowedChunks!=null)
                 {
-                    var influence=Expanded(stamp.bounds,world.source.size.x/world.chunksX,world.source.size.z/world.chunksZ);
+                    var influence=Expanded(stamp.bounds,world.ChunkSize.x,world.ChunkSize.y);
                     if(!allowedChunks.Any(id=>Overlap(influence,ChunkRect(world,id))))continue;
                 }
                 if(CanReuseRock(world,stamp,pending,changedSurface,reusable)){timings.Append("Reused unchanged rock: "+stamp.meshComponent.name);continue;}
@@ -2096,7 +2215,32 @@ namespace LocalTerrainPrototype
                 timings.Lap("Apply: renderer + materials");
                 var collider=component.GetComponent<MeshCollider>();if(collider){collider.sharedMesh=null;collider.sharedMesh=generated;}
                 timings.Lap("Apply: rock collider");
+                // Do not change collider/validation topology when partitioning renderers.
+                LTRockRenderOutput split;
+                try{split=new LTRockRenderOutput(component,generated,source.subMeshCount,world.material);}
+                catch(Exception error)
+                {
+                    // The full validated mesh is already published. Never leave its
+                    // bridge overlaid with a previous split renderer after a failed bake.
+                    if(component.renderOutput!=null&&component.renderOutput.owner==component)component.renderOutput.Dispose();
+                    component.renderOutput=null;component.renderAsset=null;filter.sharedMesh=generated;
+                    component.renderStatus="Разделение недоступно; сохранён полный меш: "+error.Message;
+                    Debug.LogWarning(component.renderStatus,component);continue;
+                }
+                if(component.renderOutput!=null&&component.renderOutput.owner==component)component.renderOutput.Dispose();component.renderOutput=split;split.Publish();
+                if(meshRenderer)
+                    meshRenderer.sharedMaterials=useRockMaterials(component,source.subMeshCount,world.material);
+                component.renderStatus=split.atlasUV?"Раздельные скала / переход; UV дальнего материала готовы.":"Раздельные скала / переход; без дальнего атласа.";
+                LTRockRenderSaving.Store(world,component,split);
+                timings.Lap("Apply: split render meshes + atlas UV");
             }
+        }
+        static Material[] useRockMaterials(LTMeshStamp stamp,int count,Material terrain)
+        {
+            var result=new Material[count];
+            for(int i=0;i<count;i++)result[i]=stamp.useTerrainMaterial?terrain:
+                stamp.objectMaterials!=null&&i<stamp.objectMaterials.Length?stamp.objectMaterials[i]:terrain;
+            return result;
         }
         sealed class SeamNormalAccumulator
         {
@@ -2121,28 +2265,30 @@ namespace LocalTerrainPrototype
         sealed class SeamChunkCache
         {
             public Mesh mesh;public int version;public Matrix4x4 matrix;public Rect rect;
+            public string assetHash;
             public LTPaintMath.SeamContribution[] contributions;
         }
         static Dictionary<Vector3Int,Vector3> PrepareSeamNormals(LTWorld world,LTChunk[] chunks,List<PendingMesh> pending,
             Dictionary<int,SeamChunkCache> cache,HashSet<int> changed)
         {
             var accumulator=new SeamNormalAccumulator();var proposed=pending.ToDictionary(p=>p.id);
-            var live=new HashSet<int>(chunks.Select(c=>c.z*world.chunksX+c.x));
+            var live=new HashSet<int>(chunks.Select(c=>world.ChunkId(c.x,c.z)));
             foreach(int id in cache.Keys.Where(id=>!live.Contains(id)).ToArray()){cache.Remove(id);changed.Add(id);}
             foreach(var chunk in chunks)
             {
-                int id=chunk.z*world.chunksX+chunk.x;
+                int id=world.ChunkId(chunk.x,chunk.z);
                 if(!chunk.mesh){cache.Remove(id);changed.Add(id);continue;}
                 proposed.TryGetValue(id,out var data);
                 var matrix=world.transform.worldToLocalMatrix*chunk.transform.localToWorldMatrix;
                 var rect=ChunkRect(world,id);int version=EditorUtility.GetDirtyCount(chunk.mesh);
-                if(data!=null||!cache.TryGetValue(id,out var cached)||cached.mesh!=chunk.mesh||cached.version!=version||cached.matrix!=matrix||cached.rect!=rect)
+                string assetHash=AssetInputHash(chunk.mesh);
+                if(data!=null||!cache.TryGetValue(id,out var cached)||cached.mesh!=chunk.mesh||cached.version!=version||cached.matrix!=matrix||cached.rect!=rect||cached.assetHash!=assetHash)
                 {
                     var vertices=data!=null?data.vertices:chunk.mesh.vertices;
                     var indices=data!=null?data.indices:chunk.mesh.triangles;
                     var points=new Vector3[vertices.Length];
                     for(int i=0;i<points.Length;i++)points[i]=matrix.MultiplyPoint3x4(vertices[i]);
-                    cached=new SeamChunkCache{mesh=chunk.mesh,version=version,matrix=matrix,rect=rect,
+                    cached=new SeamChunkCache{mesh=chunk.mesh,version=version,matrix=matrix,rect=rect,assetHash=assetHash,
                         contributions=LTPaintMath.TerrainSeamContributions(rect,points,indices)};
                     cache[id]=cached;changed.Add(id);
                 }
@@ -2154,7 +2300,7 @@ namespace LocalTerrainPrototype
         {
             foreach(var chunk in chunks)
             {
-                if(!affected.Contains(chunk.z*world.chunksX+chunk.x))continue;
+                if(!affected.Contains(world.ChunkId(chunk.x,chunk.z)))continue;
                 var matrix=world.transform.worldToLocalMatrix*chunk.transform.localToWorldMatrix;
                 // Use the same LOD0-derived normal at every boundary on every LOD:
                 // neighbouring chunks may display different LOD levels.
@@ -2166,6 +2312,8 @@ namespace LocalTerrainPrototype
                     if(normals.Length!=vertices.Length)continue;
                     for(int i=0;i<vertices.Length;i++)
                     {
+                        // Pit walls retain their separate, horizontal normals.
+                        if(Math.Abs(normals[i].y)<.000001f)continue;
                         var key=BoundaryPointKey(matrix.MultiplyPoint3x4(vertices[i]));
                         if(!shared.TryGetValue(key,out var normal))continue;
                         var local=matrix.transpose.MultiplyVector(normal).normalized;
@@ -2182,14 +2330,21 @@ namespace LocalTerrainPrototype
                     // revisions must still invalidate the cache. Copy shared entries.
                     int id=chunk.GetInstanceID();
                     if(mesh==chunk.mesh&&cache.TryGetValue(id,out var entry)&&entry.mesh==mesh&&
-                        entry.dirtyVersion==version&&entry.matrix.Equals(matrix))
+                        entry.dirtyVersion==version&&entry.matrix.Equals(matrix)&&entry.assetHash==AssetInputHash(mesh))
                         cache[id]=entry.WithNormals(normals,EditorUtility.GetDirtyCount(mesh),matrix.inverse.transpose);
                 }
             }
         }
         sealed class PendingMesh
         {
+            public LTBalancedForest.StitchSnapshot stitches;
             public LTChunk chunk;public int id;public Vector3[] vertices,normals;public Vector2[] uv;public int[] indices;public List<Vector3Int> raw,balanced;public List<int> border;public List<PendingMesh> lodData=new List<PendingMesh>();
+        }
+        static LTRoadInsetMesh.Field AsphaltGeometry(List<Stamp> stamps,Rect area)
+        {
+            var roads=new List<LTRoadMath.Snapshot>();
+            foreach(var stamp in stamps)if(stamp.road?.mode==LTRoadMode.GeometricAsphalt)roads.Add(stamp.road);
+            return roads.Count==0?null:new LTRoadInsetMesh.Field(roads,area);
         }
         static void PublishChunkLegacyLODs(LTWorld w,PendingMesh data)
         {
@@ -2210,7 +2365,7 @@ namespace LocalTerrainPrototype
             if(!w.UseSpatialLODs){c.ReleaseLODPreview();c.lodsPending=false;}
             c.ShowLOD(0);EditorUtility.SetDirty(c);
         }
-        static void QueueChunkLODs(LTWorld w,State state,LTChunk c,int id,Dictionary<Vector3Int,int> masks,List<Stamp> local)
+        static void QueueChunkLODs(LTWorld w,State state,LTChunk c,int id,Dictionary<Vector3Int,int> masks,List<Stamp> local,LTBalancedForest.StitchSnapshot stitches)
         {
             // Keep this closure OUTSIDE RebuildSteps: its local functions capture
             // the world's pending meshes/forest. A validator must not retain that
@@ -2219,7 +2374,7 @@ namespace LocalTerrainPrototype
             string meshInput=AssetInputHash(mesh);var fine=c.renderLeaves;var border=c.borderStitches;
             // Seam propagation can replace LOD0 without an authored input edit.
             state.chunkLODs.Touch(id);
-            state.chunkLODs.Enqueue(id,state.chunkLODs.Version(id),DeferredChunkLODs(w,state,c,id,fine,masks,local).GetEnumerator(),
+            state.chunkLODs.Enqueue(id,state.chunkLODs.Version(id),DeferredChunkLODs(w,state,c,id,fine,masks,local,stitches).GetEnumerator(),
                 ()=>w&&root&&w.generatedRoot==root&&w.source==source&&c&&mesh&&c.mesh==mesh&&AssetInputHash(mesh)==meshInput&&c.transform.IsChildOf(root)&&
                     c.GetComponentInParent<LTWorld>()==w&&c.renderLeaves==fine&&c.borderStitches==border&&c.lodsPending);
         }
@@ -2227,22 +2382,25 @@ namespace LocalTerrainPrototype
         // The scheduler checks its input version before every MoveNext, including
         // the publication step. No LOD0 write / paint invalidation on completion.
         static IEnumerable<LTBuildStep> DeferredChunkLODs(LTWorld w,State state,LTChunk chunk,int id,
-            List<Vector3Int> fine,Dictionary<Vector3Int,int> masks,List<Stamp> local)
+            List<Vector3Int> fine,Dictionary<Vector3Int,int> masks,List<Stamp> local,LTBalancedForest.StitchSnapshot stitches)
         {
             var progress=new LTLODMesh.BuildProgress(false);
             var r=ChunkRect(w,id);int budget=Math.Max(10000,w.maxVerticesPerChunk);
             int count=w.enableLODs&&w.lods!=null?w.lods.Length:0;
             bool spatial=w.UseSpatialLODs;
-            var cutRegions=local.Where(s=>s.meshStamp&&s.meshCutTerrain)
-                .Select(s=>Expanded(s.bounds,2*MeshContactCell(s.meshGridDensityMultiplier),2*MeshContactCell(s.meshGridDensityMultiplier))).ToList();
-            var protectedRegions=spatial?new List<Rect>(cutRegions):local.Where(s=>s.meshStamp&&s.meshCutTerrain&&s.meshTrimRock)
-                .Select(s=>Expanded(s.bounds,2*MeshContactCell(s.meshGridDensityMultiplier),2*MeshContactCell(s.meshGridDensityMultiplier))).ToList();
-            protectedRegions.AddRange(local.Where(s=>s.fixedRoadSurface&&s.junction!=null).Select(s=>s.bounds));
-            var roads=local.Where(s=>s.fixedRoadSurface&&s.road!=null).Select(s=>s.road).ToArray();
+            var protectedRegions=new List<Rect>();
+            bool hasCuts=HasTerrainCuts(local);
+            protectedRegions.AddRange(local.Where(s=>s.fixedRoadSurface&&s.junction!=null&&s.roadTerrainSurface==null).Select(s=>s.bounds));
             var levels=new List<Vector3Int>[count+1];levels[0]=fine;
             var output=new PendingMesh{chunk=chunk,id=id};
             var height=HeightSampler(w,state,id,local);
             foreach(var step in PrefetchHeights(w,state,id,local,LTHeightJobMath.FinePoints(r,fine)))yield return step;
+            Func<Rect,bool> protectedArea=null;
+            // Match CutTerrainAt's CPU height exactly; the prefetched Burst
+            // height cache may differ at a volume boundary by a rounding bit.
+            Dictionary<Vector3Int,int> contourMasks=null;
+            foreach(var step in PrepareLODProtectedArea(local,fine,r,(x,z)=>Evaluate(w,local,x,z),value=>protectedArea=value,
+                cell=>(contourMasks??=stitches.MaskLookup())[cell],TransitionDiagonals(w,id),(x,z)=>CutTerrainAt(w,local,x,z),height))yield return step;
             // All settings and Unity-dependent samples belong to this accepted
             // chunk revision. The queue validates it again before EVERY resume.
             var settings=new LTLODJobMath.Level[count];
@@ -2255,7 +2413,7 @@ namespace LocalTerrainPrototype
                     state.lodJobStatus=$"LOD ({chunk.x},{chunk.z}): подготовка снимка для Jobs";
                     var input=new LTLODJobInput();
                     foreach(var step in input.Prepare(fine,r,settings,height,
-                        protectedRegions,roads.Length==0?(Func<Rect,bool>)null:area=>roads.Any(road=>road.Intersects(area)),w.SpatialLODDivisions,!spatial))yield return step;
+                        protectedRegions,protectedArea,w.SpatialLODDivisions,!spatial))yield return step;
                     while(!LTLODJobWork.CanSchedule)yield return LTBuildStep.Waiting;
                     using(var job=new LTLODJobWork(input))
                     {
@@ -2282,7 +2440,7 @@ namespace LocalTerrainPrototype
                     var plan=forest.Plan(0);LTLODMesh.ValidateBoundary(fine,plan);
                     LTStampMesh.Emit(r,new Vector2(w.source.size.x,w.source.size.z),budget,forest,0,plan,
                         height,(x,z)=>CutTerrainAt(w,local,x,z),out var vertices,out var normals,out var uv,out var indices,
-                        TransitionDiagonals(w,id),progress,(cell,side)=>LTLODMesh.LocalMidpoint(forest,masks,cell,side));
+                        TransitionDiagonals(w,id),progress,(cell,side)=>LTLODMesh.LocalMidpoint(forest,masks,cell,side),insetRoads:AsphaltGeometry(local,r));
                     output.lodData.Add(new PendingMesh{vertices=vertices,normals=normals,uv=uv,indices=indices,balanced=plan});
                     yield return LTBuildStep.Working;
                 }
@@ -2290,19 +2448,17 @@ namespace LocalTerrainPrototype
             LTSpatialLODMath.Output proposal=null;
             if(spatial)
             {
-                var baseForest=new LTBalancedForest(1,1,budget,new Dictionary<int,List<Vector3Int>>{{0,fine}},new HashSet<int>{0});
-                int BaseMask(Vector3Int cell)
-                {int mask=0;for(int side=0;side<4;side++)if(LTLODMesh.LocalMidpoint(baseForest,masks,cell,side))mask|=1<<side;return mask;}
+                var stitchMasks=contourMasks??stitches.MaskLookup();
+                int BaseMask(Vector3Int cell)=>stitchMasks[cell];
                 bool PreserveContour(Vector3Int cell)
                 {
                     var area=new Rect(r.xMin+cell.x/(float)LTSpatialLODMath.N*r.width,r.yMin+cell.y/(float)LTSpatialLODMath.N*r.height,
                         cell.z/(float)LTSpatialLODMath.N*r.width,cell.z/(float)LTSpatialLODMath.N*r.height);
-                    return protectedRegions.Any(region=>LTStampMesh.Overlap(region,area))||roads.Any(road=>road.Intersects(area));
+                    return protectedRegions.Any(region=>LTStampMesh.Overlap(region,area))||(protectedArea?.Invoke(area)??false);
                 }
-                proposal=LTSpatialLODMath.BuildLayout(levels,w.SpatialLODDivisions,budget,BaseMask,PreserveContour);
-                LTStampMesh.EmitSpatialVariants(proposal,r,new Vector2(w.source.size.x,w.source.size.z),budget,height,
-                    cutRegions.Count==0?(Func<float,float,bool>)null:(x,z)=>CutTerrainAt(w,local,x,z),TransitionDiagonals(w,id),progress);
-                yield return LTBuildStep.Working;
+                foreach(int step in LTSpatialLODMath.BuildLayoutSteps(levels,w.SpatialLODDivisions,budget,BaseMask,value=>proposal=value,PreserveContour))yield return LTBuildStep.Working;
+                foreach(int step in LTStampMesh.EmitSpatialVariantsSteps(proposal,r,new Vector2(w.source.size.x,w.source.size.z),budget,height,
+                    !hasCuts?(Func<float,float,bool>)null:(x,z)=>CutTerrainAt(w,local,x,z),TransitionDiagonals(w,id),progress,insetRoads:AsphaltGeometry(local,r)))yield return LTBuildStep.Working;
             }
             // Read CURRENT accepted seam normals: a neighbour may have finished a
             // new LOD0 while this unchanged chunk's coarse work was paused.
@@ -2318,7 +2474,7 @@ namespace LocalTerrainPrototype
             chunk.lodsPending=false;EditorUtility.SetDirty(chunk);w.RefreshLODCache();
             EditorSceneManager.MarkSceneDirty(w.gameObject.scene);
         }
-        [MenuItem("Tools/Local Terrain/Validate Mesh Bridges")]
+        // Archived validation menu: Tools/Local Terrain/Validate Mesh Bridges
         public static void ValidateCurrentMeshBridges()
         {
             try{Debug.Log(ValidateBridgeGeometry());}catch(Exception error){Debug.LogException(error);}
@@ -2338,7 +2494,7 @@ namespace LocalTerrainPrototype
                     stamp.bounds=Expanded(stamp.meshFootprintBounds,extent,extent);
                 }
                 var state=new State{previous=snapshot};state.densities=CaptureDensity(world,state);
-                foreach(var chunk in world.generatedRoot.GetComponentsInChildren<LTChunk>())state.dirty.Add(chunk.z*world.chunksX+chunk.x);
+                foreach(var chunk in world.generatedRoot.GetComponentsInChildren<LTChunk>())state.dirty.Add(world.ChunkId(chunk.x,chunk.z));
                 Rebuild(world,state,true);reports.Add(world.name+": validated");
             }
             return reports.Count==0?"No active mesh bridges found.":string.Join("\n",reports);
@@ -2414,10 +2570,10 @@ namespace LocalTerrainPrototype
                     state.build.Dependencies.UnionWith(LTPaintMath.TerrainNeighbours(targets,w.chunksX,w.chunksZ));
                     foreach(var rock in stamps.Where(s=>s.meshStamp))
                     {
-                        var region=Expanded(rock.bounds,w.source.size.x/w.chunksX,w.source.size.z/w.chunksZ);
+                        var region=Expanded(rock.bounds,w.ChunkSize.x,w.ChunkSize.y);
                         if(!targets.Any(id=>Overlap(region,ChunkRect(w,id))))continue;
                         foreach(var c in chunks)
-                        {int id=c.z*w.chunksX+c.x;if(Overlap(region,ChunkRect(w,id)))state.build.Dependencies.Add(id);}
+                        {int id=w.ChunkId(c.x,c.z);if(Overlap(region,ChunkRect(w,id)))state.build.Dependencies.Add(id);}
                     }
                 }
                 if(staged)
@@ -2432,6 +2588,8 @@ namespace LocalTerrainPrototype
                 }
                 var pending=new List<PendingMesh>();
                 var plans=new Dictionary<int,List<Vector3Int>>();var zones=state.densities.SelectMany(d=>d.zones).ToList();
+                var planSnapshots=new Dictionary<int,LTBalancedForest.PlanSnapshot>();
+                var stableInputs=new HashSet<int>();
                 int budget=Math.Max(10000,w.maxVerticesPerChunk);
                 int lodCount=w.enableLODs && w.lods!=null?w.lods.Length:0;
                 if(lodCount>4)throw new InvalidOperationException("Use at most 4 extra LOD levels (LOD1..LOD4).");
@@ -2456,17 +2614,19 @@ namespace LocalTerrainPrototype
                     {
                         var r=ChunkRect(w,data.id);
                         var local=stamps.Where(s=>Overlap(s.bounds,Expanded(r,r.width/w.cellsPerChunk,r.height/w.cellsPerChunk))).ToList();
-                        var bridgeRegions=local.Where(s=>s.meshStamp&&s.meshCutTerrain&&s.meshTrimRock)
-                            .Select(s=>Expanded(s.bounds,2*MeshContactCell(s.meshGridDensityMultiplier),2*MeshContactCell(s.meshGridDensityMultiplier))).ToList();
-                        var roads=local.Where(s=>s.fixedRoadSurface&&s.road!=null).Select(s=>s.road).ToArray();
-                        bridgeRegions.AddRange(local.Where(s=>s.fixedRoadSurface&&s.junction!=null).Select(s=>s.bounds));
+                        var bridgeRegions=new List<Rect>();
+                        bridgeRegions.AddRange(local.Where(s=>s.fixedRoadSurface&&s.junction!=null&&s.roadTerrainSurface==null).Select(s=>s.bounds));
                         var height=HeightSampler(w,state,data.id,local);
+                        Func<Rect,bool> protectedArea=null;
+                        Dictionary<Vector3Int,int> contourMasks=null;
+                        foreach(var step in PrepareLODProtectedArea(local,data.balanced,r,(x,z)=>Evaluate(w,local,x,z),value=>protectedArea=value,
+                            cell=>(contourMasks??=data.stitches.MaskLookup())[cell],TransitionDiagonals(w,data.id),(x,z)=>CutTerrainAt(w,local,x,z),height))yield return step;
                         var preparation=new LTLODMesh.Preparation(data.balanced,r,height,lodProgress);
                         var levels=new List<Vector3Int>[lodCount];
                         for(int level=0;level<lodCount;level++)
                         {
                             levels[level]=preparation.Coarsen(w.lods[level].simplificationSteps,w.lods[level].maxHeightError,bridgeRegions,
-                                roads.Length==0?(Func<Rect,bool>)null:area=>roads.Any(road=>road.Intersects(area)),w.SpatialLODDivisions);
+                                protectedArea,w.SpatialLODDivisions);
                             yield return LTBuildStep.Working;
                         }
                         preparedLODPlans.Add(data.id,levels);lodPreparedChunks++;lodHeightSamples+=preparation.HeightSampleCount;
@@ -2476,7 +2636,7 @@ namespace LocalTerrainPrototype
                         var lodPlans=new Dictionary<int,List<Vector3Int>>();
                         foreach(var c in chunks)
                         {
-                            int id=c.z*w.chunksX+c.x;
+                            int id=w.ChunkId(c.x,c.z);
                             if(changed.ContainsKey(id))lodPlans[id]=preparedLODPlans[id][level];
                             else lodPlans[id]=c.lodPlans[level].leaves;
                         }
@@ -2492,7 +2652,7 @@ namespace LocalTerrainPrototype
                             Rect r=ChunkRect(w,id);
                             var local=stamps.Where(s=>Overlap(s.bounds,Expanded(r,r.width/w.cellsPerChunk,r.height/w.cellsPerChunk))).ToList();
                             var height=HeightSampler(w,state,id,local);
-                            LTStampMesh.Emit(r,new Vector2(w.source.size.x,w.source.size.z),budget,lodForest,id,plan,height,(x,z)=>CutTerrainAt(w,local,x,z),out var vertices,out var normals,out var uv,out var indices,TransitionDiagonals(w,id),lodProgress);
+                            LTStampMesh.Emit(r,new Vector2(w.source.size.x,w.source.size.z),budget,lodForest,id,plan,height,(x,z)=>CutTerrainAt(w,local,x,z),out var vertices,out var normals,out var uv,out var indices,TransitionDiagonals(w,id),lodProgress,insetRoads:AsphaltGeometry(local,r));
                             data.lodData.Add(new PendingMesh{vertices=vertices,normals=normals,uv=uv,indices=indices,balanced=plan});
                             yield return LTBuildStep.Working;
                         }
@@ -2506,37 +2666,49 @@ namespace LocalTerrainPrototype
                     {
                         int id=data.id;var r=ChunkRect(w,id);
                         var local=stamps.Where(s=>Overlap(s.bounds,Expanded(r,r.width/w.cellsPerChunk,r.height/w.cellsPerChunk))).ToList();
-                        var cutRegions=local.Where(s=>s.meshStamp&&s.meshCutTerrain)
-                            .Select(s=>Expanded(s.bounds,2*MeshContactCell(s.meshGridDensityMultiplier),2*MeshContactCell(s.meshGridDensityMultiplier))).ToList();
-                        // Road density zones still shape LOD0/colliders. Only separate
-                        // asphalt surfaces require fixed terrain cells and midpoint masks.
-                        var roads=local.Where(s=>s.fixedRoadSurface&&s.road!=null).Select(s=>s.road).ToArray();
-                        var protectedRegions=new List<Rect>(cutRegions);
-                        protectedRegions.AddRange(local.Where(s=>s.fixedRoadSurface&&s.junction!=null).Select(s=>s.bounds));
+                        bool hasCuts=HasTerrainCuts(local);
+                        // Road density zones still shape LOD0/colliders. Asphalt clearance
+                        // and edge-band height error constrain merges against all road LODs.
+                        var protectedRegions=new List<Rect>();
+                        protectedRegions.AddRange(local.Where(s=>s.fixedRoadSurface&&s.junction!=null&&s.roadTerrainSurface==null).Select(s=>s.bounds));
                         var levels=new List<Vector3Int>[extra?spatialLevels+1:1];levels[0]=data.balanced;
                         var height=HeightSampler(w,state,id,local);
+                        Func<Rect,bool> protectedArea=null;
+                        Dictionary<Vector3Int,int> contourMasks=null;
+                        foreach(var step in PrepareLODProtectedArea(local,data.balanced,r,(x,z)=>Evaluate(w,local,x,z),value=>protectedArea=value,
+                            cell=>(contourMasks??=data.stitches.MaskLookup())[cell],TransitionDiagonals(w,id),(x,z)=>CutTerrainAt(w,local,x,z),height))yield return step;
                         if(extra)
                         {
                             var preparation=new LTLODMesh.Preparation(data.balanced,r,height,lodProgress);
                             for(int level=1;level<levels.Length;level++)
                             {
                                 levels[level]=preparation.Coarsen(w.lods[level-1].simplificationSteps,w.lods[level-1].maxHeightError,
-                                    protectedRegions,roads.Length==0?(Func<Rect,bool>)null:area=>roads.Any(road=>road.Intersects(area)),w.SpatialLODDivisions,false);
+                                    protectedRegions,protectedArea,w.SpatialLODDivisions,false);
                                 yield return LTBuildStep.Working;
                             }
                             lodPreparedChunks++;lodHeightSamples+=preparation.HeightSampleCount;
                         }
-                        int BaseMask(Vector3Int cell)
-                        {int mask=0;for(int s=0;s<4;s++)if(forest.Midpoint(id,cell,s))mask|=1<<s;return mask;}
+                        terrainTimings.Start();
+                        var stitchMasks=contourMasks??data.stitches.MaskLookup();
+                        int BaseMask(Vector3Int cell)=>stitchMasks[cell];
+                        terrainTimings.Lap("Spatial: stitch lookup index");
                         bool PreserveContour(Vector3Int cell)
                         {
                             var area=new Rect(r.xMin+cell.x/(float)LTSpatialLODMath.N*r.width,r.yMin+cell.y/(float)LTSpatialLODMath.N*r.height,
                                 cell.z/(float)LTSpatialLODMath.N*r.width,cell.z/(float)LTSpatialLODMath.N*r.height);
-                            return protectedRegions.Any(region=>LTStampMesh.Overlap(region,area))||roads.Any(road=>road.Intersects(area));
+                            return protectedRegions.Any(region=>LTStampMesh.Overlap(region,area))||(protectedArea?.Invoke(area)??false);
                         }
-                        var output=LTSpatialLODMath.BuildLayout(levels,w.SpatialLODDivisions,budget,BaseMask,PreserveContour);
-                        LTStampMesh.EmitSpatialVariants(output,r,new Vector2(w.source.size.x,w.source.size.z),budget,height,
-                            cutRegions.Count==0?(Func<float,float,bool>)null:(x,z)=>CutTerrainAt(w,local,x,z),TransitionDiagonals(w,id),lodProgress);
+                        LTSpatialLODMath.Output output=null;
+                        foreach(int step in LTSpatialLODMath.BuildLayoutSteps(levels,w.SpatialLODDivisions,budget,BaseMask,value=>output=value,PreserveContour))
+                        {
+                            if(!staged)lodProgress.Report("Preparing spatial hierarchy; Cancel preserves old meshes.",.5f);
+                            terrainTimings.Pause();yield return LTBuildStep.Working;terrainTimings.Resume();
+                        }
+                        terrainTimings.Lap("Spatial: hierarchy (CPU)");
+                        foreach(int step in LTStampMesh.EmitSpatialVariantsSteps(output,r,new Vector2(w.source.size.x,w.source.size.z),budget,height,
+                            !hasCuts?(Func<float,float,bool>)null:(x,z)=>CutTerrainAt(w,local,x,z),TransitionDiagonals(w,id),lodProgress,insetRoads:AsphaltGeometry(local,r)))
+                        {terrainTimings.Pause();yield return LTBuildStep.Working;terrainTimings.Resume();}
+                        terrainTimings.Lap("Spatial: variants + normals (CPU)");
                         spatialProposals[id]=output;
                         yield return LTBuildStep.Working;
                     }
@@ -2555,7 +2727,7 @@ namespace LocalTerrainPrototype
                 terrainTimings.Lap("Terrain: setup");
                 foreach(var c in chunks)
                 {
-                    int id=c.z*w.chunksX+c.x;
+                    int id=w.ChunkId(c.x,c.z);
                     if(requested.Contains(id)||c.sourceLeaves==null||c.sourceLeaves.Count==0)
                     {
                         Rect r=ChunkRect(w,id);float dx=r.width/w.cellsPerChunk,dz=r.height/w.cellsPerChunk;
@@ -2567,6 +2739,9 @@ namespace LocalTerrainPrototype
                         if(w.SpatialLODDivisions>1)plans[id]=LTSpatialLODMath.PartitionLeaves(plans[id],w.SpatialLODDivisions);
                     }
                     else plans[id]=c.sourceLeaves;
+                    if(!requested.Contains(id)&&state.topologyInputs.TryGetValue(id,out var known)&&known.Matches(c))
+                    {planSnapshots[id]=known.snapshot;stableInputs.Add(id);}
+                    else planSnapshots[id]=new LTBalancedForest.PlanSnapshot(plans[id]);
                     if(staged&&requested.Contains(id))
                     {
                         terrainTimings.Lap("Terrain: density + height planning");
@@ -2574,41 +2749,52 @@ namespace LocalTerrainPrototype
                     }
                 }
                 terrainTimings.Lap("Terrain: density + height planning");
-                Dictionary<int,List<Vector3Int>> internalPlans;
-                if(staged)
+                var internalPlans=new Dictionary<int,List<Vector3Int>>();
+                foreach(int step in state.balanceCache.PrepareOwnedSteps(planSnapshots,budget,internalPlans))
                 {
-                    internalPlans=new Dictionary<int,List<Vector3Int>>();
-                    foreach(int step in state.balanceCache.PrepareSteps(plans,budget,internalPlans))
-                    {terrainTimings.Pause();timer.Stop();yield return LTBuildStep.Working;timer.Start();terrainTimings.Resume();}
+                    if(staged){terrainTimings.Pause();timer.Stop();yield return LTBuildStep.Working;timer.Start();terrainTimings.Resume();}
+                    else lodProgress.Report("Balancing local transitions; Cancel preserves old meshes.",.5f);
                 }
-                else internalPlans=state.balanceCache.Prepare(plans,budget,lodProgress);
                 terrainTimings.Lap("Terrain: internal balance cache");
-                forest=new LTBalancedForest(w.chunksX,w.chunksZ,budget,internalPlans,new HashSet<int>(internalPlans.Keys));
+                forest=state.topologyCache.Begin(w.chunksX,w.chunksZ,budget,internalPlans);
                 terrainTimings.Lap("Terrain: forest construction");
                 if(staged)foreach(int step in forest.BalanceSteps())
                 {terrainTimings.Pause();timer.Stop();yield return LTBuildStep.Working;timer.Start();terrainTimings.Resume();}
                 else forest.Balance(lodProgress);
                 terrainTimings.Lap("Terrain: balancing");
                 terrainTimings.Append($"Balance cache: {state.balanceCache.Reused} reused / {state.balanceCache.Rebuilt} rebuilt chunks; {state.balanceCache.ProcessedCells} internal cells; {forest.ProcessedCells} border-pass cells");
+                terrainTimings.Append($"Topology reuse: {state.balanceCache.IdentityHits} immutable input hits; {state.balanceCache.ComparedPlans} content comparisons; {forest.ReusedChunks} shared / {forest.ChangedChunks} changed chunk dictionaries");
                 foreach(var c in chunks)
                 {
                     terrainTimings.Start();
-                    int id=c.z*w.chunksX+c.x;var balanced=forest.Plan(id);var border=forest.BoundaryStitches(id,balanced);
-                    terrainTimings.Lap("Terrain: chunk plans + boundary stitches");
+                    int id=w.ChunkId(c.x,c.z);
                     bool ownedCoarse=staged&&c.lodsPending&&state.chunkLODs.Contains(id);
                     bool lodValid=ownedCoarse||(!c.lodsPending&&(!w.UseSpatialLODs||(c.spatialLOD&&c.spatialLOD.formatVersion==LTSpatialLODMath.Version&&c.spatialLOD.divisions==w.SpatialLODDivisions))&&
                         c.lodMeshes!=null&&c.lodMeshes.Length==lodCount&&c.lodMeshes.All(m=>m)&&c.lodPlans!=null&&c.lodPlans.Length==lodCount&&c.lodPlans.All(p=>p!=null&&p.leaves!=null&&p.leaves.Count>0));
+                    if((lodValid||staged&&state.dirty.Contains(id))&&!requested.Contains(id)&&stableInputs.Contains(id)&&!forest.MayChangeOutput(id))continue;
+                    var balanced=forest.Plan(id);var border=forest.BoundaryStitches(id,balanced);
+                    terrainTimings.Lap("Terrain: chunk plans + boundary stitches");
                     if((lodValid||staged&&state.dirty.Contains(id))&&!requested.Contains(id)&&c.renderLeaves!=null&&c.renderLeaves.SequenceEqual(balanced)&&c.borderStitches!=null&&c.borderStitches.SequenceEqual(border))continue;
                     Rect r=ChunkRect(w,id);float dx=r.width/w.cellsPerChunk,dz=r.height/w.cellsPerChunk;
                     var local=stamps.Where(s=>Overlap(s.bounds,Expanded(r,dx,dz))).ToList();
                     terrainTimings.Lap("Terrain: change checks + local stamp selection");
+                    LTBalancedForest.StitchSnapshot stitches=null;
+                    foreach(int prepared in forest.StitchSnapshotSteps(id,balanced,value=>stitches=value))
+                    {
+                        if(staged){terrainTimings.Pause();timer.Stop();yield return LTBuildStep.Working;timer.Start();terrainTimings.Resume();}
+                        else lodProgress.Report("Preparing stitch flags; Cancel preserves old meshes.",prepared/(float)Math.Max(1,balanced.Count));
+                    }
+                    terrainTimings.Lap("Terrain: stitch snapshot preparation (CPU)");
                     // Only LOD0: measure callback work, including shared height-cache
                     // lookup (the emitter's own hits do not call these). Remainder includes topology,
                     // cache lookup, clipping search, compaction and instrumentation.
                     long heightTicks=0,cutTicks=0;
                     var sampleHeight=HeightSampler(w,state,id,local);
-                    if(staged)foreach(var step in PrefetchHeights(w,state,id,local,LTHeightJobMath.FinePoints(r,balanced)))
+                    if(staged)foreach(var step in PrefetchHeights(w,state,id,local,LTHeightJobMath.EmitPoints(r,stitches)))
                     {terrainTimings.Pause();timer.Stop();yield return step;timer.Start();terrainTimings.Resume();}
+                    // This includes main-thread operand preparation, scheduling and
+                    // result acceptance, not worker time or gaps between updates.
+                    terrainTimings.Lap("Terrain: emit height preparation (CPU)");
                     float TimedHeight(float x,float z)
                     {
                         long start=Stopwatch.GetTimestamp();
@@ -2621,17 +2807,21 @@ namespace LocalTerrainPrototype
                         try{return CutTerrainAt(w,local,x,z);}
                         finally{cutTicks+=Stopwatch.GetTimestamp()-start;}
                     }
+                    var emitDiagnostics=new LTStampMesh.EmitDiagnostics();
                     long emitStart=Stopwatch.GetTimestamp();
-                    LTStampMesh.Emit(r,new Vector2(w.source.size.x,w.source.size.z),budget,forest,id,balanced,TimedHeight,TimedCut,out var vertices,out var normals,out var uv,out var indices,TransitionDiagonals(w,id),lodProgress);
+                    LTStampMesh.Emit(r,new Vector2(w.source.size.x,w.source.size.z),budget,forest,id,balanced,TimedHeight,TimedCut,out var vertices,out var normals,out var uv,out var indices,TransitionDiagonals(w,id),lodProgress,diagnostics:emitDiagnostics,stitches:stitches,insetRoads:AsphaltGeometry(local,r));
                     long emitTicks=Stopwatch.GetTimestamp()-emitStart;
                     terrainTimings.Lap("Terrain: emit triangles + height / cut evaluation");
                     double tickMs=1000.0/Stopwatch.Frequency;
                     terrainTimings.Add("Emit LOD0: height callbacks",heightTicks*tickMs);
                     terrainTimings.Add("Emit LOD0: cut callbacks",cutTicks*tickMs);
                     terrainTimings.Add("Emit LOD0: remaining mesh work + timing overhead",Math.Max(0,emitTicks-heightTicks-cutTicks)*tickMs);
+                    // Keep full-world/manual rebuild diagnostics readable too.
+                    if(pending.Count<8)terrainTimings.Append(emitDiagnostics.Report($"({c.x},{c.z})"));
+                    else if(pending.Count==8)terrainTimings.Append("Emit detail: further per-chunk reports omitted after 8 chunks; aggregate build timings still include every chunk.");
                     affected?.Add(id);
                     if(staged)ReadDependencies(new HashSet<int>{id});
-                    pending.Add(new PendingMesh{chunk=c,id=id,vertices=vertices,normals=normals,uv=uv,indices=indices,raw=plans[id],balanced=balanced,border=border});
+                    pending.Add(new PendingMesh{chunk=c,id=id,vertices=vertices,normals=normals,uv=uv,indices=indices,raw=plans[id],balanced=balanced,border=border,stitches=stitches});
                     terrainTimings.Lap("Terrain: stage output");
                     if(staged){timer.Stop();yield return LTBuildStep.Working;timer.Start();}
                 }
@@ -2686,7 +2876,7 @@ namespace LocalTerrainPrototype
                 var spatialNeighbours=LTPaintMath.TerrainNeighbours(seamChanged,w.chunksX,w.chunksZ);
                 foreach(var c in chunks)
                 {
-                    int id=c.z*w.chunksX+c.x;
+                    int id=w.ChunkId(c.x,c.z);
                     if(spatialProposals.TryGetValue(id,out var spatial))
                     {if(early)LTSpatialLODBake.ApplyPreview(c,spatial);else LTSpatialLODBake.Apply(c,spatial);}
                     else if(w.UseSpatialLODs&&spatialNeighbours.Contains(id))LTSpatialLODBake.UpdateNormals(c);
@@ -2696,10 +2886,10 @@ namespace LocalTerrainPrototype
                 // Acknowledge only this transaction's known geometry/normal writes.
                 foreach(var c in chunks)
                 {
-                    int id=c.z*w.chunksX+c.x;
+                    int id=w.ChunkId(c.x,c.z);
                     if(!c.mesh||!seamCache.TryGetValue(id,out var entry))continue;
                     seamCache[id]=new SeamChunkCache{mesh=c.mesh,version=EditorUtility.GetDirtyCount(c.mesh),matrix=entry.matrix,
-                        rect=entry.rect,contributions=entry.contributions};
+                        rect=entry.rect,assetHash=entry.assetHash,contributions=entry.contributions};
                 }
                 state.seamCache=seamCache;
                 var liveRockIds=new HashSet<int>(state.previous.Where(s=>s.meshStamp).Select(s=>s.id));
@@ -2723,6 +2913,11 @@ namespace LocalTerrainPrototype
                 state.boundaryCache=boundaryCache;
                 Stage("Prepared rocks upload + final normals");
                 w.RefreshLODCache();
+                // Publish topology only after geometry/bridges were validated and
+                // applied. Capture component versions after our own known writes.
+                state.topologyCache.Commit(forest);
+                state.topologyInputs=chunks.ToDictionary(c=>w.ChunkId(c.x,c.z),c=>new TopologyInput
+                    {chunk=c,source=c.sourceLeaves,render=c.renderLeaves,border=c.borderStitches,version=EditorUtility.GetDirtyCount(c),snapshot=planSnapshots[w.ChunkId(c.x,c.z)]});
 
                 if(early)
                 {
@@ -2732,7 +2927,7 @@ namespace LocalTerrainPrototype
                         var masks=LTLODMesh.BoundaryMasks(c.renderLeaves,c.borderStitches);
                         var r=ChunkRect(w,id);
                         var local=stamps.Where(s=>Overlap(s.bounds,Expanded(r,r.width/w.cellsPerChunk,r.height/w.cellsPerChunk))).ToList();
-                        QueueChunkLODs(w,state,c,id,masks,local);
+                        QueueChunkLODs(w,state,c,id,masks,local,data.stitches);
                     }
                     Report();
                     // The base transaction is complete; coarse ownership is now
@@ -2751,7 +2946,8 @@ namespace LocalTerrainPrototype
             if(s.colliders.Count==0)return;
             var timer=Stopwatch.StartNew();
             foreach(var c in w.generatedRoot.GetComponentsInChildren<LTChunk>())
-                if(s.colliders.Contains(c.z*w.chunksX+c.x)) c.GetComponent<MeshCollider>().sharedMesh=c.mesh;
+                if(s.colliders.Contains(w.ChunkId(c.x,c.z)))
+                    c.GetComponent<MeshCollider>().sharedMesh=c.mesh&&c.mesh.vertexCount>0&&c.mesh.subMeshCount>0&&c.mesh.GetIndexCount(0)>0?c.mesh:null;
             s.colliders.Clear();
             w.lastColliderMilliseconds=(float)timer.Elapsed.TotalMilliseconds;
         }
@@ -2821,9 +3017,11 @@ namespace LocalTerrainPrototype
             {
                 var g=new GameObject($"Chunk_{x}_{z}");g.transform.SetParent(root.transform,false);
                 g.transform.localPosition=new Vector3(x*source.size.x/nx,0,z*source.size.z/nz);
+                // LTChunk applies its renderer policy in OnEnable, before the
+                // first preview render. Keep the renderer present at that point.
+                g.AddComponent<MeshFilter>();g.AddComponent<MeshRenderer>();g.AddComponent<MeshCollider>();
                 var c=g.AddComponent<LTChunk>();c.x=x;c.z=z;c.mesh=new Mesh();c.mesh.name=g.name;
                 AssetDatabase.CreateAsset(c.mesh,folder+$"/{g.name}.asset");
-                g.AddComponent<MeshFilter>();g.AddComponent<MeshRenderer>();g.AddComponent<MeshCollider>();
             }
             Refresh(w,true);Selection.activeGameObject=go;
             if(terrain)Debug.Log("Prototype created. Original Terrain is unchanged. Hide it manually and pause MicroVerse before editing the prototype to avoid overlapping surfaces.",w);
@@ -2921,7 +3119,7 @@ namespace LocalTerrainPrototype
                 UnityEngine.Object.DestroyImmediate(array);UnityEngine.Object.DestroyImmediate(weights);UnityEngine.Object.DestroyImmediate(readback);UnityEngine.Object.DestroyImmediate(material);
             }
         }
-        [MenuItem("Tools/Local Terrain/Validate Eight Layer Shader")]
+        // Archived validation menu: Tools/Local Terrain/Validate Eight Layer Shader
         static void ValidateShader()
         {
             foreach(string resource in new[]{"LTEightLayers","LTGlobalLayerBake","LTEightLayersTessellation"})
@@ -2964,6 +3162,7 @@ namespace LocalTerrainPrototype
             {
                 world.UpdatePainting();repaint|=world.enableLayerPainting&&world.isActiveAndEnabled;
                 world.paintCpu.Poll();
+                world.PollLODCpuCapture();
             }
             if(repaint)SceneView.RepaintAll();
         }
@@ -3150,6 +3349,7 @@ namespace LocalTerrainPrototype
         }
         void DrawTextures(LTWorld world)
         {
+            LTLayerRenderEditor.Draw(world);
             EditorGUILayout.HelpBox("До 12 слоёв на чанк или область скалы, включая базовый. Скалы с Use Terrain Material получают слои по их положению над террейном; фильтры оцениваются по террейну.",MessageType.Info);
             serializedObject.Update();
             EditorGUILayout.PropertyField(serializedObject.FindProperty("enableLayerPainting"),new GUIContent("Включить покраску"));
@@ -3164,9 +3364,10 @@ namespace LocalTerrainPrototype
             EditorGUILayout.PropertyField(serializedObject.FindProperty("enableGlobalLayerMaps"),new GUIContent("Глобальные карты вдали"));
             if(serializedObject.FindProperty("enableGlobalLayerMaps").boolValue)
             {
-                EditorGUILayout.PropertyField(serializedObject.FindProperty("globalLayerResolution"),new GUIContent("Разрешение атласа", "Округляется вверх до степени двойки. Две карты RGBA8 с mipmaps: примерно 43 МБ при 2048, 171 МБ при 4096."));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("globalLayerResolution"),new GUIContent("Разрешение атласа", "Округляется вверх до степени двойки. Сохранение BC7 + BC5 с mipmaps: 10,7 МиБ при 2048, 42,7 МиБ при 4096. Временный RGBA32-фон занимает в 4 раза больше."));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("globalLayerStart"),new GUIContent("Начало перехода, м"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("globalLayerEnd"),new GUIContent("Конец перехода, м"));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("farLayerBrightness"),new GUIContent("Яркость дальнего фона", "1 — исходный цвет, меньше 1 — темнее, больше 1 — светлее. Только Global Albedo и его плавный переход; без повторного запекания, изменения текстур и нормалей."));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("farLayerSmoothness"),new GUIContent("Дальний Smoothness"));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("farLayerMetallic"),new GUIContent("Дальний Metallic"));
                 EditorGUI.BeginChangeCheck();
@@ -3184,11 +3385,16 @@ namespace LocalTerrainPrototype
                 }
                 using(new EditorGUI.DisabledScope(world.paintBenchmarkRunning))
                     if(GUILayout.Button("Запечь в память (без сохранения)"))world.BakeGlobalLayerMaps();
-                using(new EditorGUI.DisabledScope(world.paintBenchmarkRunning||Application.isPlaying))
-                    if(GUILayout.Button("Запечь и сохранить глобальные карты…"))LTGlobalBakeSaving.BakeAndSave(world);
+                EditorGUILayout.HelpBox("Сохранение: BC7 цвет + BC5 нормали, с потерями. «Запечь в память» — несжатый RGBA32. Старые карты можно сжать в новый asset без пересчёта terrain; оригинал сохраняется. BC-копия для CPU остаётся для сериализации.",MessageType.None);
+                using(new EditorGUI.DisabledScope(world.paintBenchmarkRunning||Application.isPlaying||LTGlobalBakeSaving.IsSaving))
+                {
+                    if(GUILayout.Button("Запечь и сохранить глобальные карты BC7/BC5…"))LTGlobalBakeSaving.BakeAndSave(world);
+                    using(new EditorGUI.DisabledScope(!world.savedGlobalBake||!world.savedGlobalBake.albedo||!world.savedGlobalBake.normal||world.savedGlobalBake.IsBCCompressed))
+                        if(GUILayout.Button("Сжать сохранённый фон в BC — новая копия…"))LTGlobalBakeSaving.CompressSaved(world);
+                }
             }
             if(!string.IsNullOrEmpty(world.paintStatus))EditorGUILayout.HelpBox(world.paintStatus,MessageType.Info);
-            using(new EditorGUI.DisabledScope(world.paintCpu.Running||world.paintBenchmarkRunning||!world.enableLayerPainting))
+            using(new EditorGUI.DisabledScope(world.paintCpu.Running||world.lodCpu.Running||world.paintBenchmarkRunning||!world.enableLayerPainting))
                 if(GUILayout.Button("CPU-замер покраски — 10 секунд"))world.paintCpu.Start(world.name);
             EditorGUILayout.HelpBox(world.paintCpu.Status,MessageType.Info);
             if(GUILayout.Button("Добавить Layer Stamp"))
@@ -3241,16 +3447,17 @@ namespace LocalTerrainPrototype
             EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayColorResolution"),new GUIContent("Цвет — разрешение"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayNormalResolution"),new GUIContent("Нормали — разрешение"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayMaskResolution"),new GUIContent("Маски — разрешение"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayStorage"),new GUIContent("Формат сохранения", "RGBA32 или BC7 (цвет/маски) + BC5 (нормали). Сжатие с потерями; проверьте Height-смешивание и нормали."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayTrilinear"),new GUIContent("Трилинейная фильтрация"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayAnisotropy"),new GUIContent("Анизотропия"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("arrayMemoryBudgetMiB"),new GUIContent("Бюджет упаковки GPU, МиБ"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("savedLayerArrays"),new GUIContent("Сохранённый комплект"));
             serializedObject.ApplyModifiedProperties();
             var palette=LTLayerArrayBakeAsset.Palette(world);
-            long bytes=LTLayerTextureArrays.EstimateBytes(palette.Count,(int)world.arrayColorResolution,(int)world.arrayNormalResolution,(int)world.arrayMaskResolution);
+            long bytes=LTLayerArrayStorageUtility.Estimate(palette.Count,(int)world.arrayColorResolution,(int)world.arrayNormalResolution,(int)world.arrayMaskResolution,world.arrayStorage);
             EditorGUILayout.LabelField("Слоёв в палитре",palette.Count.ToString());
             EditorGUILayout.LabelField("Объём новых массивов GPU",$"{bytes/1048576f:F1} МиБ");
-            EditorGUILayout.HelpBox("RGBA32, полная цепочка mipmaps. Цвет: sRGB; нормали: RGB linear; маски: linear. Упаковка выполняется GPU без Read/Write исходников. При обновлении одновременно живут старые и новые массивы плюс временная карта — бюджет учитывает этот пик, но не исходные текстуры и остальной рендер. Изменение разрешения может изменить детализацию смешивания/высоты; CPU-фильтры растительности читают оригиналы.",MessageType.Info);
+            EditorGUILayout.HelpBox("Полная цепочка mipmaps. Цвет: sRGB; нормали и маски: linear. Предпросмотр всегда RGBA32; BC7/BC5 применяется только через «Запечь и сохранить». Сжатие выполняется в Editor по одному срезу, исходники не меняются. Бюджет учитывает временный пик упаковки, но не исходные текстуры и остальной рендер. CPU-фильтры растительности читают оригиналы.",MessageType.Info);
             EditorGUILayout.HelpBox(world.arrayPackStatus??"Ещё не упаковано.",MessageType.Info);
             if(world.savedLayerArrays)
             {
@@ -3260,7 +3467,7 @@ namespace LocalTerrainPrototype
                 EditorGUILayout.HelpBox(state,current?MessageType.Info:MessageType.Warning);
             }
             else EditorGUILayout.HelpBox("Нет сохранённого комплекта. Перед сборкой игры нажмите «Запечь и сохранить».",MessageType.Warning);
-            EditorGUILayout.HelpBox("Сохранение создаёт новую папку в Assets/LocalTerrainGenerated/LayerArrays. Предыдущие версии остаются. Сохраняемые RGBA32-массивы содержат также CPU-копию данных (примерно такой же объём, как GPU). После назначения комплекта сохраните сцену. Изменение фильтрации сохранённого комплекта требует нового запекания.",MessageType.None);
+            EditorGUILayout.HelpBox("Сохранение создаёт новую папку в Assets/LocalTerrainGenerated/LayerArrays. Предыдущие версии остаются. Массивы содержат CPU-копию данных в выбранном формате (примерно такой же объём, как GPU). После назначения комплекта сохраните сцену. Изменение формата или фильтрации требует нового запекания.",MessageType.None);
             using(new EditorGUI.DisabledScope(true))
             {
                 EditorGUILayout.ObjectField("Color array",world.arrayColorPreview,typeof(Texture2DArray),false);
@@ -3287,6 +3494,7 @@ namespace LocalTerrainPrototype
                 EditorGUILayout.ObjectField("Source snapshot",w.source,typeof(LTSource),false);
                 EditorGUILayout.LabelField("Layout",$"{w.chunksX} x {w.chunksZ}; {w.cellsPerChunk} cells/chunk");
             }
+            if(GUILayout.Button("Управление чанками / восстановление"))LTChunkManagerWindow.Open(w);
             serializedObject.Update();
             EditorGUILayout.PropertyField(serializedObject.FindProperty("material"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("cellsPerChunk"));
@@ -3302,7 +3510,7 @@ namespace LocalTerrainPrototype
                 if(!string.IsNullOrEmpty(w.spatialLODStatus))EditorGUILayout.HelpBox(w.spatialLODStatus,MessageType.Warning);
             }
             EditorGUILayout.PropertyField(serializedObject.FindProperty("lods"),true);
-            if(w.enableLODs)EditorGUILayout.HelpBox("Грунтовки и грунтовые перекрёстки упрощаются вместе с terrain по Max Height Error каждого LOD. Размер ячейки дороги задаёт только LOD0 и коллайдер. Под отдельным асфальтовым полотном сетка terrain остаётся подробной для защиты от пересечений; у полотна свои LOD.",MessageType.Info);
+            if(w.enableLODs)EditorGUILayout.HelpBox("Размер ячейки дороги задаёт LOD0 и коллайдер; дальние LOD terrain используют Max Height Error. У Road → Форма и рельеф можно включить упрощение земли под асфальтом: края/отверстия и участки риска пересечений сохраняются. Требуется актуальная геометрия дороги со всеми LOD; без неё полоса защищена целиком. Асфальтовые перекрёстки пока сохраняют плотную основу.",MessageType.Info);
             EditorGUILayout.PropertyField(serializedObject.FindProperty("lodCamera"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("lodHysteresis"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("previewLODs"));
@@ -3310,6 +3518,7 @@ namespace LocalTerrainPrototype
             EditorGUILayout.PropertyField(serializedObject.FindProperty("autoUpdate"));
             EditorGUILayout.HelpBox("Автообновление — после отпускания мыши. Сначала LOD0 и стыки, затем остальные LOD поэтапно. Это ещё главный поток, не Burst: один тяжёлый этап может вызвать паузу. Ручная перестройка и сохранение завершают весь расчёт.",MessageType.Info);
             EditorGUILayout.PropertyField(serializedObject.FindProperty("showDebug"));serializedObject.ApplyModifiedProperties();
+            if(GUILayout.Button("Открыть панель штампов"))LTStampManagerWindow.Open(w);
             if(GUILayout.Button("Add Height Stamp"))
             {
                 var go=new GameObject("Height Stamp");Undo.RegisterCreatedObjectUndo(go,"Add Height Stamp");
@@ -3324,6 +3533,7 @@ namespace LocalTerrainPrototype
                 var stamp=go.AddComponent<LTHeightStamp>();stamp.affectHeight=false;stamp.densityZone=true;stamp.shape=LTStampShape.Rectangle;stamp.size=new Vector2(8,8);
                 Selection.activeGameObject=go;
             }
+            if(GUILayout.Button("Add Hole Stamp"))LTEditorEngine.AddHoleStamp(w);
             if(w.GetComponentsInChildren<LTDensityZone>(true).Length>0&&GUILayout.Button("Convert Legacy Density Zones to Stamps"))
             {
                 foreach(var zone in w.GetComponentsInChildren<LTDensityZone>(true))
@@ -3341,6 +3551,14 @@ namespace LocalTerrainPrototype
         }
         void DrawDiagnostics(LTWorld w)
         {
+            using(new EditorGUI.DisabledScope(w.lodCpu.Running||w.paintBenchmarkRunning||w.paintCpu.Running||!w.isActiveAndEnabled||!w.generatedRoot))
+                if(GUILayout.Button("CPU-замер переключения LOD — 15 секунд"))w.StartLODCpuCapture();
+            if(w.lodCpu.Running&&GUILayout.Button("Завершить LOD-замер сейчас"))w.StopLODCpuCapture();
+            EditorGUILayout.HelpBox(w.lodCpu.Status,MessageType.Info);
+            if(!string.IsNullOrEmpty(w.lodCpuReportPath))EditorGUILayout.SelectableLabel(w.lodCpuReportPath,EditorStyles.wordWrappedLabel,GUILayout.Height(36));
+            // Avoid rescanning every mesh / generating statistics strings on each
+            // Inspector repaint during a camera-flight capture.
+            if(w.lodCpu.Running)return;
             if(GUILayout.Button("Benchmark Preparation (2 warm-ups + 7 runs)"))LTEditorEngine.BenchmarkPreparation(w);
             if(!string.IsNullOrEmpty(w.benchmarkTimings))EditorGUILayout.HelpBox(w.benchmarkTimings,MessageType.None);
             if(w.generatedRoot)
@@ -3378,9 +3596,10 @@ namespace LocalTerrainPrototype
             EditorGUILayout.LabelField("Latest detection poll",$"{w.lastDetectionMilliseconds:F1} ms");
             EditorGUILayout.LabelField("Last terrain collider update",$"{w.lastColliderMilliseconds:F1} ms");
             if(!string.IsNullOrEmpty(w.lastEditorUpdateCycle))EditorGUILayout.HelpBox(w.lastEditorUpdateCycle,MessageType.None);
+            if(!string.IsNullOrEmpty(w.lastEditorPaintCycleStages))EditorGUILayout.HelpBox(w.lastEditorPaintCycleStages,MessageType.None);
             if(!string.IsNullOrEmpty(w.lastEditorPaintStages))EditorGUILayout.HelpBox(w.lastEditorPaintStages,MessageType.None);
             if(!string.IsNullOrEmpty(w.lastBuildTimings))
-                EditorGUILayout.HelpBox(w.lastBuildTimings,MessageType.None);
+                EditorGUILayout.HelpBox("Последняя завершённая операция сборки (отдельный отчёт, не сумма текущего цикла):\n"+w.lastBuildTimings,MessageType.None);
             EditorGUILayout.HelpBox("Build timings exclude detection, deferred terrain colliders and SaveAssets. Values describe the last completed operation; detection also runs while idle.",MessageType.None);
             EditorGUILayout.LabelField("Chunk IDs",w.lastUpdatedIds??"",EditorStyles.wordWrappedLabel);
             EditorGUILayout.HelpBox("World: rotation 0, scale 1. Stamp height = relative Position Y multiplied by Scale Y (including parents). Green bounds = recently rebuilt. A one-cell border halo may update a neighbour for normals. Colliders finalize after movement stops.",MessageType.None);
@@ -3578,6 +3797,9 @@ namespace LocalTerrainPrototype
     [CustomEditor(typeof(LTHeightStamp))]
     public sealed class LTStampInspector : Editor
     {
+        readonly LTStampSizeHandles sizeHandles = new LTStampSizeHandles();
+        void OnSceneGUI() => sizeHandles.Draw((LTHeightStamp)target);
+        void OnDisable() => sizeHandles.Dispose();
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
@@ -3597,6 +3819,20 @@ namespace LocalTerrainPrototype
             EditorGUILayout.PropertyField(serializedObject.FindProperty("densityZone"));
             if(serializedObject.FindProperty("densityZone").boolValue)
             {
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("densityMode"),new GUIContent("Density Mode"));
+                if(serializedObject.FindProperty("densityMode").enumValueIndex==(int)LTStampDensityMode.Mask)
+                {
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("densityMask"),new GUIContent("Density Mask (optional)","Empty = use the stamp's Mask. Red channel; Read/Write required."));
+                    if(!serializedObject.FindProperty("affectHeight").boolValue&&!serializedObject.FindProperty("densityMask").objectReferenceValue)
+                        EditorGUILayout.PropertyField(serializedObject.FindProperty("mask"),new GUIContent("Stamp Mask"));
+                    EditorGUILayout.PropertyField(serializedObject.FindProperty("densityMaskInvert"),new GUIContent("Invert Mask"));
+                    var rangeProp=serializedObject.FindProperty("densityMaskRange");
+                    EditorGUILayout.PropertyField(rangeProp,new GUIContent("Mask Range (black / white)","After inversion: X maps to Max Cell Size, Y to Min Cell Size."));
+                    var range=rangeProp.vector2Value;range.x=Mathf.Clamp(range.x,0,.9999f);range.y=Mathf.Clamp(range.y,range.x+.0001f,1);rangeProp.vector2Value=range;
+                    var power=serializedObject.FindProperty("densityMaskPower");
+                    EditorGUILayout.PropertyField(power,new GUIContent("Mask Power","> 1 concentrates fine density in bright areas; < 1 spreads it into grey areas."));
+                    power.floatValue=Mathf.Max(.01f,power.floatValue);
+                }
                 var minProp=serializedObject.FindProperty("densityCellSizeMin");
                 var maxProp=serializedObject.FindProperty("densityCellSizeMax");
                 float min=Mathf.Max(.000001f,minProp.floatValue), max=Mathf.Max(min,maxProp.floatValue);
@@ -3605,7 +3841,7 @@ namespace LocalTerrainPrototype
                 GUILayout.Space(12f);
                 max=EditorGUILayout.FloatField(new GUIContent("Max Cell Size (m)"),max);
                 EditorGUILayout.EndHorizontal();
-                minProp.floatValue=Mathf.Max(.000001f,min);maxProp.floatValue=Mathf.Max(min,max);
+                minProp.floatValue=Mathf.Max(.000001f,min);maxProp.floatValue=Mathf.Max(minProp.floatValue,max);
             }
             serializedObject.ApplyModifiedProperties();var s=(LTHeightStamp)target;
             if(s.densityZone)
@@ -3613,9 +3849,21 @@ namespace LocalTerrainPrototype
                 double width=s.size.x*Math.Abs(s.transform.lossyScale.x),depth=s.size.y*Math.Abs(s.transform.lossyScale.z);
                 double cells=width*depth/(Math.Max(.000001,s.densityCellSizeMin)*Math.Max(.000001,s.densityCellSizeMin));
                 if(s.shape==LTStampShape.Ellipse)cells*=Math.PI/4;
-                EditorGUILayout.LabelField("Approx. cells before stitching",cells.ToString("N0"));
+                EditorGUILayout.LabelField(s.densityMode==LTStampDensityMode.Mask?"Max-density cell estimate":"Approx. cells before stitching",cells.ToString("N0"));
             }
-            if(s.densityZone)EditorGUILayout.HelpBox("Density Cell Size overrides coarse AND fine global mesh density. Later density stamps win. Density follows shape/size/rotation, not the height texture or Strength. Values are not clamped to global settings.",MessageType.Info);
+            if(s.densityZone)
+            {
+                string mode=s.densityMode==LTStampDensityMode.Mask
+                    ? "Mask: white = Min Cell Size, black = Max Cell Size, grey = intermediate density. Uses red within Shape/Size/rotation; independent of Affect Height, height Strength and Edge Falloff. Small bright details are preserved conservatively."
+                    : "Shape: Min Cell Size at the centre, Max Cell Size towards the edge. Same behaviour as before; independent of the height mask and Strength.";
+                EditorGUILayout.HelpBox(mode+" Cell sizes override global density; later stamps win. Actual subdivisions use supported mesh steps and stitching may add cells.",MessageType.Info);
+                if(s.densityMode==LTStampDensityMode.Mask)
+                {
+                    var texture=s.densityMask?s.densityMask:s.mask;
+                    if(!texture)EditorGUILayout.HelpBox("Mask density is inactive: assign Density Mask or the stamp's Mask.",MessageType.Warning);
+                    else if(!texture.isReadable)EditorGUILayout.HelpBox("Mask density is inactive: enable Read/Write on the density texture. Import settings are not changed automatically.",MessageType.Error);
+                }
+            }
             if(GUILayout.Button("Copy v0.1 Height to Transform Y"))
             {
                 Undo.RecordObject(s.transform,"Migrate stamp height");
@@ -3623,10 +3871,12 @@ namespace LocalTerrainPrototype
                 var p=s.transform.position;p.y=(w?w.transform.position.y:0)+s.height/Mathf.Max(.00001f,s.transform.lossyScale.y);s.transform.position=p;
                 Undo.RecordObject(s,"Migrate mask");s.maskIsHeight=false;EditorUtility.SetDirty(s);
             }
-            if(s.mask && !s.mask.isReadable)EditorGUILayout.HelpBox("Height ignored: enable Read/Write on texture. Density remains active.",MessageType.Error);
+            if(s.affectHeight&&s.mask&&!s.mask.isReadable)EditorGUILayout.HelpBox("Height ignored: enable Read/Write on the stamp's Mask. Shape density or a separate readable Density Mask can still work.",MessageType.Error);
             if(Vector3.Dot(s.transform.up,Vector3.up)<.9999f || s.transform.lossyScale.x<=0 || s.transform.lossyScale.y<=.00001f || s.transform.lossyScale.z<=0)
                 EditorGUILayout.HelpBox("Stamp skipped: use only Y rotation and positive scale.",MessageType.Error);
             EditorGUILayout.HelpBox("Move the stamp along Y to change height. Later siblings apply last. Use Override or Max to test layering. Multiply uses Multiply Reference (metres); Blend uses Blend Amount. Scale Y multiplies height amplitude; Y=0 remains zero.",MessageType.Info);
+            sizeHandles.DrawInspector(s);
+            LTStampPreview.DrawInspector(s);
         }
     }
     [CustomEditor(typeof(LTDensityZone))]

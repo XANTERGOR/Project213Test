@@ -1,0 +1,110 @@
+Local Terrain editor reload recovery (2026-10-10)
+
+Scope: code-recompile/domain-reload recovery within the running Unity Editor.
+No scene saves, persistent cache assets, package changes or standalone benchmarks.
+This is NOT zero-time/zero-flicker reload and does not retain GPU buffers.
+
+Before assembly reload, an already settled editor world can hand off a one-shot
+SessionState checkpoint. In-flight geometry/LOD/colliders, pending paint/density,
+pending rock seam baking, active drags and unknown/uninitialized worlds are excluded.
+Fresh input/density captures must still agree with the last evaluated state.
+
+Recovery checks scene/owner identity, stable source height contents (not managed
+array identity), configuration and ordered stamp signatures, generated chunk/LOD/
+rock output metadata, and SHA256 of raw vertex/index buffers. Missing or changed
+output falls back to the existing rebuild. Transient-only generated rock output is
+excluded. A Union cutter using its unchanged original mesh may have no renderAsset
+when it does not intersect terrain: this is explicitly proved on both sides of
+reload using the same contact algorithm as the build (only that stamp is prepared).
+The original mesh must actually be assigned; generated output, stale transitions,
+generated material state, and a non-source collider are rejected. Source vertex /
+index payload is included in the output hash. Cave cutters, intersecting stamps,
+non-cutting trimmed meshes and invalid existing render assets retain strict guards.
+Implementation fingerprints are captured when the assembly initializes, NOT after
+new source files arrive. Production LocalTerrain C#/shaders/helpers and locked
+package files invalidate; *Check.cs and *Tests.cs do not. This is conservative:
+an edit in production terrain code may legitimately require a full rebuild.
+
+On a verified handoff the existing meshes remain authoritative. Density baselines
+wait for paint recovery; empty transient masks do not by themselves schedule a
+second full mesh rebuild. A genuine input/density change still invalidates output.
+Manual Apply/Refresh and normal first/opened-world behavior are preserved.
+
+Ready detail cells can cross reload in a separately owned HideAndDontSave
+LTDetailPlacementAsset. No serialized component field and no savedPlacement asset
+assignment is changed. At most 500,000 resident instances are copied (~22 MB numeric
+item payload; object/array overhead is extra). Larger or unfinished populations use
+normal generation. The pre-existing exact per-cell input/reference/payload validation
+is reused. Stale cells fall through to the user's saved asset or ordinary generation.
+GPU resources are released normally; masks, preparation and GPU uploads still occur.
+The temporary placement is released on disable; abandoned handoffs are destroyed.
+
+Logs:
+  [Terrain Reload] Before [id] -- callback reached, play/hotControl/state counters
+  [Terrain Reload] Skip [id] -- exact global/world/unfinished/input/output guard
+  [Terrain Reload] Captured ... -- handoff and capture CPU time
+    Includes zero checkpoints and skipped count; never silently omits this summary.
+  [Terrain Reload] Init: handoff=... -- consumed handoff ID and checkpoint/skip counts
+  [Terrain Reload] No checkpoint ... -- once per world/state, normal update path
+  [Terrain Reload] ... unchanged geometry restored without rebuild ...
+  [Terrain Reload] ... usual update / cold recovery reason
+
+Passive diagnostic menu:
+  Tools > Local Terrain > Report Editor Reload Readiness (no scene changes)
+Reads existing world/state eligibility and pending counters. It does NOT capture
+fresh stamps, call GetState/Detect, rebuild, modify SessionState or save anything.
+Readiness is not a promise that fresh input/output verification will succeed.
+Diagnostics themselves do not change eligibility. The source-only exception above
+is a separate fix to the originally over-restrictive generated-output guard.
+
+Managed checks: dotnet run --project Tests/TerrainBridgeChecks -- --editor-reload
+  297 policy/source-contract checks PASS, including all 256 pending-flag combinations.
+Regressions: mesh-stamp-cache 2034, detail-placement 30, boundary-invalidation 4938 PASS.
+C# compilation against installed Unity 6000.3.23f1: PASS, no errors.
+
+Native check:
+  Tools > Local Terrain > Validate Editor Reload Recovery (no scene changes)
+Uses ONLY owned preview-scene objects; guards source/settings/scene file hashes and
+user-scene roots/dirty state. Simulates checkpoint serialization/state loss and
+validates geometry/density/input/mesh/code rejection and transient detail matching.
+It does NOT reload assemblies or save scenes; PASS does not prove live reload timing.
+v1: user-run Unity validation PASS 29 checks. Diagnostic assertions added in v2.
+v3 adds owned floating/crossing mesh fixtures, source-only checkpoint roundtrip and
+disable/enable, exact source payload changes, stale generated output/collider /
+transition/material rejection, and invalid/valid render output branches.
+v3 native run remains pending (C# build and managed checks passed). No native v2
+result was obtained; do not infer native lifecycle behavior from managed checks.
+
+Live acceptance (separate, NOT yet passed): first comment-only probe compiled and
+reloaded successfully (Domain Reload Profiling: 6058 ms), but emitted neither
+Captured nor geometry-restored messages. The prior capture guards returned silently,
+so the exact skipped condition was unknown. Scene/settings hashes were unchanged;
+only the intended test comment changed. This motivated the diagnostics above.
+Evidence: Logs/EditorReload-live-probe-20261009T212818-result.json (UTC filename).
+
+Second comment-only probe with diagnostics: Unity compilation passed (1.51 s),
+domain reload 5739 ms. Readiness was settled, hotControl=0. Handoff 75146f79
+captured 0 worlds / 0 detail snapshots; checkpoint attempt took 1648.6 ms.
+Exact rejection: Object006 has no valid saved render asset. The saved scene has
+renderAsset: {fileID: 0}; user confirms this mesh stamp is suspended above terrain.
+PrepareTrimmedRockMeshes legitimately restores the source for a non-Cave cutting
+stamp with no contact segments, and RestoreSourceRock clears renderAsset. The
+reload guard at that time did not distinguish source-only from missing generated
+output. This diagnosed the source-only correction described above.
+Verified 308 file hashes: only the intended test comment changed; scene, settings
+and locked packages unchanged. Live recovery acceptance remains NOT passed.
+Evidence: Logs/EditorReload-diagnostics-probe-20261009T213801-result.json.
+
+Once the corrected code is installed and terrain has
+fully settled with verified intact outputs, a subsequent unrelated/test-only code compilation should emit the
+captured/restored pair. The installation compilation itself has no old checkpoint
+and may still do the usual rebuild. Verify layer appearance, grass placement and
+road/rock seams; then edit a real stamp and confirm a normal local update.
+Native Unity import, real assembly handoff/resource lifetime and visual recovery
+time are not inferred from managed compilation/tests.
+
+Source-only fix build: Logs/EditorReload-source-only-build.log, 0 errors and 3
+pre-existing warnings (two assembly-version conflicts and an unset importer field).
+The user moved Object006 into terrain independently before this fix. This change
+does not move objects, rebuild/save their meshes, save scenes or disable safety
+guards for their now-required generated output. Scene state remains user-owned.

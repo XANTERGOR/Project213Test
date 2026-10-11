@@ -42,17 +42,17 @@ partial class Checks
         Require(!rocks.Contains("filter.sharedMesh=")&&!rocks.Contains(".vertices="),"material projection must not edit rock geometry");
         Require(rocks.Contains("_LTRockProjection\",1")&&rocks.Contains("_LTGlobalParams\",Vector4.zero"),"rock must use world coordinates and no planar far atlas");
         var runtime=File.ReadAllText(root+"LTPaintRuntime.cs");
-        Require(runtime.Contains("RestoreRockMaterialsForSave();")&&runtime.Contains("ReleaseRockMaterials();")&&runtime.Contains("TickRockMaterials(world,shader,active,bounds,asphaltInputs,layerInputs);"),"rock lifecycle not connected");
+        Require(runtime.Contains("RestoreRockMaterialsForSave();")&&runtime.Contains("ReleaseRockMaterials();")&&runtime.Contains("TickRockMaterials(world,shader,active,bounds,asphaltInputs,layerInputs,coverageInputs,backgroundRoadSampling,ref roadResultsApplied);"),"rock lifecycle and shared job budget not connected");
         var sampling=File.ReadAllText(root+"Shaders/LTEightLayerSampling.hlsl");
         var projection=File.ReadAllText(root+"Shaders/LTProjectedLayers.hlsl");
-        Require(projection.Contains("LTSampleLayersMappedFrame(p.xz,dx.xz,dy.xz,uv,ux,uy,axis")&&sampling.Contains("GetAbsolutePositionWS(sourcePositionRWS)"),"paint coverage and world texture coordinates must stay separate");
+        Require(projection.Contains("LTSampleLayersMappedFrameWithCoverage(p.xz,dx.xz,dy.xz,uv,ux,uy,axis")&&sampling.Contains("GetAbsolutePositionWS(sourcePositionRWS)"),"paint coverage and world texture coordinates must stay separate");
         Require(sampling.Contains("[branch] if(projected && fade < 1)")&&sampling.Contains("else if(fade < 1)"),"full far must skip projected sampling; ordinary XZ path must remain available");
         var globals=File.ReadAllText(root+"LTPaintGlobals.cs");
         Require(globals.Contains("globalsReady=projectionMatches")&&globals.Contains("saved.triplanar==world.triplanarTexturing"),"atlas projection must match live and saved material mode");
         Require(globals.Contains("commands.DrawMesh(chunk.mesh")&&!globals.Contains("commands.DrawMesh(chunk.lodMeshes"),"triplanar bake must use original full-resolution geometry");
         var baker=File.ReadAllText(root+"Resources/LTGlobalLayerBake.shader");
         Require(baker.Contains("LTProjectedLayers.hlsl")&&sampling.Contains("LTProjectedLayers.hlsl"),"near and bake projections must share the same implementation");
-        Require(baker.Contains("o.terrainPosition.xz/_LTWorldSize.xy")&&baker.Contains("LTSampleProjectedLayers(input.terrainPosition"),"bake needs actual source height and global atlas coordinates");
+        Require(baker.Contains("(o.terrainPosition.xz-_LTGlobalRect.xy)/_LTGlobalRect.zw")&&baker.Contains("LTSampleProjectedLayers(input.terrainPosition"),"bake needs actual source height and expanded atlas coordinates");
         Require(sampling.Contains("projectedGradient=lerp(projectedGradient,farGradient,fade)"),"near/far projected normals must blend in gradient space");
         for(int i=0;i<1000;i++)
         {

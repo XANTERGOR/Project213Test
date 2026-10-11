@@ -1,7 +1,48 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><DefineConstants>$(DefineConstants);ROAD_MATH_CHECKS</DefineConstants></PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTLayerArrayStorage.cs" Link="Production/LTLayerArrayStorage.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadCaptureSignature.cs" Link="Production/LTRoadCaptureSignature.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTChunkLayoutProbe.cs" Link="Production/LTChunkLayoutProbe.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTEditorReloadPolicy.cs" Link="Production/LTEditorReloadPolicy.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTMeshStampGeometryCache.cs" Link="Production/LTMeshStampGeometryCache.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadFoundationOutline.cs" Link="Production/LTRoadFoundationOutline.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadDimensionMath.cs" Link="Production/LTRoadDimensionMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTChunkGrid.cs" Link="Production/LTChunkGrid.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRockSeamMath.cs" Link="Production/LTRockSeamMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRockSeamIndices.cs" Link="Production/LTRockSeamIndices.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRockSeamBandMath.cs" Link="Production/LTRockSeamBandMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRockSeamCheck.cs" Link="Production/LTRockSeamCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRockSeamBandCheck.cs" Link="Production/LTRockSeamBandCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRockNativeLODCheck.cs" Link="Production/LTRockNativeLODCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRockTerrainLODProtection.cs" Link="Production/LTRockTerrainLODProtection.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRockTerrainLODCheck.cs" Link="Production/LTRockTerrainLODCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRockTransitionMath.cs" Link="Production/LTRockTransitionMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRockLODMath.cs" Link="Production/LTRockLODMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRockFarLODCheck.cs" Link="Production/LTRockFarLODCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTDetailBatchPatch.cs" Link="Production/LTDetailBatchPatch.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTStampManagerRules.cs" Link="Production/LTStampManagerRules.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHoleContourMath.cs" Link="Production/LTHoleContourMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHoleContourLODCheck.cs" Link="Production/LTHoleContourLODCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHoleVolumeLODProtection.cs" Link="Production/LTHoleVolumeLODProtection.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHoleVolumeLODCheck.cs" Link="Production/LTHoleVolumeLODCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHoleMeshVolume.cs" Link="Production/LTHoleMeshVolume.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTStampSizeMath.cs" Link="Production/LTStampSizeMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTStampPreviewMath.cs" Link="Production/LTStampPreviewMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTLODCpuCapture.cs" Link="Production/LTLODCpuCapture.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHoleEdgeLODCheck.cs" Link="Production/LTHoleEdgeLODCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHoleStampLODCheck.cs" Link="Production/LTHoleStampLODCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHoleStampMath.cs" Link="Production/LTHoleStampMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTStampDensityMask.cs" Link="Production/LTStampDensityMask.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTLODCameraSchedule.cs" Link="Production/LTLODCameraSchedule.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTBoundaryCacheKey.cs" Link="Production/LTBoundaryCacheKey.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTPaintCpuCapture.cs" Link="Production/LTPaintCpuCapture.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTPaintWeightMath.cs" Link="Production/LTPaintWeightMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTPaintWeightInputPool.cs" Link="Production/LTPaintWeightInputPool.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTPaintWeightTerrainCache.cs" Link="Production/LTPaintWeightTerrainCache.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTPaintWeightFixtures.cs" Link="Production/LTPaintWeightFixtures.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadHeightKernel.cs" Link="Production/LTRoadHeightKernel.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadRaster.cs" Link="Production/LTRoadRaster.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTBlend.cs" Link="Production/LTBlend.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHeightJobMath.cs" Link="Production/LTHeightJobMath.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTHeightSampling.cs" Link="Production/LTHeightSampling.cs" />
@@ -9,13 +50,34 @@
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTStagedBuild.cs" Link="Production/LTStagedBuild.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadProjectionMath.cs" Link="Production/LTRoadProjectionMath.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadJunctionMath.cs" Link="Production/LTRoadJunctionMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadShoulderJoin.cs" Link="Production/LTRoadShoulderJoin.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionMesh.cs" Link="Production/LTRoadJunctionMesh.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTSpatialLODMath.cs" Link="Production/LTSpatialLODMath.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTSpatialLODTopology.cs" Link="Production/LTSpatialLODTopology.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTLODMesh.cs" Link="Production/LTLODMesh.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadMesh.cs" Link="Production/LTRoadMesh.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadTerrainLODProtection.cs" Link="Production/LTRoadTerrainLODProtection.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadTerrainLODCheck.cs" Link="Production/LTRoadTerrainLODCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionTerrainLODData.cs" Link="Production/LTRoadJunctionTerrainLODData.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadModuleMath.cs" Link="Production/LTRoadModuleMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadModuleEnds.cs" Link="Production/LTRoadModuleEnds.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadModuleFuse.cs" Link="Production/LTRoadModuleFuse.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionSeams.cs" Link="Production/LTRoadJunctionSeams.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadJunctionProfileFit.cs" Link="Production/LTRoadJunctionProfileFit.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadModuleCollar.cs" Link="Production/LTRoadModuleCollar.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadAutomaticJoints.cs" Link="Production/LTRoadAutomaticJoints.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadBlendMask.cs" Link="Production/LTRoadBlendMask.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadBatcherWait.cs" Link="Production/LTRoadBatcherWait.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadFootprint.cs" Link="Production/LTRoadFootprint.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadLODPolicy.cs" Link="Production/LTRoadLODPolicy.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadMath.cs" Link="Production/LTRoadMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadAsphaltDamage.cs" Link="Production/LTRoadAsphaltDamage.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTRoadGeometryMath.cs" Link="Production/LTRoadGeometryMath.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadGeometryMesh.cs" Link="Production/LTRoadGeometryMesh.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadInsetMesh.cs" Link="Production/LTRoadInsetMesh.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadInsetCheck.cs" Link="Production/LTRoadInsetCheck.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadGeometryBoundary.cs" Link="Production/LTRoadGeometryBoundary.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTRoadGeometryBoundaryCheck.cs" Link="Production/LTRoadGeometryBoundaryCheck.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailUploadBudget.cs" Link="Production/LTDetailUploadBudget.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailGpuData.cs" Link="Production/LTDetailGpuData.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailMotionData.cs" Link="Production/LTDetailMotionData.cs" />
@@ -23,6 +85,7 @@
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailMath.cs" Link="Production/LTDetailMath.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailStreaming.cs" Link="Production/LTDetailStreaming.cs" />
     <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailSettings.cs" Link="Production/LTDetailSettings.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailPlacementAsset.cs" Link="Production/LTDetailPlacementAsset.cs" />
   </ItemGroup>
   <ItemGroup><Reference Include="UnityEngine.CoreModule"><HintPath>D:/Unity/6000.3.23f1/Editor/Data/Managed/UnityEngine/UnityEngine.CoreModule.dll</HintPath></Reference></ItemGroup>
   <ItemGroup><Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTPaintMath.cs" Link="Production/LTPaintMath.cs" /></ItemGroup>

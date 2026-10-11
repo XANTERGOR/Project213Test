@@ -16,27 +16,35 @@ namespace LocalTerrainPrototype
             try
             {
                 report.AppendLine("GPU: "+SystemInfo.graphicsDeviceName+" / "+SystemInfo.graphicsDeviceType);
-                foreach(string adapterName in new[]{"GrassWind","BaseProps","HdrpLit"})
+                int failures=0;
+                foreach(string adapterName in new[]{"GrassWind","BaseProps","HdrpLit","RockBase"})
+                {
+                report.AppendLine("Adapter: "+adapterName);
+                // An unrelated shader failure must not hide results for the other adapters.
+                try
                 {
                 string path="Assets/TerrainSystem/LocalTerrain/Resources/LTDetailGpu/"+adapterName+".ltdetailshader";
-                report.AppendLine("Adapter: "+adapterName);
                 AssetDatabase.ImportAsset(path,ImportAssetOptions.ForceUpdate|ImportAssetOptions.ForceSynchronousImport);
                 var adapter=AssetDatabase.LoadAssetAtPath<LTDetailGpuShader>(path);
-                if(!adapter||!adapter.indirect||!string.IsNullOrEmpty(adapter.error))throw new Exception("Shader adapter: "+(adapter?adapter.error:"missing"));
+                if(!adapter||!adapter.source||!adapter.indirect||!string.IsNullOrEmpty(adapter.error))throw new Exception("Shader adapter: "+(adapter?adapter.error:"missing"));
+                report.AppendLine("Source: "+AssetDatabase.GetAssetPath(adapter.source)+" / "+adapter.source.name);
                 report.AppendLine("Retained material keyword sets: "+(adapter.buildVariants?.Length??0));
                 if(adapter.buildVariants!=null)foreach(var variant in adapter.buildVariants)
                     if(!variant||variant.shader!=adapter.indirect||!variant.enableInstancing)throw new Exception("Invalid retained material variant.");
                 var retained=new System.Collections.Generic.HashSet<string>();
                 if(adapter.buildVariants!=null)foreach(var variant in adapter.buildVariants)retained.Add(KeywordSignature(variant,adapter.source));
+                int sourceMaterials=0;
                 foreach(var guid in AssetDatabase.FindAssets("t:Material",new[]{"Assets"}))
                 {
                     string materialPath=AssetDatabase.GUIDToAssetPath(guid);
                     if(!materialPath.EndsWith(".mat",StringComparison.OrdinalIgnoreCase))continue;
                     var sourceMaterial=AssetDatabase.LoadAssetAtPath<Material>(materialPath);
-                    if(sourceMaterial&&sourceMaterial.shader==adapter.source&&!retained.Contains(KeywordSignature(sourceMaterial,adapter.source)))
+                    if(!sourceMaterial||sourceMaterial.shader!=adapter.source)continue;
+                    sourceMaterials++;
+                    if(!retained.Contains(KeywordSignature(sourceMaterial,adapter.source)))
                         throw new Exception("Source material keyword set was lost: "+materialPath+" / "+KeywordSignature(sourceMaterial,adapter.source));
                 }
-                report.AppendLine("PASS retained keyword coverage of source .mat assets.");
+                report.AppendLine("PASS retained keyword coverage of source .mat assets: "+sourceMaterials);
                 var original=new Material(adapter.source);
                 var material=new Material(adapter.indirect){enableInstancing=true};
                 try
@@ -83,9 +91,21 @@ namespace LocalTerrainPrototype
                     }
                 }
                 finally{UnityEngine.Object.DestroyImmediate(material);UnityEngine.Object.DestroyImmediate(original);}
+                report.AppendLine("PASS adapter: "+adapterName);
                 }
-                CheckCull(report);passed=true;
-                report.AppendLine("PASS native checks. Scene lighting, wind, shadows, camera motion and FPS still require visual validation.");
+                catch(Exception ex)
+                {
+                    failures++;report.AppendLine("FAIL adapter "+adapterName+": "+ex);Debug.LogException(ex);
+                }
+                }
+                try{CheckCull(report);}
+                catch(Exception ex)
+                {
+                    failures++;report.AppendLine("FAIL GPU cull: "+ex);Debug.LogException(ex);
+                }
+                passed=failures==0;
+                report.AppendLine(passed?"PASS native checks.":"FAIL native checks: "+failures+" failed section(s).");
+                report.AppendLine("Scene lighting, wind, shadows, camera motion and FPS still require visual validation.");
             }
             catch(Exception ex){report.AppendLine("FAIL: "+ex);Debug.LogException(ex);}
             Directory.CreateDirectory("Logs/DetailProfiles");

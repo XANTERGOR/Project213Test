@@ -2,9 +2,37 @@
 // Direct-texture, twelve-layer terrain variant. Keep legacy resource name for saved references.
 Shader "Local Terrain/Eight Layers HDRP"
 {
-    Properties
+Properties
     {
+
+        [HideInInspector] _LTRoadBlendDistances("Road rim distances", 2D) = "white" {}
+        [HideInInspector] _LTRoadBlendSource("Road ground source", Float) = 0
+        [HideInInspector] _LTRoadTerrainReady("Road terrain ready", Float) = 0
+        [HideInInspector] _LTRoadTerrainGrid("Road terrain chunk grid", Vector) = (0,0,0,0)
+        [HideInInspector] _LTRoadTerrainCell("Road terrain chunk size", Vector) = (1,1,0,0)
+        [HideInInspector] _LTRoadBlendColor("Road ground color", 2D) = "white" {}
+        [HideInInspector] _LTRoadBlendNormal("Road ground normal", 2D) = "bump" {}
+        [HideInInspector] _LTRoadBlendMask("Road ground RGB mask", 2D) = "white" {}
+        [HideInInspector] _LTRoadBlendRect("Road mask rectangle", Vector) = (0,0,1,1)
+        [HideInInspector] _LTRoadBlendParams("Road widths strength noise", Vector) = (0,0,0,0)
+        [HideInInspector] _LTRoadBlendNoise("Road noise scale seed", Vector) = (1,0,0,0)
+        [HideInInspector] _LTRoadBlendTiling("Road ground tiling", Vector) = (4,4,0,0)
+        [HideInInspector] _LTRoadBlendTint("Road ground tint", Vector) = (1,1,1,1)
+        [HideInInspector] _LTRoadBlendSettings("Road normal metallic smooth mask", Vector) = (1,0,.4,0)
+        [HideInInspector] _LTRoadBlendFlags("Road normal AO triplanar", Vector) = (0,1,0,0)
+        [HideInInspector] _LTRockColorMap("Rock color", 2D) = "white" {}
+        [HideInInspector] _LTRockNormalMap("Rock normal", 2D) = "bump" {}
+        [HideInInspector] _LTRockMaskMap("Rock mask", 2D) = "white" {}
+        [HideInInspector] _LTRockFarColor("Rock far color AO", 2D) = "white" {}
+        [HideInInspector] _LTRockFarNormal("Rock far normal surface", 2D) = "black" {}
+        [HideInInspector] _LTRockTint("Rock tint", Vector) = (1,1,1,1)
+        [HideInInspector] _LTRockUV("Rock UV", Vector) = (1,1,0,0)
+        [HideInInspector] _LTRockSettings("Rock normal smooth metallic", Vector) = (1,.5,0,0)
+        [HideInInspector] _LTRockFlags("Rock own normal mask", Vector) = (0,0,0,0)
+        [HideInInspector] _LTRockRemap("Rock AO smooth remap", Vector) = (0,1,0,1)
+        [HideInInspector] _LTRockFarParams("Rock far params", Vector) = (0,100,200,0)
         [HideInInspector] _LTTriplanar("Triplanar", Float) = 0
+        [HideInInspector] _LTFastLayerParams("Fast layer blend / projection tolerances", Vector) = (0.03,0.025,0,0)
         [HideInInspector] _LTRoadProjectionEnabled("Spline projection", Float) = 0
         [HideInInspector] _LTRoadProjectionSlots0("Spline slots 0-3", Vector) = (0,0,0,0)
         [HideInInspector] _LTRoadProjectionSlots1("Spline slots 4-7", Vector) = (0,0,0,0)
@@ -12,6 +40,20 @@ Shader "Local Terrain/Eight Layers HDRP"
         [HideInInspector] _LTRoadProjectionMap("Spline coordinates", 2DArray) = "" {}
         [HideInInspector] _LTRoadSuppressionEnabled("Asphalt suppression", Float) = 0
         [HideInInspector] _LTRoadSuppressionMap("Asphalt coverage", 2D) = "black" {}
+        [HideInInspector] _LTAsphaltCracks("Asphalt crack detail",2DArray)="" {}
+        [HideInInspector] _LTAsphaltDamage("Asphalt crack influence",2DArray)="" {}
+        [HideInInspector] _LTAsphaltStyle0("Asphalt style 0",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle1("Asphalt style 1",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle2("Asphalt style 2",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle3("Asphalt style 3",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle4("Asphalt style 4",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle5("Asphalt style 5",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle6("Asphalt style 6",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle7("Asphalt style 7",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle8("Asphalt style 8",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle9("Asphalt style 9",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle10("Asphalt style 10",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle11("Asphalt style 11",Vector)=(0,0,0,0)
         [HideInInspector] _LTDeformationEnabled("Visual deformation", Float) = 0
         [HideInInspector] _LTDeformationRegionCount("Area depth maps", Float) = 0
         [HideInInspector] _LTDeformationRegion0("Area depth 0", 2D) = "black" {}
@@ -49,6 +91,7 @@ Shader "Local Terrain/Eight Layers HDRP"
         [HideInInspector] _LTFarSurface("Far surface", Vector) = (.3,0,0,0)
         [HideInInspector] _LTRect("Chunk rectangle", Vector) = (0,0,1,1)
         [HideInInspector] _LTWorldSize("World size", Vector) = (1,1,0,0)
+[HideInInspector] _LTGlobalRect("Global atlas extent", Vector) = (0,0,1,1)
         [HideInInspector] _LTHeightBlend("Height blend", Float) = 0
         [HideInInspector] _LTBaseOnly("Background only", Float) = 0
         [HideInInspector] _LTDisplacementParams("Displacement params", Vector) = (15,50,2,0)
@@ -349,6 +392,17 @@ Shader "Local Terrain/Eight Layers HDRP"
 
     #pragma target 4.5
     #pragma multi_compile_local _ _LT_FAR_ONLY
+    #pragma multi_compile_local _ _LT_FAST_LAYERS
+    #pragma multi_compile_local _ _LT_FAST_PREHEIGHT
+    #pragma multi_compile_local _ _LT_FAST_COLOR_REMAINDER
+    #pragma multi_compile_local _ _LT_FAST_ROADS
+    #pragma multi_compile_local _ _LT_ROCK_SURFACE _LT_ROAD_BLEND
+            #pragma shader_feature_local _ _LT_ROAD_TERRAIN
+    // Atlas coordinates are mandatory even when runtime-created materials did
+    // not keep a _REQUIRE_UV2 shader_feature variant in the player build.
+    #if defined(_LT_ROCK_SURFACE) && !defined(_REQUIRE_UV2) && !defined(_REQUIRE_UV3)
+    #define _REQUIRE_UV2
+    #endif
     //#pragma enable_d3d11_debug_symbols
 
     //-------------------------------------------------------------------------------------

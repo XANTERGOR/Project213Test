@@ -1,0 +1,55 @@
+Road foundation gizmo (2026-10-10)
+
+Editor-only visualization. No changes to road/terrain generation, authored meshes,
+materials, grass rules, scene serialization or source prefabs.
+
+Select a Road or one of its generated children; enable Scene Gizmos.
+Road inspector > Показывать зоны основания (on by default for the editor session):
+- cyan = half-width plus shoulder;
+- pale cyan = half-width plus shoulder plus terrain blend;
+- heights follow spline height/crossfall, without asphalt lift or burial offsets;
+- free ends are rounded; connected endpoints are clipped at the socket plane;
+- the display remains visible with spline point editing disabled.
+This is the road's spline-defined terrain envelope, NOT the imported module's
+ragged outline or grass-removal footprint. Shoulder is not a promise of full-strength
+height flattening: existing road height falloff starts at the carriageway edge.
+
+Contours sample the nearest-segment field, including bends/overlapping influence.
+A sparse grid has a bounded cell budget and coarser display resolution for very long
+paths. These are approximate editor isolines, not a terrain triangulation contract.
+Immutable snapshot identity caches the result between repaints; generated LODs are
+never inputs. Gizmos restore matrix/color and are not pickable, so they don't take
+over spline/socket mouse controls. The checkbox is SessionState, not a scene field.
+
+Managed check:
+dotnet run --project Tests/TerrainBridgeChecks/TerrainBridgeChecks.csproj --no-restore -- --road-foundation-gizmo
+
+Manual Unity check (not covered by C# or managed math): select Road and toggle Scene
+Gizmos / the checkbox / point editing; adjust Width, Shoulder, Blend, a point height
+and bank; compare both ends when detached/connected; select a generated segment;
+verify no dirty state or bake is triggered by just toggling the display.
+
+Interactive dimension handles (2026-10-10)
+Road inspector > Ручки ширины и обочины в Scene (session-only default on).
+Six small cubes near the selected spline point: orange full road width, cyan
+one-sided shoulder, blue one-sided blend. Three separate stations prevent overlap
+when either band is zero. They change the WHOLE road, not a per-point width.
+Controls work with point editing disabled; Scene Gizmos must remain enabled.
+
+Dragging holds detached PreviewDimensions snapshots. The serialized road, its live
+capture cache and generated meshes remain unchanged until mouse-up. Only the edited
+field is committed with one Undo group, then the normal debounce queues a rebuild.
+Esc, selection/focus loss, reload, undo or a concurrent road edit discard the draft.
+Alt/Shift navigation/point placement don't start a dimension drag. Another Scene
+view can render the same draft but cannot take over its drag control.
+Authored connected sockets lock the width handle (shoulder/blend remain editable).
+Module Fit Width off means the width field affects the ground, not source mesh width.
+Terrain retains the normal Auto Update / Apply Pending Changes policy.
+
+Managed: --road-dimension-handles (conversion/bounds/frames and integration contracts).
+Native preview isolation: Tools > Local Terrain > Validate Road Dimension Preview
+(no scene changes), tag [Road Dimension Preview v1]. Owned preview objects only,
+source/settings/scene hashes and dirty/root guards. Does not drive mouse/Undo.
+Manual: drag either side, release, undo/redo; Esc and focus-loss cancellation;
+zero-width bands; attached authored junction; multiple Scene views; no geometry
+rebuild while dragging. A managed or C# pass does not verify these UI gestures.

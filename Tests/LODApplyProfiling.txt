@@ -1,0 +1,47 @@
+Terrain LOD application diagnostics, 2026-10-10
+
+Scope: diagnostics only, not a completed performance optimization.
+The flight-20261009-224725-299-9ca4598a capture measured TerrainApply up to
+6.047 ms but did not distinguish index assembly, native upload and mesh cloning.
+
+LTChunk now emits four coarse Unity Profiler scopes, collected automatically by
+Tools > Local Terrain > Frame Profiler (5 seconds):
+  LT.LOD.SpatialClone   - release/create the runtime clone and prepare capacity
+  LT.LOD.SpatialIndices - topology.WriteIndices, including the rock seam mapping
+  LT.LOD.SpatialUpload  - Mesh.SetIndices CPU elapsed time, NOT GPU duration
+  LT.LOD.SpatialBind    - assign the spatial clone to the MeshFilter
+Idle chunks emit none of these operation scopes. No per-cell/vertex scopes.
+These are nested under TerrainApply: do not add parent and child totals.
+The existing opt-in 15-second LOD CPU capture remains unchanged.
+
+No LOD thresholds, camera scheduling, dirty gates, triangle assembly, seam
+handling, upload flags, collider handling, renderer policy or save logic changed.
+Mechanical comparison with the pre-turn LTChunk confirmed identical operations
+after removing only the new profiler scopes/declarations and whitespace/braces.
+
+Verification:
+- Unity-reference C# Editor build: 0 errors, 6 existing warnings.
+- ChunkRenderPolicyChecks: actual LTChunk + Unity doubles; scope order, cold,
+  revision, dirty, seam changes/removal, rebind, release, fallback and exception
+  closure; 100 idle updates emit no new scopes. Existing rendering-policy and
+  publication assertions also passed. NOT native Unity rendering.
+- TerrainBridgeChecks --lod-camera: capture accounting, 720 scheduling poses,
+  224 adaptive LOD comparisons, eight layouts / three cache budgets and
+  frozen-reference topology/index parity passed.
+- FrameProfilerChecks: 74 managed assertions passed.
+- Hash audit: 389 existing source/scene/settings/package/test files; only the
+  intended production LTChunk.cs changed. Scenes/settings/locked packages unchanged.
+- git diff --check passed (line-ending notice only).
+
+Known unrelated test failure retained in Logs/LODApplyProfiling-capture-check.log:
+The unrecognized --lod-capture argument ran the default broader test suite.
+It stopped at StagedBuildChecks line 69, which demands the exact strings
+OnDisable(){ReleaseLODPreview();} and OnDestroy(){ReleaseLODPreview();}.
+Both strings were already absent BEFORE this turn: cleanup also releases the
+seam clone and OnDisable notifies the parent world. This assertion was not edited
+and the broader suite is NOT reported as passing. The intended --lod-camera
+route was subsequently run successfully.
+
+Pending: Unity native compilation/import and a new live SceneView flight after
+terrain/vegetation have settled; Record GPU off, scene GPU Details unchanged/on.
+No after-change timing or speedup claim yet. No scene was opened or saved by tools.

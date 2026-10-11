@@ -58,6 +58,7 @@ partial class Checks
                 LTStampMesh.Emit(r,new Vector2(extent,extent),100000,forest,c,fine,H,irregular?Cut:null,out var v,out _,out _,out var indices);
                 Require(SpatialTriangles(v,indices).SetEquals(SpatialTriangles(data.vertices,data.baseIndices)),"spatial LOD0 must match production mesh exactly");
             }
+            SpatialIndexCacheChecks(inputs,columns,rows,divisions);
             var topology=new LTSpatialLODTopology(columns,rows,divisions,inputs);
             topology.Update();topology.Validate();
             var requested=new int[count,divisions*divisions];
@@ -138,6 +139,7 @@ partial class Checks
             tested++;
         }
         Require(idleAlloc==0,"idle topology must allocate zero bytes after warmup");
+        Console.WriteLine("PASS patch index cache vs frozen reference: 8 layouts x 3 budgets x 64 mixed/sparse/uniform changes; byte-order parity, neighbour invalidation, delayed reads, empty/bounded caches, defensive copies and zero warm reuse allocations.");
         var coarse=new List<Vector3Int>{new Vector3Int(0,0,1<<24)};
         Require(LTSpatialLODMath.PartitionLeaves(coarse,4).Count==16,"coarse base split to patch grid");
         Console.WriteLine($"PASS adaptive spatial LOD: {tested} multi-chunk layouts; {mixed} mixed/incremental comparisons; LOD0 parity, watertight edges, preserved holes, far border reduction, return-far cleanup; idle allocation {idleAlloc} B; {clock.Elapsed.TotalSeconds:F2}s managed tests, not native rendering.");

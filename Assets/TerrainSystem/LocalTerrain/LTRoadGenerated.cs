@@ -8,5 +8,6 @@ namespace LocalTerrainPrototype
     {
         public LTRoad owner;
         public string bakeId;
+        [HideInInspector] public bool obsolete;
     }
 }

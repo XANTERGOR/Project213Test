@@ -9,7 +9,7 @@ namespace LocalTerrainPrototype
     // Explicit, transient GPU smoke test. Never opens/saves scenes or edits assets.
     public static class LTRoadCheck
     {
-        [MenuItem("Tools/Local Terrain/Validate Road Rendering")]
+        // Archived validation menu: Tools/Local Terrain/Validate Road Rendering
         public static void Run()
         {
             var owned=new List<UnityEngine.Object>();

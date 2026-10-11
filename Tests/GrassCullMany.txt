@@ -1,0 +1,57 @@
+Shared grass GPU visibility calculation - 2026-10-10
+
+Change and control:
+- LTDetailRenderer exposes "Объединять GPU-отсечение" (gpuUnifiedCulling),
+  default true. It applies when the existing GPU details path is enabled.
+  Turning it off restores the single-output compute path without rebuilding
+  placement. The inspector shows total / unified cull dispatches.
+- CullMany computes distance, existing density thinning, LOD and frustum once
+  per instance per packet, then routes instance IDs to up to eight existing
+  append lists. The Windows D3D11/12 backend retains the same indirect draws.
+- Single-list groups and single-list packet tails use the original Cull kernel.
+  Unsupported CullMany kernels and optional padding allocation failures use
+  the original path. More than eight lists are processed in multiple packets.
+- Draw order, meshes, materials, instance sets, existing LOD thresholds,
+  distances, density, shadow rules and raster shaders are preserved. In
+  particular, offscreen shadow casters are retained as before.
+- Each unused output slot binds a distinct, never-written one-uint append
+  buffer. The shared pool is accounted for and freed with the existing buffers.
+  It does not duplicate the full instance data. No production GPU readbacks.
+
+Why this is optional:
+The previously saved Scene View profile is CPU submission evidence, not a new
+FPS measurement: Logs/FrameProfiles/flight-20261010-162202-816-ad7ee47e-markers.csv.
+It contains about 346 cull dispatches for 337 TryRender calls per frame. Many
+groups therefore offer little opportunity for combining selections. The main
+benefit is expected for prefabs with several active LOD/shadow lists. This
+change does not establish a measured speedup for the user's current scene.
+
+Verification:
+1. dotnet run --project Tests/DetailGpuCpuChecks --no-restore
+   PASS: 45,618 managed assertions; 29,366 dispatch/draw payload comparisons
+   against the frozen legacy renderer. The new unified cases include 3,960
+   draw comparisons, 1..8 LODs, shadow partitions, camera masks, disabled parts,
+   toggles, direct calls, unsupported kernel, failed allocation/retry, removal
+   and memory-pressure cleanup. API doubles do not execute the compute shader.
+   Eight LODs/all shadow modes fixture: 48 -> 6 compute dispatches with the
+   same 96 draw payloads. This operation count is not an FPS estimate.
+2. dotnet run --project Tests/CullManyNativeChecks --no-restore
+   PASS: actual D3D11 WARP compute execution, 64 scenarios and 1,920 sorted
+   append-list comparisons against the frozen pre-change Cull shader.
+   Covers perspective/orthographic, max LOD, thinning, shadow modes/ranges,
+   partial thread groups, inactive slots and boundary distances.
+   Both production entries also compile/create shaders with their original
+   resource declarations. Execution uses explicit test resource registers and
+   constant-buffer layout; HLSL kernel bodies remain unchanged. WARP is a
+   software device, not a GPU performance measurement or Unity import check.
+3. dotnet run --project Tests/TerrainBridgeChecks --no-restore -- --detail-gpu
+   PASS: GPU data layout and source-contract checks.
+4. Assembly-CSharp-Editor.csproj with Tests/LocalTerrainCompile.targets
+   PASS: C# compilation against installed Unity references, 0 errors,
+   6 existing warnings. Output/intermediates are under Logs/GrassCullMany.
+5. git diff --check for changed production/test files: PASS.
+
+Logs and before/after hash audit: Logs/GrassCullMany/.
+Native Unity import, D3D12 execution, raster/image parity and live-scene FPS
+were not measured. No user scene was saved, no player performance benchmark
+was run, no package/cache changes or Unity Editor process operations were made.

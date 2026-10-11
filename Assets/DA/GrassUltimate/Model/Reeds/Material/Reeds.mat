@@ -81,6 +81,10 @@ Material:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _LTGrassTerrainMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _MainTex:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
@@ -204,6 +208,16 @@ Material:
     - _IridescenceMask: 1
     - _IridescenceThickness: 1
     - _IzgibStrength: 67.8
+    - _LTGrassClumpStrength: 0
+    - _LTGrassPatchSize: 12
+    - _LTGrassPatchStrength: 0
+    - _LTGrassRootBase: 0
+    - _LTGrassRootHeight: 0.35
+    - _LTGrassRootStrength: 0
+    - _LTGrassTerrainHeight: 0.002
+    - _LTGrassTerrainReady: 0
+    - _LTGrassTerrainStrength: 1
+    - _LTGrassVariationSeed: 1
     - _LinkDetailsWithBase: 1
     - _MaterialID: 0
     - _MaterialTypeMask: 32
@@ -294,6 +308,12 @@ Material:
     - _EmissiveColorLDR: {r: 0, g: 0, b: 0, a: 1}
     - _InvPrimScale: {r: 1, g: 1, b: 0, a: 0}
     - _IridescenceThicknessRemap: {r: 0, g: 1, b: 0, a: 0}
+    - _LTGrassRootInObject: {r: 0, g: 0, b: 0, a: 0}
+    - _LTGrassRootTint: {r: 0.6, g: 0.47999996, b: 0.32999998, a: 1}
+    - _LTGrassTerrainU: {r: 0, g: 0, b: 0, a: 0}
+    - _LTGrassTerrainV: {r: 0, g: 0, b: 0, a: 0}
+    - _LTGrassTintA: {r: 0.96999997, g: 0.95, b: 0.87, a: 1}
+    - _LTGrassTintB: {r: 0.78999996, g: 0.83, b: 0.75, a: 1}
     - _SpecularColor: {r: 1, g: 1, b: 1, a: 1}
     - _ThicknessRemap: {r: 0, g: 1, b: 0, a: 0}
     - _TransmittanceColor: {r: 1, g: 1, b: 1, a: 1}

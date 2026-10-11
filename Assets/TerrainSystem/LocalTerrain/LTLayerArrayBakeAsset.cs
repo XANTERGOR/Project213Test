@@ -9,6 +9,7 @@ namespace LocalTerrainPrototype
     {
         public const int CurrentVersion=1;
         public int version=CurrentVersion;
+        public LTLayerArrayStorage storage;
         public Texture2DArray color,normal,mask;
         public LTSurfaceLayer[] layers;
         public Texture2D[] sourceColors,sourceNormals,sourceMasks;
@@ -28,22 +29,26 @@ namespace LocalTerrainPrototype
         {
             reason="Нужна перепаковка: ";
             if(version!=CurrentVersion){reason+="версия формата.";return false;}
+            if(storage!=world.arrayStorage||(storage!=LTLayerArrayStorage.RGBA32&&storage!=LTLayerArrayStorage.BC7_BC5))
+            {reason+="формат хранения.";return false;}
             if(!color||!normal||!mask){reason+="отсутствует один из массивов.";return false;}
+            if(storage==LTLayerArrayStorage.BC7_BC5&&(!SystemInfo.SupportsTextureFormat(TextureFormat.BC7)||!SystemInfo.SupportsTextureFormat(TextureFormat.BC5)))
+            {reason+="GPU не поддерживает BC7/BC5; используется RGBA32-предпросмотр.";return false;}
             if(colorSpace!=QualitySettings.activeColorSpace){reason+="изменилось цветовое пространство.";return false;}
             if(palette==null||palette.Count==0||layers==null||layers.Length!=palette.Count||
                 sourceColors==null||sourceColors.Length!=layers.Length||sourceNormals==null||sourceNormals.Length!=layers.Length||
                 sourceMasks==null||sourceMasks.Length!=layers.Length)
             {reason+="состав палитры.";return false;}
-            bool ArrayMatches(Texture2DArray array,int size,bool linear)
+            bool ArrayMatches(Texture2DArray array,int size,bool linear,int kind)
             {
                 int mips=1;for(int s=size;s>1;s>>=1)mips++;
                 return array.width==size&&array.height==size&&array.depth==layers.Length&&array.mipmapCount==mips&&
-                    array.format==TextureFormat.RGBA32&&array.isDataSRGB==!linear&&array.wrapMode==TextureWrapMode.Repeat&&
+                    array.format==LTLayerArrayStorageUtility.Format(storage,kind)&&array.isDataSRGB==!linear&&array.wrapMode==TextureWrapMode.Repeat&&
                     array.filterMode==(world.arrayTrilinear?FilterMode.Trilinear:FilterMode.Bilinear)&&
                     array.anisoLevel==Mathf.Clamp(world.arrayAnisotropy,1,16);
             }
-            if(!ArrayMatches(color,(int)world.arrayColorResolution,false)||!ArrayMatches(normal,(int)world.arrayNormalResolution,true)||
-                !ArrayMatches(mask,(int)world.arrayMaskResolution,true))
+            if(!ArrayMatches(color,(int)world.arrayColorResolution,false,0)||!ArrayMatches(normal,(int)world.arrayNormalResolution,true,1)||
+                !ArrayMatches(mask,(int)world.arrayMaskResolution,true,2))
             {reason+="разрешение, фильтрация или структура массивов.";return false;}
             for(int i=0;i<layers.Length;i++)
                 if(!layers[i]||layers[i]!=palette[i]||sourceColors[i]!=layers[i].baseColorMap||
@@ -62,6 +67,8 @@ namespace LocalTerrainPrototype
             var text=new System.Text.StringBuilder("LT layer arrays:").Append(CurrentVersion).Append(':')
                 .Append(QualitySettings.activeColorSpace).Append(':').Append((int)world.arrayColorResolution).Append(':')
                 .Append((int)world.arrayNormalResolution).Append(':').Append((int)world.arrayMaskResolution);
+            // Keep the exact legacy fingerprint for RGBA32 so existing bakes stay valid.
+            if(world.arrayStorage!=LTLayerArrayStorage.RGBA32)text.Append(":storage:").Append((int)world.arrayStorage);
             void Reference(UnityEngine.Object value,bool contents)
             {
                 if(!value){text.Append("/null");return;}

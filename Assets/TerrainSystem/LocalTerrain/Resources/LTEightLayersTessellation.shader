@@ -1,7 +1,7 @@
 // Based on Unity HDRP 17.3 LitTessellation.shader (Unity Companion License).
 Shader "Local Terrain/Eight Layers Tessellation HDRP"
 {
-    Properties
+Properties
     {
         [HideInInspector] _LTTriplanar("Triplanar", Float) = 0
         [HideInInspector] _LTRoadProjectionEnabled("Spline projection", Float) = 0
@@ -11,6 +11,20 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         [HideInInspector] _LTRoadProjectionMap("Spline coordinates", 2DArray) = "" {}
         [HideInInspector] _LTRoadSuppressionEnabled("Asphalt suppression", Float) = 0
         [HideInInspector] _LTRoadSuppressionMap("Asphalt coverage", 2D) = "black" {}
+        [HideInInspector] _LTAsphaltCracks("Asphalt crack detail",2DArray)="" {}
+        [HideInInspector] _LTAsphaltDamage("Asphalt crack influence",2DArray)="" {}
+        [HideInInspector] _LTAsphaltStyle0("Asphalt style 0",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle1("Asphalt style 1",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle2("Asphalt style 2",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle3("Asphalt style 3",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle4("Asphalt style 4",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle5("Asphalt style 5",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle6("Asphalt style 6",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle7("Asphalt style 7",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle8("Asphalt style 8",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle9("Asphalt style 9",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle10("Asphalt style 10",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle11("Asphalt style 11",Vector)=(0,0,0,0)
         [HideInInspector] _LTDeformationEnabled("Visual deformation", Float) = 0
         [HideInInspector] _LTDeformationRegionCount("Area depth maps", Float) = 0
         [HideInInspector] _LTDeformationRegion0("Area depth 0", 2D) = "black" {}
@@ -48,7 +62,9 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
         [HideInInspector] _LTFarSurface("Far surface", Vector) = (.3,0,0,0)
         [HideInInspector] _LTRect("Chunk rectangle", Vector) = (0,0,1,1)
         [HideInInspector] _LTWorldSize("World size", Vector) = (1,1,0,0)
+[HideInInspector] _LTGlobalRect("Global atlas extent", Vector) = (0,0,1,1)
         [HideInInspector] _LTHeightBlend("Height blend", Float) = 0
+        [HideInInspector] _LTFastLayerParams("Fast layer parameters", Vector) = (0.03,0.025,0,0)
         [HideInInspector] _LTBaseOnly("Background only", Float) = 0
         [HideInInspector] _LTDisplacementParams("Displacement params", Vector) = (15,50,2,0)
         [HideInInspector] _LTDisplacement0("Displacement 0", Vector) = (0,.5,0,0)
@@ -419,6 +435,10 @@ Shader "Local Terrain/Eight Layers Tessellation HDRP"
     // Only has effect if the global mip bias is enabled in shader config and DRS is enabled.
     #define SUPPORT_GLOBAL_MIP_BIAS
 
+    #pragma multi_compile_local _ _LT_FAST_LAYERS
+    #pragma multi_compile_local _ _LT_FAST_PREHEIGHT
+    #pragma multi_compile_local _ _LT_FAST_COLOR_REMAINDER
+    #pragma multi_compile_local _ _LT_FAST_ROADS
     #define TESSELLATION_ON
     #define LT_TESSELLATION
     #define _TESSELLATION_DISPLACEMENT

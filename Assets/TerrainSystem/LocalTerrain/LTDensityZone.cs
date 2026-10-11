@@ -2,6 +2,7 @@ using UnityEngine;
 namespace LocalTerrainPrototype
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")] // Kept only so old scenes can be converted without missing scripts.
     public sealed class LTDensityZone : MonoBehaviour
     {
         [Min(.01f)] public Vector2 size = new Vector2(16,16);

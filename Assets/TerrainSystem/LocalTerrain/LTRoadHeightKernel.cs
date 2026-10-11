@@ -14,6 +14,7 @@ namespace LocalTerrainPrototype
             public Rect bounds;
             public int firstNode,endNode,firstSample,lastSample;
             public float length,maxHalfWidth;
+            public float foundationStartReach,foundationEndReach;
         }
         public struct Node
         {
@@ -91,6 +92,10 @@ namespace LocalTerrainPrototype
                 radialDistance=(float)Math.Sqrt(best),distance=sa.distance+(sb.distance-sa.distance)*f,
                 bank=sa.bank+(sb.bank-sa.bank)*f,variationStrength=sa.variationStrength+(sb.variationStrength-sa.variationStrength)*f};
             trace.hit=hit;
+            // Exact LOD0 footprint-dependent residuals are evaluated by the
+            // existing reference fallback only near an opted-in connected end.
+            if(road.foundationStartReach>0&&hit.distance<=road.foundationStartReach||
+                road.foundationEndReach>0&&road.length-hit.distance<=road.foundationEndReach)trace.ambiguous=1;
             if(s.straightStart&&hit.distance<=0&&Vector3.Dot(new Vector3(x-hit.position.x,0,z-hit.position.z),
                 new Vector3(-samples[road.firstSample].right.z,0,samples[road.firstSample].right.x))<-.00001f)return original;
             if(s.straightEnd&&hit.distance>=road.length&&Vector3.Dot(new Vector3(x-hit.position.x,0,z-hit.position.z),
@@ -103,10 +108,47 @@ namespace LocalTerrainPrototype
             trace.halfWidth=halfWidth;trace.rutFade=rutFade;trace.weight=weight;
             if(weight<=0)return original;
             float target=hit.position.y+hit.lateral*(float)Math.Tan(Math.Max(-80,Math.Min(80,hit.bank))*Math.PI/180);
+            if(s.mode==LTRoadMode.TerrainAsphalt)target-=LTRoadAsphaltMath.Evaluate(s.asphaltDamage,hit,s.width,road.length).depression;
             if(s.mode==LTRoadMode.Offroad&&s.pattern==LTRoadPattern.Tracks)target-=s.rutDepth*TrackWeight(road,hit,x,z)*rutFade;
             else if(Varied(s)&&s.variation.solidRuts)target-=s.rutDepth*TrackWeight(road,hit,x,z)*rutFade*VariationStrength(road,hit);
             trace.target=target;trace.result=original+(target-original)*weight;
             return original+(target-original)*weight;
+        }
+        // Paint consumes the reference-resolved hit, not a second projection.
+        public static void Paint(Road r,LTRoadMath.Hit h,float x,float z,out float ground,out float wheels)
+        {
+            ground=wheels=0;
+            if(!Finite(x)||!Finite(z)||x<r.bounds.xMin||x>r.bounds.xMax||z<r.bounds.yMin||z>r.bounds.yMax)return;
+            var s=r.settings;bool varied=Varied(s);
+            if(s.mode==LTRoadMode.Offroad&&s.wheelTracks.enabled&&s.wheelLayerId!=0&&s.wheelTracks.strength>0)
+            {
+                var w=s.wheelTracks;
+                float half=w.width*.5f*(1-s.edgeNoise*Noise(x/s.noiseSize,z/s.noiseSize,s.seed)*.8f);
+                float across=Math.Abs(Math.Abs(h.lateral)-w.separation*.5f);
+                float beyond=Math.Max(0,h.radialDistance*h.radialDistance-h.lateral*h.lateral);
+                float mask=Fade((float)Math.Sqrt(across*across+beyond),half*(1-w.softness),half*w.softness);
+                if(mask>0)
+                {
+                    mask*=Fade(h.radialDistance,HalfWidth(r,h),s.shoulderWidth);
+                    if(s.straightStart)mask*=Smooth(Clamp01(h.distance/Math.Max(2,s.junctionStartLength)));
+                    if(s.straightEnd)mask*=Smooth(Clamp01((r.length-h.distance)/Math.Max(2,s.junctionEndLength)));
+                    if(varied&&s.variation.rutVariation>0)
+                    {var v=s.variation;float n=Noise(h.distance/v.rutLength,.43f,unchecked(v.seed^0x47591));mask*=1-v.rutVariation*VariationStrength(r,h)*Smooth(Clamp01((n-.2f)/.6f));}
+                    wheels=mask*w.strength;
+                }
+            }
+            float footprint=Fade(h.radialDistance,HalfWidth(r,h),s.shoulderWidth);
+            ground=footprint;
+            if(s.mode==LTRoadMode.TerrainAsphalt)
+            {ground*=1-LTRoadAsphaltMath.Evaluate(s.asphaltDamage,h,s.width,r.length).removed;return;}
+            if(s.mode==LTRoadMode.Offroad&&s.pattern==LTRoadPattern.Tracks)
+            {float tracks=TrackWeight(r,h,x,z);ground=varied&&s.variation.widthAmount>0?tracks*footprint:tracks;}
+            if(ground<=0||!varied||s.variation.patchStrength<=0)return;
+            var variation=s.variation;
+            float noise=Noise(h.distance/variation.patchSize,h.lateral/variation.patchSize,unchecked(variation.seed^0x36a51));
+            float patches=Smooth(Clamp01((noise-.25f)/.5f));
+            float track=s.pattern==LTRoadPattern.Tracks||variation.solidRuts?TrackWeight(r,h,x,z):0;
+            ground*=1-variation.patchStrength*VariationStrength(r,h)*patches*(1-.85f*track);
         }
         static bool Varied(LTRoadMath.Settings s)=>s.mode==LTRoadMode.Offroad&&s.variation.enabled&&s.variation.strength>0;
         static float VariationStrength(Road r,LTRoadMath.Hit h)

@@ -1,0 +1,195 @@
+Authored asphalt junction: single-object workflow (v2)
+
+Authored junction mesh depth (2026-10-09)
+- Road Junction > Заглубление меша, м. Default 0 preserves existing output/signatures.
+  Positive depth lowers every prepared authored LOD and collider LOD0 by that amount:
+  rendered local Y = source local Y + surfaceOffset - meshDepth. Both own-hierarchy
+  and separate-prefab modes support it; procedural junctions ignore this parameter.
+- Terrain foundation centre/height, source Transform and spline/neck reference heights
+  do not change. Do not lower the root Transform to imitate this control: the root
+  also places the terrain foundation. Deep burial can cover holes/pavement with ground;
+  this control does not cut the terrain away or guarantee a useful depth for any mesh.
+- Generated socket handles and strict/fit seam frames use the lowered render offset.
+  Depth participates in EndpointHash so attached roads and their blend masks rebuild.
+  FitProfile deforms the terminal mesh within its existing shift/fold guards, without
+  lowering the road's terrain/spline. StrictFuse stays strict: matching road/junction
+  source profiles also need matching placement (usually road moduleBaseY = meshDepth).
+  Different heights beyond the strict tolerance fail; no hidden fallback is introduced.
+- The single-object migration copies meshDepth. Imported FBXs/prefabs stay untouched.
+- Managed --road-junction-fit: 450 raw FBX combinations including 0/5/12 cm depth.
+  --road-junction-prefab also covers compatible lowered strict seams and rejects
+  unmatched heights. These do not execute native Unity component/bake behaviour.
+- Native: Tools > Local Terrain > Validate Junction Mesh Depth (no scene changes).
+  Owned preview scene, imported Road_Perek_1 + Road_1, both source modes, 3 ports,
+  start/end, all mixed LOD pairs, unchanged terrain/spline, transformed placement,
+  lowered collider LOD0, zero-depth restore, invalid-input and file/scene guards.
+  No scene or asset saved. Interactive rebuilding, appearance and Undo remain manual.
+
+Junction ground blend (2026-10-09)
+- Opt-in Road Junction > Бленд с грунтом, for both OwnHierarchy and AuthoredPrefab.
+  Default source is the existing terrain layers; single-layer mode has a separate
+  blend-only layer, not the foundation paint layer. Existing nodes remain disabled.
+- Reuses road HDRP/Lit, authored RoadShader and saved ShaderGraph adapters. Source
+  materials/graphs/meshes are never edited. The adapter update button is also here.
+- One RGHalf LOD0 footprint distance mask for every authored LOD; independent outer
+  edge and through-hole widths, strength, noise size/seed. No extra geometry/pass.
+- Mask unions the seam-validated LOD0 footprints of connected roads and the junction.
+  Connected entrances are not an exterior rim; disconnect restores the rim. Match
+  road/junction blend settings for visual continuity. It is a material blend, not
+  transparency or a repair for floating geometry/overlapping surfaces.
+- Junction window includes every authored LOD bound plus maximum blend width and
+  four mask cells. Attached branches are raster-clipped; a forced empty frame lies
+  beyond the shader's blend support. Long branches cannot enlarge this texture.
+  Empty areas connected to that local frame count as exterior, not enclosed holes.
+- Saved content-addressed materials/mask share the road binding and world's terrain
+  cache, including junction regions. LOD switching never changes materials/mask or
+  collider LOD0. World/owner matrices restore via renderer property blocks.
+- Native: Tools > Local Terrain > Validate Junction Ground Blend (no scene changes).
+  Owned preview scene: GPU edge/hole/entrance probes, bounded branch/disconnect,
+  single/terrain shader variants, binding lifecycle/regions, imported Road_Perek_1
+  + Road_1 at three ports, source/scene/settings hashes. No scene/assets saved.
+  This does not run the real bake/save/Undo pipeline or measure live performance.
+- Managed --road-ground-blend now also covers bounded 10km branches, disconnect,
+  holes, local transforms and mask-size rejection. Native validation still needs
+  to be run in the editor; a managed/C# pass does not prove rendered appearance.
+
+Opt-in profile fitting (2026-10-09)
+- Road Junction > Стык дороги > Подгонка профиля (без смены сетки).
+  Existing serialized nodes retain StrictFuse=0. FitProfile=1 is explicit, no fallback.
+- Initial values: transition 1 m, max movement 0.1 m, end search band 0.005 m.
+  Transition must fit inside the straight entrance and terminal generated road chunk.
+  Width on Road and Port must still agree. Source dimensions must be close to Port.
+- Selects the continuous upper profile plus descending sidewalls, not underside
+  tails or internal cap triangulation. Visible profile anchor counts must agree;
+  this is NOT arbitrary retopology or a promise to bridge any non-manifold mesh.
+- Fits the terminal road chunk to the junction's LOD0 profile, with smooth falloff
+  of vertex displacement. Authored junction LODs use the same canonical profile.
+  Mesh density limits how smoothly the actual triangles can interpolate the change.
+- No vertices, triangles, submesh slots, UV channels or colors added/removed.
+  Normals/tangents are transported through the deformation; source assets remain
+  untouched. Lower caps are deformed but not deleted. Interior outside the support
+  is unchanged. Degenerate/flipped faces, oversized movement, ambiguous/disconnected
+  profiles, different visible anchor counts and transitions crossing chunk boundaries
+  reject preparation; all LODs are staged before road output is replaced.
+- Conservative limit: junction mesh must be behind its socket plane; terminal road
+  chunk must be in front. A loop crossing that plane needs shorter generated chunks.
+- Managed: --road-junction-fit exercises actual Road_Perek_1 and Road_1..5 FBXs,
+  synthetic differing caps/heights, split vertices, yaw/world positions, thin-row and
+  invalid-input rejection. --road-fuse and --road-junction-prefab guard old modes.
+- Native: Tools > Local Terrain > Validate Junction Profile Fit (no scene changes).
+  Uses imported prefabs in an owned preview scene, all authored levels, all entrances,
+  start/end curved approaches, base Y=0.05, collider LOD0, read-only preflight/failure,
+  source and scene guards. No scene/assets saved. Does not simulate mouse/Enter/Undo
+  or certify rendered appearance. Source prefab scripts instantiate in this check only.
+
+Recommended workflow
+1. Select the model root with meshes/LODGroup and Port children. Use GameObject >
+   Local Terrain > Make Junction From Selected. Or add Road Junction on that root:
+   Reset chooses OwnHierarchy when meshes are present. No prefab reference needed.
+2. Existing empty child controllers: the inspector button "Собрать один объект на
+   родительской модели (Undo)" sets up the parent. The old controller is disabled,
+   not deleted. Conversion refuses already-connected/generated/nested geometry
+   rather than silently moving a live network. Model transforms are not changed.
+3. Put this one object under LTWorld. Parameters for height, straight entrance and
+   foundation/vegetation remain visible; tolerance, materials and LOD are Advanced.
+4. Select a Road, enable point editing in Scene and select its FIRST or LAST point.
+   Move it near an entrance (yellow) and press Enter, or click a cyan socket. Gray
+   sockets are occupied. Confirmation runs the actual module/LOD seam preparation
+   without editing references or point/cache data; only then is the binding written.
+5. Disconnect via the Scene panel or junction inspector. The current attached
+   endpoint becomes an editable point, even if the junction has moved. Undo/Redo
+   records binding changes. The next/penultimate point must remain outside the neck.
+6. OwnHierarchy adapts road endpoint baseline for differing surface offsets; width
+   and authored end profiles must still match. Source LODs/indices are not replaced.
+
+Source/output ownership
+- Successful baking publishes a generated child and suppresses original renderers,
+  LODGroups and colliders. Original Mesh/Material assets are never overwritten.
+- Original enabled states are stored on the node and restored on disable; output
+  is then hidden. Re-enable suppresses source and activates output. Source GameObjects
+  remain active (markers/scripts aren't silently deactivated). Do not use animated
+  geometry or scripts that toggle source renderer/LOD/collider state behind the baker.
+- Generated road/junction descendants and nested independent nodes are excluded
+  from source discovery, LODs, sockets and source dependency keys. Repeated rebuilding
+  must not read its own output or trigger an endless visibility-driven rebuild loop.
+- Prefab Mode is for source authoring, not terrain baking. Use a regular wrapper for
+  a model import. Keep node + original LODGroup/meshes + sockets in the prefab.
+- Old numeric modes (Procedural=0 / AuthoredPrefab=1) are preserved; OwnHierarchy=2.
+
+New Unity check
+Tools > Local Terrain > Validate Simple Junction Workflow (no scene changes)
+Runs the owned T fixtures below in OwnHierarchy mode, plus preview/cache immutability,
+failed bindings, connect/disconnect, differing road offset, repeated-source discovery,
+source visibility and disable/enable lifecycle. No user scenes/assets are saved.
+Mouse/Enter gestures and Undo need manual verification in Scene after this check;
+a C# build/managed math pass does not validate native Unity editor interaction.
+
+Scope
+- Separate Road Junction geometry mode: Authored Prefab. Existing procedural nodes
+  are unchanged. Asphalt only, unit scale, yaw rotation, one socket baseline Y=0.
+- Meshes/material slots come from the prefab's single LODGroup (1-8 nonempty levels),
+  or one level without a LODGroup. No source scripts/objects are instantiated.
+- LOD meshes are retained, not automatically simplified. Switching uses metre
+  distances on Road Junction, not LODGroup screen percentages. Missing distance
+  entries use the normal road policy. Collider always uses LOD0.
+- Strict position-only Fuse compares geometric rim points AND edges on every LOD.
+  Small coordinate noise can be snapped within Socket Tolerance. No re-triangulation,
+  UV/normal welding, replacement LOD, cap deletion, or implicit transition geometry.
+- Authored foundations default to MeshFootprint: cached source LOD0 triangle-union
+  projection, including concavities and through-holes. Shoulder expands the footprint;
+  Blend Width adds a smooth return to original terrain. Small holes can be covered
+  by these offsets. Height is still a single plane, NOT mesh-Y height sampling.
+  Foundation height/shape do not follow render LOD or mesh burial depth.
+  Terrain height/density, paint weights (CPU/job preparation), vegetation removal
+  and displacement suppression share this shape. Saved grass keys include geometry.
+  Circle remains an explicit legacy option; only that mode requires Radius to contain
+  the mesh. Neither mode changes sockets, authored mesh topology, UV or source assets.
+  After rebuilding a junction, Apply Pending Changes in LT World rebuilds the terrain.
+  Gizmo contours are approximate cached display isolines; CPU masks use exact distances.
+- Managed check: --junction-foundation. Native: Tools > Local Terrain > Validate
+  Junction Mesh Foundation (no scene changes), tag [Junction Mesh Foundation v1].
+  Includes real Road_Perek_1, source cache/LOD/visibility/depth invariance, generated
+  exclusion, moves/mesh changes, hole coverage, actual paint preparation and kernel,
+  grass-removal weights and displacement-map cache/removal. Owned preview scene with
+  hashes and dirty/root guards. No user scene or source asset writes. Native Burst,
+  full terrain rebuild, live appearance and speed require their own verification.
+- Junction material/UV are authored (optional material override). Opt-in ground
+  blending is described above. Roads include the connected junction's real LOD0
+  footprint in their own blend mask so the seam isn't an outer rim on either side.
+- A pre-publication socket/topology error keeps old generated meshes visible. This
+  does not roll back an intentional node/road transform edit or provide an atomic
+  multi-object transaction for disk errors while saving generated mesh assets.
+
+Legacy separate-prefab authoring (still supported)
+1. Create an ordinary prefab wrapping your junction mesh/LODGroup. Do not add the
+   terrain Road Junction component to the source prefab.
+2. In Prefab Mode, select its root and use GameObject > Local Terrain > Junction
+   Socket. Rename e.g. Port_Left / Port_Right / Port_Main. Markers must be outside
+   the LOD meshes, shared by all levels. They do not render in a built game.
+3. Put each marker at the CENTER of the full entrance cross-section, Y=0 relative
+   to the prefab root. Set Width to the full width in metres, Scale=1. Blue Z points
+   outward, green Y upward. The whole junction must be behind the entrance plane.
+   Keep identical boundary subdivisions on all LODs, matching the connecting road.
+   Open or closed thickness profiles are accepted if both sides match. Winding,
+   materials, UV and authored hard edges remain your responsibility.
+4. Create/select a scene Road Junction inside LTWorld, select Asphalt / Authored
+   Prefab, assign the prefab, set radius/offset/neck and LOD distances. Materials
+   are from the prefab unless the optional override is assigned.
+5. Select a road, its start/end and a free socket in the junction inspector; connect.
+   Or set Junction + socket in the Road inspector. One road endpoint per socket.
+   Road width and Surface Offset must match. The second/penultimate control point
+   must lie OUTSIDE the entrance beyond Neck Length. Do not move the source marker
+   to compensate for a different road Module Base Y: match the actual profiles.
+6. Rebuild/bake the junction. This also rebuilds connected roads and requests terrain
+   refresh. User scenes are not saved automatically by this button.
+
+Checks
+- Managed: dotnet run --project Tests/TerrainBridgeChecks/TerrainBridgeChecks.csproj
+  --no-restore -- --road-junction-prefab
+- Unity: Tools > Local Terrain > Validate Authored Junction Prefab (no scene changes)
+  Uses owned preview-scene T/road fixtures, two authored LODs, all 3 sockets and
+  start/end approaches, mixed LOD seam checks, collider LOD0, unchanged channels,
+  holes and invalid inputs. No source mesh or user scene is saved. Checks scene
+  root counts/dirty states and source/settings/scene-file hashes before/after.
+- Separate C# build and managed geometry passes are NOT native import, rendered
+  quality, actual user-prefab compatibility or live performance measurements.

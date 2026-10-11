@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTGrassTerrainBinding.cs" Link="Production/LTGrassTerrainBinding.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailGpuRenderer.cs" Link="Production/LTDetailGpuRenderer.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailMaterialNotifications.cs" Link="Production/LTDetailMaterialNotifications.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailGpuData.cs" Link="Production/LTDetailGpuData.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTDetailUploadBudget.cs" Link="Production/LTDetailUploadBudget.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/Editor/LTDetailMaterialRevisionProbe.cs" Link="Prototype/LTDetailMaterialRevisionProbe.cs" />
+  </ItemGroup>
+</Project>

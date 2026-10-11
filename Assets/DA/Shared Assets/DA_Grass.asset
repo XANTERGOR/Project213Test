@@ -12,6 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b2686e09ec7aef44bad2843e4416f057, type: 3}
   m_Name: DA_Grass
   m_EditorClassIdentifier: 
+  m_Version: 2
   profile:
     scatteringDistance: {r: 0.93682134, g: 0.92710876, b: 0.8301804, a: 1}
     scatteringDistanceMultiplier: 64
@@ -22,8 +23,7 @@ MonoBehaviour:
     diffuseShadingPower: 3
     borderAttenuationColor: {r: 1, g: 1, b: 1, a: 0}
     transmissionMode: 1
-    thicknessRemap: {x: 35, y: 50}
+    thicknessRemap: {x: 34.999996, y: 50}
     worldScale: 1
     ior: 1
     hash: 1077665108
-  m_Version: 2

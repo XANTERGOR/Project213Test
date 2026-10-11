@@ -1,0 +1,75 @@
+Editor Capture polling optimization (2026-10-10)
+
+Scope
+- LT.Editor.Capture previously reached 2.057 ms total in the partial CPU-only
+  flight-20261009-234925-342-ca6fef9d capture. This is the baseline, not a result
+  of this change. Frame maximum was 14.871 ms with coincident LOD/Capture work.
+- LTRoadTerrainLODCapture still queries the live generated hierarchy every poll,
+  checking owner, activation, bake validity, mesh identities/readability, dirty
+  counts, dependency hashes, vertex/submesh counts, matrices, order and settings.
+  It reuses scratch lists and the exact old road-foundation-v2 string when those
+  inputs are unchanged, instead of reformatting every matrix/mesh into text.
+- LTRoadCaptureSignature compares matrix float bits, not approximate equality
+  or a collision-prone hash. Changes of number-format symbols also invalidate
+  text reuse. A failed/abandoned input collection does not commit a new key.
+- The immutable surface cache's validity rules and conservative null/fallback
+  outputs are unchanged. Scratch Unity object references are cleared in finally.
+  This does NOT introduce new detection guarantees for an unmarked native mesh
+  content edit which changes neither dirty count nor existing metadata/hash.
+- LTRoadJunction.SourceMember uses live TryGetComponent for optional boundary
+  components; there is no negative-result cache. Generated/nested boundaries,
+  root acceptance, inactive/disabled components and ordering are preserved.
+- Coarse markers now separate Capture.Road, Capture.RoadFoundation,
+  Capture.Junction, Capture.Height and Capture.Mesh. RoadFoundation is nested
+  under Road, so do not add parent/child inclusive durations together.
+- No polling intervals, build budgets, terrain geometry, scene/settings/assets,
+  vegetation placement or reload ownership rules were changed.
+
+Managed validation
+  dotnet run --project Tests/TerrainBridgeChecks -- --editor-capture
+  PASS 2050 assertions: 1000 mutated legacy text comparisons; warm key identity;
+  add/remove/reorder; matrices including tiny changes and signed zero; settings;
+  mesh revision/dependency/count changes; multiple cultures and an in-place
+  NumberFormatInfo edit; aborted/failed collection; 1000 warm polls allocated
+  0 bytes in pure signature bookkeeping. This excludes Unity/native queries,
+  entire Capture, first-run costs and surface rebuilding.
+  Logs/EditorCapture-managed-final.log
+  Initial test compilation had ambiguous System/Unity Random; fixed in test,
+  with the failed attempt retained in Logs/EditorCapture-managed.log.
+
+Regression suites (Logs/EditorCapture-regressions-final.log)
+  --editor-tick: 256010 assertions
+  --editor-reload: 297
+  --mesh-stamp-cache: 2034
+  --road-foundation-lod: data, Jobs-input/scalar parity and wiring PASS
+  --junction-foundation: 94540 assertions plus 11921 vegetation reference points
+  --road-junction-prefab: 8708 network samples and 150 authored seam assertions
+  --detail-placement: 30
+  These are targeted suites, not a claim that the full repository suite passed.
+
+C# compilation
+  dotnet build Assembly-CSharp-Editor.csproj --no-restore -v:minimal
+    /p:CustomAfterMicrosoftCommonTargets=G:/UnityProjects/Project213-Testing/Tests/LocalTerrainCompile.targets
+    /p:OutputPath=Logs/EditorReload-build/bin/
+    /p:IntermediateOutputPath=Logs/EditorReload-build/obj/
+  PASS, 0 errors, 6 existing warnings. Logs/EditorCapture-build.log.
+  Does not prove native import, preview validation or live scene performance.
+
+Native validation (user-run, 2026-10-10)
+  Tools > Local Terrain > Validate Editor Capture Polling (no scene changes)
+  Confirmed in C:/Users/user/AppData/Local/Unity/Editor/Editor.log:
+  [Editor Capture Polling v1] PASS 1481 checks.
+  Owned preview scene; temporary roads/meshes only, no user-scene save or Undo.
+  Compares against LTRoadCaptureReference, a frozen pre-change implementation:
+  exact keys, surface bounds/count/clearance/edges, warm identity, tiny/parent
+  transforms, membership/order/owner, disabled/inactive LODs, mesh replacement,
+  marked content changes, unreadable/missing/invalid inputs, and source ownership.
+  Verifies source/settings/package/open-scene file hashes and user-scene
+  dirty/root/active state after cleanup of owned objects.
+
+After native PASS
+  Frame Profiler (5 seconds), Scene View, Record GPU OFF; GPU Details stay ON.
+  Use the familiar route after terrain/grass recovery. Compare full Capture,
+  child markers, GC, LOD coincidence and frame distribution to the baseline.
+  Partial recordings and unequal camera paths do not establish a clean A/B win.
+  Standalone-player vegetation checks and quality presets remain deferred.

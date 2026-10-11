@@ -24,13 +24,13 @@ Material:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: Rock_Scatter 1
-  m_Shader: {fileID: 4800000, guid: 8ce045feb4d898749ad119ec3bb00567, type: 3}
+  m_Shader: {fileID: -6465566751694194690, guid: 1c350693c470c3e4d86beae57119aa7f, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
-  m_ValidKeywords: []
-  m_InvalidKeywords:
+  m_ValidKeywords:
   - _DISABLE_SSR
   - _DISABLE_SSR_TRANSPARENT
+  m_InvalidKeywords:
   - _NORMALMAP_TANGENT_SPACE
   m_LightmapFlags: 0
   m_EnableInstancingVariants: 1
@@ -58,6 +58,10 @@ Material:
         m_Offset: {x: 0, y: 0}
     - _AR_1:
         m_Texture: {fileID: 2800000, guid: a85d6cf05241d7544b54f65622075c17, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Albedo_1:
+        m_Texture: {fileID: 2800000, guid: 7804eaa3f10fd3b449be21abd14ce948, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _AnisotropyMap:
@@ -164,6 +168,10 @@ Material:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _Mask_1:
+        m_Texture: {fileID: 2800000, guid: 2f2e91a52484d9c4c827dbd5bcf7041d, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _MetBarrel_1_BCR:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
@@ -202,6 +210,10 @@ Material:
         m_Offset: {x: 0, y: 0}
     - _NormalMapOS:
         m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Normal_1:
+        m_Texture: {fileID: 2800000, guid: 64bfedd780257a74bbf15fe1707a84cb, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _RGB_Mask:
@@ -299,7 +311,7 @@ Material:
     m_Ints: []
     m_Floats:
     - Global: 1
-    - _AO: 0.82
+    - _AO: 2
     - _AO1: 3.55
     - _AO2: 1
     - _AORemapMax: 1
@@ -382,6 +394,7 @@ Material:
     - _EnableFogOnTransparent: 1
     - _EnableGeometricSpecularAA: 0
     - _EnergyConservingSpecularColor: 1
+    - _ExcludeFromTUAndAA: 0
     - _Fallof: 0
     - _Float1: 0
     - _Float2: 1
@@ -410,6 +423,8 @@ Material:
     - _MaskIndex: 4.63
     - _MaskTile: 1
     - _MaterialID: 1
+    - _MaterialTypeMask: 2
+    - _Metalic: 0
     - _Metallic: 0
     - _MetallicRemapMax: 1
     - _MetallicRemapMin: 0
@@ -460,7 +475,7 @@ Material:
     - _RequireSplitLighting: 0
     - _Roughness: 0
     - _Smooth: 1
-    - _Smoothness: 0.5
+    - _Smoothness: 0
     - _SmoothnessRemapMax: 1
     - _SmoothnessRemapMin: 0
     - _SpecularAAScreenSpaceVariance: 0.1
@@ -505,6 +520,7 @@ Material:
     - _VFX_Index: 2.38
     - _VFX_Noise_Index: 0
     - _VFX_Spec: 0
+    - _Wet: 0
     - _WorldPos: 0
     - _ZTestDepthEqualForOpaque: 3
     - _ZTestGBuffer: 4

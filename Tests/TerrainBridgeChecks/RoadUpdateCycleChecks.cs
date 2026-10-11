@@ -65,13 +65,13 @@ partial class Checks
             "runtime/manual/non-generated worlds are not gated by automatic editor ownership");
         var tick=editor.Substring(editor.IndexOf("static void Tick()"));tick=tick.Substring(0,tick.IndexOf("public static void Refresh("));
         int advance=tick.IndexOf("state.build.Advance(state.revision,state.dirty)");
-        Check(advance>=0&&advance<tick.IndexOf("w.UpdatePainting(true)"),"coordinated paint runs after geometry advances");
+        Check(advance>=0&&advance<tick.IndexOf("w.UpdatePainting(true,true)"),"coordinated paint runs after geometry advances");
         Check(tick.Contains("if(state.dirty.Count==0&&!isEditing)"),"paint cannot run while geometry is still dirty or dragging");
         Check(tick.Contains("if(rebuilt||EditorApplication.timeSinceStartup-state.lastPaint>=.15)")&&
-            world.Contains("paintRuntime.Tick(this,afterGeometryUpdate)")&&runtime.Contains("if(!force&&now<nextUpdate)return"),
+            world.Contains("paintRuntime.Tick(this,afterGeometryUpdate,backgroundRoadSampling&&!Application.isPlaying)")&&runtime.Contains("if(!force&&now<nextUpdate)return"),
             "coordinator retains idle throttling but cannot skip fresh post-mesh coverage due to the runtime throttle");
-        Check(tick.IndexOf("DetectDensity(w,state)")>tick.IndexOf("w.UpdatePainting(true)")&&
-            tick.Contains("if(state.dirty.Count==0&&state.colliders.Count>0"),"new coverage is consumed before deciding whether to cook colliders");
+        Check(tick.IndexOf("DetectDensity(w,state)")>tick.IndexOf("w.UpdatePainting(true,true)")&&
+            tick.Contains("if(!w.PaintingPending&&state.dirty.Count==0&&state.colliders.Count>0"),"completed paint coverage is consumed before deciding whether to cook colliders");
         Check(editor.Contains("lastEditorUpdateCycle")&&editor.Contains("cycleMeshPasses")&&editor.Contains("cyclePaintMs"),"diagnostics retain cycle pass counts and stage totals");
         Console.WriteLine($"PASS road update cycle: {assertions} checks; one-tile edit resets {localCount}/256 consumers with halo, old/new/Undo/config/curvature covered. Scheduling checked by source contracts, not a native scene timing.");
     }

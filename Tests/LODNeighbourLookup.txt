@@ -1,0 +1,62 @@
+Spatial LOD common-ancestor neighbour lookup, 2026-10-10
+
+Evidence: flight-20261009-231723-333-e255ae15, frame 2841: CPU frame
+17.017 ms; SpatialIndices self 4.412 ms and Balance self 3.144 ms.
+SpatialSeam max 0.077 ms across the recording. CPU SetIndices max 0.136 ms.
+Both balancing and uncached masks repeatedly descended from the patch root.
+
+Change:
+- Build immutable parent links once per topology (one int per hierarchy cell).
+- Find the closest ancestor containing a neighbour query, then descend to its
+  active cell. Crossing a patch/chunk boundary uses the original root lookup.
+- Keep the cell/membership arrays local during descent.
+- Parent payload is bounded at 16 MiB per topology, plus array descriptors.
+  A chunk that cannot fit uses root lookup; no eviction or hot-path allocation.
+- Balance queue, dependency invalidation, dirty sets, ordered indices, masks,
+  render publication, LOD thresholds, collider policy and saved format unchanged.
+- No rebake required specifically for this runtime lookup change.
+
+Verification completed:
+- Frozen SpatialNeighbourReference matches the exact pre-turn production source
+  after type renaming (whitespace-normalized comparison checked).
+- 21,280 new exact ordered-output comparisons, same balance processed/reset
+  counts and cache-query counts: divisions 1/2/4/8, regular/irregular terrain,
+  required cut contours, full/sparse worlds, disabled/tiny/partial/full parent
+  budgets, repeated near/far/random changes, delayed reads and zero warm GC.
+- Existing 10,584 border-mask comparisons and adaptive/camera/capture checks pass.
+- Managed seam tests: 160 ownership layouts / 320 all-variant pair changes;
+  sparse-grid 96 LOD states and 88 hole-stamp mixed/staged checks pass.
+- Real LTChunk with engine test doubles passes publication/collider/scope checks.
+- Unity-reference C# Editor build: 0 errors, 6 pre-existing warnings.
+- Hash audit: 400 existing scene/source/settings/package/test files. Only the
+  intended topology, editor check and two test entry files changed. All 256
+  saved spatial banks used by the replay remained byte-for-byte unchanged.
+
+Saved-bank replay (managed .NET, NOT live Unity/frame/GPU timings):
+- Reuses 1,235 recorded camera positions from 20261005-154006-731 capture against
+  CURRENT 256 saved banks, width 256, hysteresis 5, distances 50/100/200/300.
+- Resolves 36 uniquely numbered AssetDatabase filenames; refuses ambiguity.
+  Does not resolve current live-scene bindings. Identity world transform assumed;
+  initial hysteresis history is not reconstructed. Cold selection is excluded.
+- Three runs, identical before/after results at every pose: 1,259 publications,
+  198,608 balance cells, 876,781 index-cache rebuild cells per run.
+- Combined balance + indices peak ms, paired runs:
+  10.545 -> 5.353; 8.873 -> 4.262; 8.476 -> 4.588.
+- Parent payload 0.82 MiB. New topology setup 1.81-1.85 ms / 2.35 MiB total
+  allocation in this harness (not a native cold-start benchmark).
+- Logs/LODNeighbour-replay.log preserves the initial FileNotFoundException
+  caused by the old fixed-filename loader. Nothing was modified by that failure.
+  Logs/LODNeighbour-replay-suffixed.log contains all three successful replays.
+- Do not translate these timings directly into expected live frame speedup.
+
+Native validation pending:
+Tools > Local Terrain > Validate LOD Neighbour Lookup (no scene changes).
+Uses the existing owned preview-scene checker, compares enabled parent lookup
+with disabled parent/index caches over 40 layouts, verifies actual Mesh indices,
+private clones, source meshes, LOD0 colliders and native seam geometry. It checks
+scene dirty/root state and relevant source/settings/scene hashes; saves nothing.
+
+After native PASS and terrain/grass recovery, record the familiar 5-second
+SceneView flight using Frame Profiler, Record GPU off; keep scene GPU Details on.
+Compare Balance, SpatialIndices, TerrainApply and frame peaks with the baseline.
+Keep native validation, managed replay and live performance conclusions separate.

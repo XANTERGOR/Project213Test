@@ -131,7 +131,10 @@ partial class Checks
         const string root="Assets/TerrainSystem/LocalTerrain/";
         string runtime=File.ReadAllText(root+"LTPaintRuntime.cs"),editor=File.ReadAllText(root+"Editor/LTEditor.cs");
         Check(runtime.Contains("samples.Curvature(stamp.curveRadius")&&runtime.Contains("samples.Begin(point.x,point.z)"),"production paint uses pixel-lifetime shared curvature");
-        Check(runtime.Contains("TerrainTriangleBins(rect,a,b,c,tile.binAxis)"),"production index uses tested bin support");
+        var terrainCache=File.ReadAllText(root+"LTPaintWeightTerrainCache.cs");
+        Check(runtime.Contains("LTPaintWeightTerrainCache.BuildSource(rect,tile.vertices,tile.normals,tile.indices")&&
+            terrainCache.Contains("LTPaintMath.TerrainTriangleBins(rect,vertices[indices[i]],vertices[indices[i+1]],vertices[indices[i+2]],axis)"),
+            "production index builder uses tested conservative bin support");
         Check(runtime.Contains("influence.Intersects(paintGuard)"),"paint selection rejects empty road AABB space with footprint guard");
         Check(editor.Contains("new Dictionary<int,SeamChunkCache>(state.seamCache)")&&editor.Contains("if(validateOnly)"),"seam cache is private until validated publication");
         Check(editor.Contains("cached.version!=version")&&editor.Contains("cached.matrix!=matrix"),"seam cache validates mesh edits and transform");

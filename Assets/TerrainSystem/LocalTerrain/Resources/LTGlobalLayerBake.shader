@@ -1,6 +1,6 @@
 Shader "Hidden/Local Terrain/Global Layer Bake"
 {
-    Properties
+Properties
     {
 _LTGlobalAlbedo("Global Albedo", 2D) = "white" {}
 _LTGlobalNormal("Global Normal", 2D) = "bump" {}
@@ -8,6 +8,7 @@ _LTGlobalNormal("Global Normal", 2D) = "bump" {}
 [HideInInspector] _LTFarSurface("Far surface", Vector) = (.3,0,0,0)
 [HideInInspector] _LTRect("Chunk rectangle", Vector) = (0,0,1,1)
 [HideInInspector] _LTWorldSize("World size", Vector) = (1,1,0,0)
+[HideInInspector] _LTGlobalRect("Global atlas extent", Vector) = (0,0,1,1)
 [HideInInspector] _LTHeightBlend("Height blend", Float) = 0
 [HideInInspector] _LTTriplanar("Triplanar", Float) = 0
  [HideInInspector] _LTBaseOnly("Background only", Float) = 0
@@ -18,6 +19,20 @@ _LTGlobalNormal("Global Normal", 2D) = "bump" {}
 [HideInInspector] _LTRoadProjectionMap("Spline coordinates", 2DArray) = "" {}
 [HideInInspector] _LTRoadSuppressionEnabled("Asphalt suppression", Float) = 0
 [HideInInspector] _LTRoadSuppressionMap("Asphalt coverage", 2D) = "black" {}
+        [HideInInspector] _LTAsphaltCracks("Asphalt crack detail",2DArray)="" {}
+        [HideInInspector] _LTAsphaltDamage("Asphalt crack influence",2DArray)="" {}
+        [HideInInspector] _LTAsphaltStyle0("Asphalt style 0",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle1("Asphalt style 1",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle2("Asphalt style 2",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle3("Asphalt style 3",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle4("Asphalt style 4",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle5("Asphalt style 5",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle6("Asphalt style 6",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle7("Asphalt style 7",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle8("Asphalt style 8",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle9("Asphalt style 9",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle10("Asphalt style 10",Vector)=(0,0,0,0)
+        [HideInInspector] _LTAsphaltStyle11("Asphalt style 11",Vector)=(0,0,0,0)
 [HideInInspector] _LTTiling0("Tiling 0", Vector) = (0,0,0,0)
 [HideInInspector] _LTTiling1("Tiling 1", Vector) = (0,0,0,0)
 [HideInInspector] _LTTiling2("Tiling 2", Vector) = (0,0,0,0)
@@ -78,6 +93,7 @@ _LTWeights2("Weights 8-11", 2D) = "black" {}
         _LTBakeRect("Bake rectangle", Vector) = (0,0,1,1)
         _LTProbe("Validation texture", 2D) = "white" {}
         _LTProbeUV("Validation UV", Vector) = (0,0,0,0)
+        _LTProbeNormal("Validation surface normal", Vector) = (0,1,0,0)
     }
     SubShader
     {
@@ -87,10 +103,12 @@ _LTWeights2("Weights 8-11", 2D) = "black" {}
         #pragma target 4.5
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
-        CBUFFER_START(UnityPerMaterial)
+CBUFFER_START(UnityPerMaterial)
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTRoadAsphaltProperties.hlsl"
 float4 _LTLayerSlices0, _LTLayerSlices1, _LTLayerSlices2;
         float4 _LTRect;
 float4 _LTWorldSize;
+float4 _LTGlobalRect;
 float _LTHeightBlend;
 float _LTBaseOnly;
 float _LTRoadProjectionEnabled;
@@ -154,6 +172,7 @@ float4 _LTFlags11;
 
         float4 _LTBakeRect;
         float4 _LTProbeUV;
+        float4 _LTProbeNormal;
         CBUFFER_END
         TEXTURE2D(_LTProbe);
         #include "Assets/TerrainSystem/LocalTerrain/Shaders/LTLayerBlendCore.hlsl"
@@ -174,7 +193,7 @@ float4 _LTFlags11;
         {
             float2 globalUV=input.uv;
             float3 color,n;float ao,smoothness,metallic;
-            float2 position=globalUV*_LTWorldSize.xy;
+            float2 position=_LTGlobalRect.xy+globalUV*_LTGlobalRect.zw;
             LTSampleLayers(position,ddx(position),ddy(position),color,n,ao,smoothness,metallic);
             return float4(normal?n*.5+.5:color,1);
         }
@@ -192,7 +211,7 @@ float4 _LTFlags11;
         {
             MeshVaryings o;
             o.terrainPosition=mul(_LTBakeLocalToTerrain,float4(input.position,1)).xyz;
-            float2 uv=o.terrainPosition.xz/_LTWorldSize.xy;
+            float2 uv=(o.terrainPosition.xz-_LTGlobalRect.xy)/_LTGlobalRect.zw;
             o.positionCS=float4(uv*2-1,UNITY_NEAR_CLIP_VALUE,1);
 #if UNITY_UV_STARTS_AT_TOP
             o.positionCS.y=-o.positionCS.y;
@@ -216,6 +235,18 @@ float4 _LTFlags11;
         float4 MeshColorFrag(MeshVaryings input):SV_Target {return BakeMesh(input,false);}
         float4 MeshNormalFrag(MeshVaryings input):SV_Target {return BakeMesh(input,true);}
         float4 ProbeFrag(Varyings input):SV_Target {return SAMPLE_TEXTURE2D_LOD(_LTProbe,sampler_PointClamp,_LTProbeUV.xy,0);}
+        // Read-only comparison against the live terrain functions, not a color bake.
+        float4 SurfaceProbeFrag(Varyings input):SV_Target
+        {
+            float3 p=float3(_LTProbeUV.x,0,_LTProbeUV.y),baseN=normalize(_LTProbeNormal.xyz);
+            float3 c,g;float a,s,m;
+            LTSampleProjectedLayersGrad(p,baseN,_LTTriplanar>.5,0,0,c,g,a,s,m);
+            float3 t=normalize(float3(1,0,0)-baseN*baseN.x),b=-cross(baseN,t);
+            float3 n=normalize(float3(-dot(g,t),-dot(g,b),1));
+            if(_LTProbeUV.z>1.5)return float4(m,1,0,1);
+            if(_LTProbeUV.z>.5)return float4(n,s);
+            return float4(c,a);
+        }
         ENDHLSL
         Pass
         {
@@ -251,6 +282,14 @@ float4 _LTFlags11;
             HLSLPROGRAM
             #pragma vertex MeshVert
             #pragma fragment MeshNormalFrag
+            ENDHLSL
+        }
+        Pass
+        {
+            Name "TerrainSurfaceProbe"
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment SurfaceProbeFrag
             ENDHLSL
         }
     }

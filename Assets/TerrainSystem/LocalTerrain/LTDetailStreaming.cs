@@ -4,9 +4,17 @@ using UnityEngine;
 
 namespace LocalTerrainPrototype
 {
-    // Enumerates only camera neighbourhoods, never the complete world grid.
+    // Runtime camera planning and explicit editor-only whole-world bake traversal.
     public static class LTDetailStreaming
     {
+        // Explicit editor bake only; runtime streaming still plans camera neighbourhoods.
+        public static IEnumerable<Vector2Int> WorldCells(Rect rect,int size)
+        {
+            if(size<1)throw new ArgumentOutOfRangeException(nameof(size));
+            int x0=Mathf.FloorToInt(rect.xMin/size),z0=Mathf.FloorToInt(rect.yMin/size);
+            int x1=Mathf.CeilToInt(rect.xMax/size),z1=Mathf.CeilToInt(rect.yMax/size);
+            for(int z=z0;z<z1;z++)for(int x=x0;x<x1;x++)yield return new Vector2Int(x,z);
+        }
         public struct View
         {
             public Vector2 position;
@@ -32,12 +40,12 @@ namespace LocalTerrainPrototype
         }
         // Reorders only: residency radius, candidate identities and the render culling are unchanged.
         public static void Prioritize(List<Vector2Int> plan,List<View> views,Vector2 worldSize,int size,
-            float drawDistance,Func<Vector2Int,Bounds> boundsForCell,Func<Vector2Int,bool> isResident)
+            float drawDistance,Func<Vector2Int,Bounds> boundsForCell,Func<Vector2Int,bool> isResident,Vector2 origin=default)
         {
             var priorities=new Dictionary<Vector2Int,Priority>(plan.Count);
             foreach(var key in plan)
             {
-                var rect=CellRect(key,size,worldSize);var bounds=boundsForCell(key);
+                var rect=CellRect(key,size,worldSize,origin);var bounds=boundsForCell(key);
                 var priority=new Priority{resident=isResident(key),tier=2,distance=float.PositiveInfinity};
                 foreach(var view in views)
                 {
@@ -63,20 +71,21 @@ namespace LocalTerrainPrototype
             float z=Mathf.Max(rect.yMin-point.y,Mathf.Max(0,point.y-rect.yMax));
             return x*x+z*z;
         }
-        public static Rect CellRect(Vector2Int key,int size,Vector2 worldSize)
-            =>Rect.MinMaxRect(key.x*size,key.y*size,Mathf.Min((key.x+1)*size,worldSize.x),Mathf.Min((key.y+1)*size,worldSize.y));
-        public static bool Plan(List<Vector2> cameras,Vector2 worldSize,int size,float radius,int limit,List<Vector2Int> result)
+        public static Rect CellRect(Vector2Int key,int size,Vector2 worldSize,Vector2 origin=default)
+            =>Rect.MinMaxRect(Mathf.Max(key.x*size,origin.x),Mathf.Max(key.y*size,origin.y),Mathf.Min((key.x+1)*size,origin.x+worldSize.x),Mathf.Min((key.y+1)*size,origin.y+worldSize.y));
+        public static bool Plan(List<Vector2> cameras,Vector2 worldSize,int size,float radius,int limit,List<Vector2Int> result,Vector2 origin=default)
         {
             result.Clear();
             var distances=new Dictionary<Vector2Int,float>();
-            int nx=Mathf.CeilToInt(worldSize.x/size),nz=Mathf.CeilToInt(worldSize.y/size);
+            int minX=Mathf.FloorToInt(origin.x/size),minZ=Mathf.FloorToInt(origin.y/size);
+            int nx=Mathf.CeilToInt((origin.x+worldSize.x)/size),nz=Mathf.CeilToInt((origin.y+worldSize.y)/size);
             foreach(var camera in cameras)
             {
-                int x0=Mathf.Max(0,Mathf.FloorToInt((camera.x-radius)/size)),x1=Mathf.Min(nx-1,Mathf.FloorToInt((camera.x+radius)/size));
-                int z0=Mathf.Max(0,Mathf.FloorToInt((camera.y-radius)/size)),z1=Mathf.Min(nz-1,Mathf.FloorToInt((camera.y+radius)/size));
+                int x0=Mathf.Max(minX,Mathf.FloorToInt((camera.x-radius)/size)),x1=Mathf.Min(nx-1,Mathf.FloorToInt((camera.x+radius)/size));
+                int z0=Mathf.Max(minZ,Mathf.FloorToInt((camera.y-radius)/size)),z1=Mathf.Min(nz-1,Mathf.FloorToInt((camera.y+radius)/size));
                 for(int z=z0;z<=z1;z++)for(int x=x0;x<=x1;x++)
                 {
-                    var key=new Vector2Int(x,z);float distance=DistanceSquared(camera,CellRect(key,size,worldSize));
+                    var key=new Vector2Int(x,z);float distance=DistanceSquared(camera,CellRect(key,size,worldSize,origin));
                     if(distance>radius*radius)continue;
                     if(!distances.TryGetValue(key,out float previous)||distance<previous)distances[key]=distance;
                     if(distances.Count>limit)return false;

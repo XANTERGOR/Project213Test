@@ -11,8 +11,9 @@ namespace LocalTerrainPrototype
         const int N=LTBalancedForest.N;
         // Offroad is the terrain surface itself: its ruts and shoulders are governed
         // by the normal LOD height-error budget, not a permanent density-zone lock.
-        // Asphalt has a separate, independently LODed mesh. Retain its foundation
-        // until the two surfaces can be simplified together without intersections.
+        // Asphalt needs additional protection: when a valid baked road is available,
+        // the editor replaces the blanket lock with per-cell all-LOD clearance checks.
+        // Junctions and unavailable/stale road meshes keep the conservative lock.
         public static bool RequiresFixedRoadSurface(LTRoadMode mode)=>mode==LTRoadMode.Asphalt;
         sealed class Node
         {

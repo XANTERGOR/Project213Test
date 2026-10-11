@@ -18,9 +18,29 @@ namespace LocalTerrainPrototype
     // Each camera has its own output/args buffers because HDRP defers actual draws.
     public sealed class LTDetailGpuRenderer : IDisposable
     {
+        // CPU submission timings only, not GPU execution. Static names and value
+        // scopes: no per-group strings, closures, counters or readbacks added.
+        static class Profile
+        {
+            internal static readonly Unity.Profiling.ProfilerMarker Plan=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.PlanCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker MaterialCheck=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.MaterialCheckCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker Prepare=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.PrepareBuffersCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker Camera=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.CameraParametersCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker Recipe=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.RecipeParametersCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker Group=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.GroupParametersCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker Cull=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.CullSubmitCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker Draw=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.DrawCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker CopyCount=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.CopyCountCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker TerrainBind=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.TerrainBindCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker MaterialAdapt=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.MaterialAdaptCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker MaterialSync=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.MaterialSyncCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker MaterialCopy=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.MaterialCopyCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker MaterialPasses=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.MaterialPassesCPU");
+            internal static readonly Unity.Profiling.ProfilerMarker DrawSubmit=new Unity.Profiling.ProfilerMarker("LT.Details.GPU.Stage.DrawSubmitCPU");
+        }
         sealed class Selection : IDisposable
         {
-            public int lod;public ShadowCastingMode prefabMode,mode;public bool culled;
+            public int lod;public ShadowCastingMode prefabMode,mode;public bool culled,wanted;
             public GraphicsBuffer visible;public LTDetailGpuRenderer owner;
             public void Dispose(){owner.Free(ref visible);}
         }
@@ -30,6 +50,7 @@ namespace LocalTerrainPrototype
             public Selection selection;
             public GraphicsBuffer visible=>selection.visible;
             public GraphicsBuffer args;public MaterialPropertyBlock properties;
+            public LTGrassTerrainBinding.Cache terrainBinding;
             public LTDetailGpuRenderer owner;
             public void Dispose(){owner.Free(ref args);}
         }
@@ -50,7 +71,62 @@ namespace LocalTerrainPrototype
         readonly Dictionary<ILTDetailGpuSource,Group> groups=new Dictionary<ILTDetailGpuSource,Group>();
         readonly Dictionary<Shader,Shader> adapters=new Dictionary<Shader,Shader>();
         readonly Dictionary<Material,Material> materials=new Dictionary<Material,Material>();
-        readonly HashSet<Material> updated=new HashSet<Material>();
+        struct MaterialState
+        {
+            public Shader shader;
+            public bool supported,transparent,precomputedVelocity,instancing,grassColor;
+        }
+        struct PassPlan
+        {
+            public string reason;public Shader shader;public int draws,selections;
+        }
+        // The production caller opts into an immutable, synchronous camera pass.
+        // Begin clears these value caches; dictionary storage is reused. No
+        // material/recipe decision survives into the next camera or editor update.
+        readonly Dictionary<Material,MaterialState> passMaterials=new Dictionary<Material,MaterialState>();
+        readonly Dictionary<(LTDetailPrefab recipe,bool shadows),PassPlan> passPlans=new Dictionary<(LTDetailPrefab,bool),PassPlan>();
+        Camera preparedCamera;int preparedCameraMask;LTDetailPrefab boundRecipe;
+        LTGrassTerrainBinding preparedTerrainBinding;
+        public int TerrainBindingUpdates {get;private set;}
+        public int TerrainBindingReuses {get;private set;}
+        // Default: adapted handles are reused only until Begin, full sync per pass.
+        // Optional explicit notifications allow reuse across passes for an allowlist.
+        readonly Dictionary<Material,Material> updated=new Dictionary<Material,Material>();
+        struct MaterialReceipt
+        {
+            internal LTDetailMaterialNotifications.Ticket ticket;
+            internal Material target;internal Shader sourceShader,adapterShader;
+        }
+        readonly Dictionary<Material,LTDetailMaterialNotifications.Registration> notifiedMaterials=new Dictionary<Material,LTDetailMaterialNotifications.Registration>();
+        readonly Dictionary<Material,MaterialReceipt> materialReceipts=new Dictionary<Material,MaterialReceipt>();
+        Material[] notificationSources=Array.Empty<Material>();
+        ulong notificationVersion,adapterVersion;
+        public int MaterialSyncs {get;private set;}
+        public int MaterialReuses {get;private set;}
+        public int NotifiedMaterialCount=>notifiedMaterials.Count;
+        // Explicit allowlist, never inferred from a prefab or from a dirty/CRC result.
+        // Called before Begin. An unchanged list does not allocate registrations.
+        public void ConfigureMaterialNotifications(bool enabled,IReadOnlyList<Material> sources)
+        {
+            int count=enabled&&sources!=null?sources.Count:0;
+            bool same=count==notificationSources.Length;
+            for(int i=0;same&&i<count;i++)same=ReferenceEquals(sources[i],notificationSources[i]);
+            if(same)return;
+            foreach(var registration in notifiedMaterials.Values)registration.Dispose();
+            notifiedMaterials.Clear();materialReceipts.Clear();updated.Clear();passMaterials.Clear();passPlans.Clear();
+            notificationSources=count==0?Array.Empty<Material>():new Material[count];
+            for(int i=0;i<count;i++)
+            {
+                var source=sources[i];notificationSources[i]=source;
+                if(source&&!notifiedMaterials.ContainsKey(source))notifiedMaterials.Add(source,LTDetailMaterialNotifications.Register(source));
+            }
+        }
+        void ObserveMaterialNotifications()
+        {
+            if(notifiedMaterials.Count==0||notificationVersion==LTDetailMaterialNotifications.ChangeVersion)return;
+            notificationVersion=LTDetailMaterialNotifications.ChangeVersion;
+            updated.Clear();passMaterials.Clear();passPlans.Clear();
+        }
         readonly Dictionary<Material,double> materialTouched=new Dictionary<Material,double>();
         readonly List<Material> expiredMaterials=new List<Material>();
         readonly List<Camera> expired=new List<Camera>();
@@ -60,8 +136,31 @@ namespace LocalTerrainPrototype
         readonly LTDetailUploadBudget uploadBudget=new LTDetailUploadBudget();
         LTDetailGpuData[] staging;
         readonly Vector4[] planes=new Vector4[6],thresholds=new Vector4[8];
+        readonly Vector4[] multiSelections=new Vector4[8];
+        readonly GraphicsBuffer[] cullPadding=new GraphicsBuffer[7];
+        readonly List<Selection> activeSelections=new List<Selection>(48);
+        // Optional so callers can A/B the established single-output kernel.
+        public bool UnifiedCulling {get;set;}
+        public int UnifiedCullDispatches {get;private set;}
         static readonly string[] PassNames={"MotionVectors","MOTIONVECTORS","ShadowCaster","DepthOnly","GBuffer","Forward"};
-        ComputeShader cull;int kernel;bool initialized;long budget;
+        static class Property
+        {
+            internal static readonly int Planes=Shader.PropertyToID("_Planes"),Thresholds=Shader.PropertyToID("_LodThresholds"),
+                CameraPosition=Shader.PropertyToID("_CameraPosition"),CameraForward=Shader.PropertyToID("_CameraForward"),
+                Distance=Shader.PropertyToID("_Distance"),Projection=Shader.PropertyToID("_Projection"),Count=Shader.PropertyToID("_Count"),
+                LodCount=Shader.PropertyToID("_LodCount"),HasLod=Shader.PropertyToID("_HasLod"),Thin=Shader.PropertyToID("_Thin"),
+                LimitShadows=Shader.PropertyToID("_LimitShadows"),Instances=Shader.PropertyToID("_LTInstances"),
+                TargetLod=Shader.PropertyToID("_TargetLod"),PrefabShadowMode=Shader.PropertyToID("_PrefabShadowMode"),
+                DrawShadowMode=Shader.PropertyToID("_DrawShadowMode"),Visible=Shader.PropertyToID("_LTVisible"),
+                PartToRoot=Shader.PropertyToID("_LTPartToRoot"),RootToPart=Shader.PropertyToID("_LTRootToPart"),
+                ForceNoMotion=Shader.PropertyToID("_LTForceNoMotion"),PrecomputedVelocity=Shader.PropertyToID("_AddPrecomputedVelocity"),
+                GrassRoot=Shader.PropertyToID(LTDetailPrefab.Part.GrassRootProperty);
+            internal static readonly int Selections=Shader.PropertyToID("_Selections");
+            internal static readonly int[] VisibleSlots={Shader.PropertyToID("_LTVisible0"),Shader.PropertyToID("_LTVisible1"),
+                Shader.PropertyToID("_LTVisible2"),Shader.PropertyToID("_LTVisible3"),Shader.PropertyToID("_LTVisible4"),
+                Shader.PropertyToID("_LTVisible5"),Shader.PropertyToID("_LTVisible6"),Shader.PropertyToID("_LTVisible7")};
+        }
+        ComputeShader cull;int kernel,multiKernel=-1;bool initialized;long budget;
         public long ResidentBytes { get; private set; }
         public long ReservedBytes { get; private set; }
         public long PeakBytes { get; private set; }
@@ -79,12 +178,22 @@ namespace LocalTerrainPrototype
         public int CullDispatches { get; private set; }
         public int Candidates { get; private set; }
         public int FallbackGroups { get; private set; }
+        public int PassPlanBuilds { get; private set; }
+        public int PassMaterialChecks { get; private set; }
+        public int CameraParameterUploads { get; private set; }
         public string Status { get; private set; }
         string unavailable;
 
         public void Begin(int memoryMiB,int frameId,float uploadMs,int uploadMiB)
         {
+            UnifiedCullDispatches=0;
+            TerrainBindingUpdates=TerrainBindingReuses=0;preparedTerrainBinding=default;
+            MaterialSyncs=MaterialReuses=0;
+            foreach(var registration in notifiedMaterials.Values)registration.RefreshEditor();
+            ObserveMaterialNotifications();
             DrawCalls=CullDispatches=Candidates=FallbackGroups=PendingGroups=0;Status=null;updated.Clear();fallbackDetails.Clear();
+            preparedCamera=null;boundRecipe=null;passPlans.Clear();passMaterials.Clear();
+            PassPlanBuilds=PassMaterialChecks=CameraParameterUploads=0;
             uploadBudget.Begin(frameId,uploadMs,(long)uploadMiB*1024*1024,8);
             budget=(long)memoryMiB*1024*1024;
             if(ReservedBytes>budget)ClearGroups();
@@ -103,8 +212,16 @@ namespace LocalTerrainPrototype
             foreach(var pair in materialTouched)
                 if(!pair.Key||Time.realtimeSinceStartupAsDouble-pair.Value>5)expiredMaterials.Add(pair.Key);
             foreach(var material in expiredMaterials)
-            {Destroy(materials[material]);materials.Remove(material);materialTouched.Remove(material);}
-            if(initialized)return;
+            {Destroy(materials[material]);materials.Remove(material);materialTouched.Remove(material);materialReceipts.Remove(material);}
+            if(initialized)
+            {
+                if(adapterVersion!=LTDetailMaterialNotifications.AdapterVersion)
+                {
+                    adapterVersion=LTDetailMaterialNotifications.AdapterVersion;
+                    adapters.Clear();materialReceipts.Clear();LoadAdapters();
+                }
+                return;
+            }
             initialized=true;
             if(!SystemInfo.supportsComputeShaders||!SystemInfo.supportsInstancing||!SystemInfo.supportsIndirectArgumentsBuffer)
             {unavailable="Нет поддержки compute/indirect instancing.";return;}
@@ -117,8 +234,18 @@ namespace LocalTerrainPrototype
             {
                 cull=UnityEngine.Object.Instantiate(shader);cull.hideFlags=HideFlags.HideAndDontSave;kernel=cull.FindKernel("Cull");
                 if(!cull.IsSupported(kernel))throw new InvalidOperationException("Cull kernel не поддерживается.");
+                if(cull.HasKernel("CullMany"))
+                {
+                    int candidate=cull.FindKernel("CullMany");
+                    if(cull.IsSupported(candidate))multiKernel=candidate;
+                }
             }
             catch(Exception ex){Destroy(cull);cull=null;unavailable="GPU initialization: "+ex.Message;return;}
+            adapterVersion=LTDetailMaterialNotifications.AdapterVersion;LoadAdapters();
+        }
+        void LoadAdapters()
+        {
+            if(cull)unavailable=null;
             foreach(var item in Resources.LoadAll<LTDetailGpuShader>("LTDetailGpu"))
             {
                 if(item.source&&item.indirect&&string.IsNullOrEmpty(item.error)&&item.indirect.isSupported)
@@ -152,54 +279,138 @@ namespace LocalTerrainPrototype
             if(rows.Count==0)report.AppendLine("CPU fallback / ожидающих GPU-групп в последнем проходе нет.");
             return report.ToString();
         }
-        Material Adapt(Material original)
+        Material Adapt(Material original,bool cached)
         {
+            using var profile=Profile.MaterialAdapt.Auto();
+            ObserveMaterialNotifications();
+            LTDetailMaterialNotifications.Registration registration=null;
+            bool notified=notifiedMaterials.Count!=0&&notifiedMaterials.TryGetValue(original,out registration);
+            var ticket=notified?registration.Capture():default;
+            if(updated.TryGetValue(original,out var material))
+            {
+                // Prepared passes are synchronous; touch once per material. Direct
+                // callers keep the original last-use lifetime between TryRender calls.
+                if(!cached)materialTouched[original]=Time.realtimeSinceStartupAsDouble;
+                if(!notified)return material;
+                // Source/adapter/target shader guards run on the first use in each
+                // pass. Retain the cheap synchronous-pass hit for repeated parts;
+                // script writes during a pass must notify (or use Mutate).
+                if(materialReceipts.TryGetValue(original,out var passReceipt)&&ticket.CanReuse(passReceipt.ticket))
+                {MaterialReuses++;return material;}
+            }
             materialTouched[original]=Time.realtimeSinceStartupAsDouble;
-            if(!materials.TryGetValue(original,out var material))
+            var sourceShader=original.shader;var adapterShader=adapters[sourceShader];
+            if(!materials.TryGetValue(original,out material)||!material)
             {
-                material=new Material(adapters[original.shader]){hideFlags=HideFlags.HideAndDontSave};
-                materials.Add(original,material);
+                material=new Material(adapterShader){hideFlags=HideFlags.HideAndDontSave};
+                materials[original]=material;
             }
-            if(updated.Add(original))
+            if(notified&&materialReceipts.TryGetValue(original,out var receipt)&&
+                receipt.target==material&&receipt.sourceShader==sourceShader&&receipt.adapterShader==adapterShader&&
+                material.shader==adapterShader&&ticket.CanReuse(receipt.ticket))
             {
-                if(material.shader!=adapters[original.shader])material.shader=adapters[original.shader];
-                material.CopyPropertiesFromMaterial(original);material.enableInstancing=true;
-                foreach(var pass in PassNames)
-                    material.SetShaderPassEnabled(pass,original.GetShaderPassEnabled(pass));
+                MaterialReuses++;updated[original]=material;return material;
             }
+            materialReceipts.Remove(original);updated.Remove(original);
+            using(Profile.MaterialSync.Auto())
+            {
+                var shader=adapterShader;
+                if(material.shader!=shader)material.shader=shader;
+                using(Profile.MaterialCopy.Auto())material.CopyPropertiesFromMaterial(original);
+                if(!material.enableInstancing)material.enableInstancing=true;
+                // Read the actual target AFTER copying: never assume which pass
+                // flags CopyPropertiesFromMaterial preserves on a Unity version.
+                using(Profile.MaterialPasses.Auto())foreach(var pass in PassNames)
+                {
+                    bool enabled=original.GetShaderPassEnabled(pass);
+                    if(material.GetShaderPassEnabled(pass)!=enabled)material.SetShaderPassEnabled(pass,enabled);
+                }
+            }
+            MaterialSyncs++;
+            if(notified&&ticket.CanReuse(registration.Capture()))
+                materialReceipts[original]=new MaterialReceipt{ticket=ticket,target=material,sourceShader=sourceShader,adapterShader=adapterShader};
+            // Publish only after successful synchronization; a failed copy can retry.
+            updated.Add(original,material);
             return material;
+        }
+        internal LTGrassTerrainMap GrassTerrain;
+        // Call once after Begin and frustum calculation, immediately before the
+        // synchronous group loop. Direct TryRender callers retain uncached reads.
+        public void PrepareCameraPass(Camera camera,Plane[] frustum)
+        {
+            preparedCamera=null;boundRecipe=null;
+            if(!cull||!camera)return;
+            // The production pass is synchronous: one snapshot of map readiness/UVs
+            // for all its groups. Each private draw block still owns its own binding.
+            preparedTerrainBinding=LTGrassTerrainMap.CaptureBinding(GrassTerrain);
+            BindCamera(camera,frustum);preparedCamera=camera;preparedCameraMask=camera.cullingMask;
+        }
+        void BindCamera(Camera camera,Plane[] frustum)
+        {
+            using var profile=Profile.Camera.Auto();
+            for(int i=0;i<6;i++)planes[i]=new Vector4(frustum[i].normal.x,frustum[i].normal.y,frustum[i].normal.z,frustum[i].distance);
+            cull.SetVectorArray(Property.Planes,planes);
+            cull.SetVector(Property.CameraPosition,camera.transform.position);cull.SetVector(Property.CameraForward,camera.transform.forward);
+            cull.SetVector(Property.Projection,new Vector4(camera.orthographic?1:0,camera.orthographic?camera.orthographicSize:Mathf.Tan(camera.fieldOfView*Mathf.Deg2Rad*.5f),QualitySettings.lodBias,QualitySettings.maximumLODLevel));
+            CameraParameterUploads++;
+        }
+        MaterialState CheckMaterial(Material material,bool cached)
+        {
+            using var profile=Profile.MaterialCheck.Auto();
+            if(!material)return default;
+            if(cached&&passMaterials.TryGetValue(material,out var saved))return saved;
+            PassMaterialChecks++;
+            var state=new MaterialState{shader=material.shader,instancing=material.enableInstancing};
+            state.supported=state.shader&&adapters.ContainsKey(state.shader);
+            state.transparent=material.renderQueue>=(int)RenderQueue.Transparent;
+            state.precomputedVelocity=material.HasProperty(Property.PrecomputedVelocity)&&material.GetFloat(Property.PrecomputedVelocity)!=0;
+            state.grassColor=material.HasProperty(Property.GrassRoot);
+            if(cached)passMaterials[material]=state;
+            return state;
+        }
+        PassPlan Plan(LTDetailPrefab recipe,bool limitShadows,bool cached)
+        {
+            using var profile=Profile.Plan.Auto();
+            var key=(recipe,limitShadows);
+            if(cached&&passPlans.TryGetValue(key,out var saved))return saved;
+            PassPlanBuilds++;
+            var plan=new PassPlan();
+            if(recipe.levels.Count>8)plan.reason="Более 8 LOD: CPU fallback.";
+            else
+            {
+                foreach(var level in recipe.levels)
+                {
+                    uint combinations=0;
+                    foreach(var part in level.parts)
+                    {
+                        var material=CheckMaterial(part.material,cached);
+                        string reason=!material.supported?"Неподдерживаемый шейдер: CPU fallback.":
+                            material.transparent?"Прозрачный материал: CPU fallback.":
+                            part.lightProbes==LightProbeUsage.CustomProvided||part.lightProbes==LightProbeUsage.UseProxyVolume?"Custom/LPPV probes: CPU fallback.":
+                            material.precomputedVelocity?"Add Precomputed Velocity включён: CPU fallback.":null;
+                        if(reason!=null){plan.reason=reason;plan.shader=material.shader;break;}
+                        int passes=ShadowPasses(limitShadows,part);plan.draws+=passes;
+                        for(int p=0;p<passes;p++)combinations|=1u<<((int)part.castShadows*4+(p==0?(int)part.castShadows:0));
+                    }
+                    if(plan.reason!=null)break;
+                    while(combinations!=0){plan.selections++;combinations&=combinations-1;}
+                }
+            }
+            if(cached)passPlans[key]=plan;
+            return plan;
         }
         public bool TryRender(ILTDetailGpuSource source,Camera camera,Plane[] frustum,float maxDistance)
         {
+            ObserveMaterialNotifications();
             if(source.Count==0)return true;
             if(!cull||adapters.Count==0)return Fallback(source,unavailable??"GPU backend не готов.");
             if(camera.stereoEnabled)return Fallback(source,"XR пока использует CPU fallback.");
             var recipe=source.Recipe;var entry=source.Entry;
-            if(recipe.levels.Count>8)return Fallback(source,"Более 8 LOD: CPU fallback.");
-            foreach(var level in recipe.levels)foreach(var part in level.parts)
-            {
-                if(!part.material||!adapters.ContainsKey(part.material.shader))return Fallback(source,"Неподдерживаемый шейдер: CPU fallback.",part.material?part.material.shader:null);
-                if(part.material.renderQueue>=(int)RenderQueue.Transparent)return Fallback(source,"Прозрачный материал: CPU fallback.",part.material.shader);
-                if(part.lightProbes==LightProbeUsage.CustomProvided||part.lightProbes==LightProbeUsage.UseProxyVolume)
-                    return Fallback(source,"Custom/LPPV probes: CPU fallback.",part.material.shader);
-                if(part.material.HasProperty("_AddPrecomputedVelocity")&&part.material.GetFloat("_AddPrecomputedVelocity")!=0)
-                    return Fallback(source,"Add Precomputed Velocity включён: CPU fallback.",part.material.shader);
-            }
-            int drawCount=0,selectionCount=0;
-            foreach(var level in recipe.levels)
-            {
-                // Four Unity shadow modes: each (source mode, draw mode) is one bit.
-                // LOD partitions are independent; materials/meshes do not affect Cull.
-                uint combinations=0;
-                foreach(var part in level.parts)
-                {
-                    int passes=ShadowPasses(entry,part);drawCount+=passes;
-                    for(int p=0;p<passes;p++)
-                        combinations|=1u<<((int)part.castShadows*4+(p==0?(int)part.castShadows:0));
-                }
-                while(combinations!=0){selectionCount++;combinations&=combinations-1;}
-            }
-            long viewBytes=(long)selectionCount*source.Count*4+ (long)drawCount*GraphicsBuffer.IndirectDrawIndexedArgs.size;
+            bool cached=preparedCamera==camera;
+            if(!cached){preparedCamera=null;boundRecipe=null;}
+            var plan=Plan(recipe,entry.limitShadowDistance,cached);
+            if(plan.reason!=null)return Fallback(source,plan.reason,plan.shader);
+            long viewBytes=(long)plan.selections*source.Count*4+ (long)plan.draws*GraphicsBuffer.IndirectDrawIndexedArgs.size;
             if(!groups.TryGetValue(source,out var group))
             {
                 long bytes=(long)source.Count*LTDetailGpuData.Stride;
@@ -214,7 +425,7 @@ namespace LocalTerrainPrototype
                 view=new View{camera=camera,bytes=bytes};
                 for(int lod=0;lod<recipe.levels.Count;lod++)foreach(var part in recipe.levels[lod].parts)
                 {
-                    int passes=ShadowPasses(entry,part);
+                    int passes=ShadowPasses(entry.limitShadowDistance,part);
                     for(int p=0;p<passes;p++)
                     {
                         var draw=new Draw{owner=this,part=part,lod=lod,mode=p==0?part.castShadows:ShadowCastingMode.Off};
@@ -243,39 +454,111 @@ namespace LocalTerrainPrototype
                 else{view.Dispose();group.views.Remove(camera);ReservedBytes-=view.bytes;ViewCount--;}
                 return Fallback(source,"GPU preparation: "+ex.Message);
             }
-            for(int i=0;i<6;i++)planes[i]=new Vector4(frustum[i].normal.x,frustum[i].normal.y,frustum[i].normal.z,frustum[i].distance);
-            for(int i=0;i<8;i++)thresholds[i]=new Vector4(i<recipe.levels.Count?recipe.levels[i].screenRelativeHeight:0,0,0,0);
-            cull.SetVectorArray("_Planes",planes);cull.SetVectorArray("_LodThresholds",thresholds);
-            cull.SetVector("_CameraPosition",camera.transform.position);cull.SetVector("_CameraForward",camera.transform.forward);
-            cull.SetVector("_Distance",new Vector4(Mathf.Min(maxDistance,entry.cullDistance),entry.fadeStart,entry.farDensity,entry.shadowDistance));
-            cull.SetVector("_Projection",new Vector4(camera.orthographic?1:0,camera.orthographic?camera.orthographicSize:Mathf.Tan(camera.fieldOfView*Mathf.Deg2Rad*.5f),QualitySettings.lodBias,QualitySettings.maximumLODLevel));
-            cull.SetInt("_Count",group.count);cull.SetInt("_LodCount",recipe.levels.Count);cull.SetInt("_HasLod",recipe.hasLODGroup?1:0);
-            cull.SetInt("_Thin",entry.thinInDistance?1:0);cull.SetInt("_LimitShadows",entry.limitShadowDistance?1:0);
-            cull.SetBuffer(kernel,"_LTInstances",group.instances);
+            if(!cached)BindCamera(camera,frustum);
+            if(!cached||!ReferenceEquals(boundRecipe,recipe))
+            {
+                using var profile=Profile.Recipe.Auto();
+                for(int i=0;i<8;i++)thresholds[i]=new Vector4(i<recipe.levels.Count?recipe.levels[i].screenRelativeHeight:0,0,0,0);
+                cull.SetVectorArray(Property.Thresholds,thresholds);
+                cull.SetInt(Property.LodCount,recipe.levels.Count);cull.SetInt(Property.HasLod,recipe.hasLODGroup?1:0);
+                boundRecipe=recipe;
+            }
+            using(Profile.Group.Auto())
+            {
+                cull.SetVector(Property.Distance,new Vector4(Mathf.Min(maxDistance,entry.cullDistance),entry.fadeStart,entry.farDensity,entry.shadowDistance));
+                cull.SetInt(Property.Count,group.count);
+                cull.SetInt(Property.Thin,entry.thinInDistance?1:0);cull.SetInt(Property.LimitShadows,entry.limitShadowDistance?1:0);
+                cull.SetBuffer(kernel,Property.Instances,group.instances);
+            }
+            int cameraMask=cached?preparedCameraMask:camera.cullingMask;
+            var terrainBinding=cached?preparedTerrainBinding:LTGrassTerrainMap.CaptureBinding(GrassTerrain);
             Candidates+=group.count;
-            foreach(var selection in view.selections)selection.culled=false;
+            foreach(var selection in view.selections){selection.culled=false;selection.wanted=false;}
+            if(UnifiedCulling&&multiKernel>=0&&view.selections.Count>1)
+            {
+                activeSelections.Clear();
+                foreach(var draw in view.draws)
+                {
+                    var part=draw.part;
+                    if(draw.selection.wanted||!CheckMaterial(part.material,cached).instancing||(cameraMask&(1<<part.layer))==0)continue;
+                    draw.selection.wanted=true;activeSelections.Add(draw.selection);
+                }
+                int tail=activeSelections.Count%8;
+                if(activeSelections.Count>1&&EnsureCullPadding(tail>1?8-tail:0))
+                {
+                    cull.SetBuffer(multiKernel,Property.Instances,group.instances);
+                    for(int first=0;first+1<activeSelections.Count;first+=8)
+                    {
+                        using var profile=Profile.Cull.Auto();
+                        int count=Math.Min(8,activeSelections.Count-first);
+                        for(int slot=0;slot<8;slot++)
+                        {
+                            if(slot<count)
+                            {
+                                var selection=activeSelections[first+slot];selection.visible.SetCounterValue(0);
+                                multiSelections[slot]=new Vector4(selection.lod,(int)selection.prefabMode,(int)selection.mode,1);
+                                cull.SetBuffer(multiKernel,Property.VisibleSlots[slot],selection.visible);
+                            }
+                            else
+                            {
+                                multiSelections[slot]=Vector4.zero;
+                                cull.SetBuffer(multiKernel,Property.VisibleSlots[slot],cullPadding[slot-count]);
+                            }
+                        }
+                        cull.SetVectorArray(Property.Selections,multiSelections);
+                        cull.Dispatch(multiKernel,(group.count+63)/64,1,1);
+                        for(int slot=0;slot<count;slot++)activeSelections[first+slot].culled=true;
+                        CullDispatches++;UnifiedCullDispatches++;
+                    }
+                }
+            }
             foreach(var draw in view.draws)
             {
                 var part=draw.part;
-                if(!part.material.enableInstancing||(camera.cullingMask&(1<<part.layer))==0)continue;
+                var materialState=CheckMaterial(part.material,cached);
+                if(!materialState.instancing||(cameraMask&(1<<part.layer))==0)continue;
                 if(!draw.selection.culled)
                 {
+                    using var profile=Profile.Cull.Auto();
                     draw.visible.SetCounterValue(0);
-                    cull.SetInt("_TargetLod",draw.lod);cull.SetInt("_PrefabShadowMode",(int)part.castShadows);cull.SetInt("_DrawShadowMode",(int)draw.mode);
-                    cull.SetBuffer(kernel,"_LTVisible",draw.visible);cull.Dispatch(kernel,(group.count+63)/64,1,1);
+                    cull.SetInt(Property.TargetLod,draw.lod);cull.SetInt(Property.PrefabShadowMode,(int)part.castShadows);cull.SetInt(Property.DrawShadowMode,(int)draw.mode);
+                    cull.SetBuffer(kernel,Property.Visible,draw.visible);cull.Dispatch(kernel,(group.count+63)/64,1,1);
                     draw.selection.culled=true;CullDispatches++;
                 }
-                // D3D indexed indirect layout: instanceCount is the second uint.
-                GraphicsBuffer.CopyCount(draw.visible,draw.args,4);
-                var rp=new RenderParams(Adapt(part.material)){camera=camera,worldBounds=source.Bounds,matProps=draw.properties,
-                    layer=part.layer,renderingLayerMask=part.renderingLayerMask,shadowCastingMode=draw.mode,receiveShadows=part.receiveShadows,
-                    motionVectorMode=part.motionVectors,lightProbeUsage=LightProbeUsage.Off,reflectionProbeUsage=part.reflectionProbes};
-                Graphics.RenderMeshIndirect(rp,part.mesh,draw.args);DrawCalls++;
+                using(Profile.Draw.Auto())
+                {
+                    // D3D indexed indirect layout: instanceCount is the second uint.
+                    using(Profile.CopyCount.Auto())GraphicsBuffer.CopyCount(draw.visible,draw.args,4);
+                    if(materialState.grassColor)using(Profile.TerrainBind.Auto())
+                    {
+                        if(draw.terrainBinding.Apply(draw.properties,terrainBinding))TerrainBindingUpdates++;
+                        else TerrainBindingReuses++;
+                    }
+                    var rp=new RenderParams(Adapt(part.material,cached)){camera=camera,worldBounds=source.Bounds,matProps=draw.properties,
+                        layer=part.layer,renderingLayerMask=part.renderingLayerMask,shadowCastingMode=draw.mode,receiveShadows=part.receiveShadows,
+                        motionVectorMode=part.motionVectors,lightProbeUsage=LightProbeUsage.Off,reflectionProbeUsage=part.reflectionProbes};
+                    using(Profile.DrawSubmit.Auto())Graphics.RenderMeshIndirect(rp,part.mesh,draw.args);DrawCalls++;
+                }
             }
             return true;
         }
-        static int ShadowPasses(LTDetailEntry entry,LTDetailPrefab.Part part)=>
-            entry.limitShadowDistance&&part.castShadows!=ShadowCastingMode.Off&&part.castShadows!=ShadowCastingMode.ShadowsOnly?2:1;
+        static int ShadowPasses(bool limitShadows,LTDetailPrefab.Part part)=>
+            limitShadows&&part.castShadows!=ShadowCastingMode.Off&&part.castShadows!=ShadowCastingMode.ShadowsOnly?2:1;
+        bool EnsureCullPadding(int count)
+        {
+            // Distinct inactive UAVs: never alias an append counter in another slot.
+            // A tiny shared pool is safe across cameras because inactive slots never write.
+            for(int i=0;i<count;i++)
+            {
+                if(cullPadding[i]!=null)continue;
+                if(!uploadBudget.CanAllocate||ReservedBytes+4>budget)return false;
+                long start=System.Diagnostics.Stopwatch.GetTimestamp();
+                try{cullPadding[i]=Allocate(GraphicsBuffer.Target.Append,1,4);ReservedBytes+=4;}
+                catch(Exception){return false;} // Retain the old path if optional preparation fails.
+                finally{Spend(start,0,1);}
+            }
+            return true;
+        }
         public void Remove(ILTDetailGpuSource source)
         {
             if(!groups.TryGetValue(source,out var group))return;
@@ -284,6 +567,7 @@ namespace LocalTerrainPrototype
         }
         bool Prepare(ILTDetailGpuSource source,Group group,View view)
         {
+            using var profile=Profile.Prepare.Auto();
             if(group.instances==null)
             {
                 if(!uploadBudget.CanAllocate)return false;
@@ -320,9 +604,10 @@ namespace LocalTerrainPrototype
                         indexCountPerInstance=part.mesh.GetIndexCount(part.submesh),instanceCount=0,
                         startIndex=part.mesh.GetIndexStart(part.submesh),baseVertexIndex=part.mesh.GetBaseVertex(part.submesh),startInstance=0}});
                     draw.properties=new MaterialPropertyBlock();
-                    draw.properties.SetBuffer("_LTInstances",group.instances);draw.properties.SetBuffer("_LTVisible",draw.visible);
-                    draw.properties.SetMatrix("_LTPartToRoot",part.localMatrix);draw.properties.SetMatrix("_LTRootToPart",part.localMatrix.inverse);
-                    draw.properties.SetFloat("_LTForceNoMotion",part.motionVectors==MotionVectorGenerationMode.ForceNoMotion?1:0);
+                    draw.properties.SetBuffer(Property.Instances,group.instances);draw.properties.SetBuffer(Property.Visible,draw.visible);
+                    draw.properties.SetMatrix(Property.PartToRoot,part.localMatrix);draw.properties.SetMatrix(Property.RootToPart,part.localMatrix.inverse);
+                    draw.properties.SetVector(Property.GrassRoot,part.grassRootInPart);
+                    draw.properties.SetFloat(Property.ForceNoMotion,part.motionVectors==MotionVectorGenerationMode.ForceNoMotion?1:0);
                     view.prepared++;
                 }
                 finally{Spend(start,0,1);}
@@ -346,11 +631,17 @@ namespace LocalTerrainPrototype
             long bytes=(long)buffer.count*buffer.stride;buffer.Dispose();buffer=null;
             ResidentBytes-=bytes;ReleasedBytes+=bytes;BufferCount--;
         }
-        void ClearGroups(){foreach(var group in groups.Values)group.Dispose();groups.Clear();ReservedBytes=0;ViewCount=0;}
+        void ClearGroups()
+        {
+            foreach(var group in groups.Values)group.Dispose();groups.Clear();
+            for(int i=0;i<cullPadding.Length;i++)Free(ref cullPadding[i]);
+            activeSelections.Clear();ReservedBytes=0;ViewCount=0;
+        }
         public bool CheckMemoryAccounting(out string report)
         {
             long actual=0,reserved=0;int buffers=0,views=0;
             void Count(GraphicsBuffer buffer){if(buffer==null)return;actual+=(long)buffer.count*buffer.stride;buffers++;}
+            foreach(var padding in cullPadding)if(padding!=null){Count(padding);reserved+=(long)padding.count*padding.stride;}
             foreach(var group in groups.Values)
             {
                 reserved+=group.bytes;Count(group.instances);
@@ -368,10 +659,13 @@ namespace LocalTerrainPrototype
         }
         public void Dispose()
         {
+            ConfigureMaterialNotifications(false,null);materialReceipts.Clear();
             ClearGroups();
             foreach(var material in materials.Values)Destroy(material);
             materials.Clear();materialTouched.Clear();expiredMaterials.Clear();adapters.Clear();updated.Clear();fallbackDetails.Clear();staging=null;
-            Destroy(cull);cull=null;initialized=false;
+            passPlans.Clear();passMaterials.Clear();preparedCamera=null;boundRecipe=null;
+            preparedTerrainBinding=default;
+            Destroy(cull);cull=null;initialized=false;multiKernel=-1;
         }
         static void Destroy(UnityEngine.Object obj)
         {if(!obj)return;if(Application.isPlaying)UnityEngine.Object.Destroy(obj);else UnityEngine.Object.DestroyImmediate(obj);}

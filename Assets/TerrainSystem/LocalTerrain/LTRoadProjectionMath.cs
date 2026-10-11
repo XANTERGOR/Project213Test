@@ -12,15 +12,17 @@ namespace LocalTerrainPrototype
             =>a==null?b==null:b!=null&&a.projectionHash==b.projectionHash&&(!sharedLayer||a.paintHash==b.paintHash);
         public sealed class Map { public Color[] coordinates,derivatives; public int queries; }
         public static int Owner(Color p)=>(int)Math.Round(Math.Sqrt((double)p.b*p.b+(double)p.a*p.a));
-        public static Map Bake(IReadOnlyList<LTRoadMath.Snapshot> roads,Rect rect,int size)
+        public static Map Bake(IReadOnlyList<LTRoadMath.Snapshot> roads,Rect rect,int size,LTRoadRasterSet raster=null)
         {
             if(roads==null||roads.Count<1||roads.Count>1024||size<2||rect.width<=0||rect.height<=0)throw new ArgumentException("Invalid shared road projection layout.");
+            if(raster!=null&&!raster.Matches(rect,size))throw new ArgumentException("Road raster grid does not match projection layout.");
             int count=size*size;var result=new Map{coordinates=new Color[count],derivatives=roads.Count>1?new Color[count]:null};
             var scores=roads.Count>1?new float[count]:null;
             if(scores!=null)for(int i=0;i<count;i++)scores[i]=float.NegativeInfinity;
             for(int owner=0;owner<roads.Count;owner++)
             {
                 var road=roads[owner];var region=road.TextureBakeRegion(rect,size);int blockSize=LTRoadMath.TextureBakeBlockSize;
+                int rasterRoad=raster!=null?raster.RoadIndex(road):-1;
                 for(int bz=region.yMin;bz<region.yMax;bz+=blockSize)for(int bx=region.xMin;bx<region.xMax;bx+=blockSize)
                 {
                     var block=new RectInt(bx,bz,Math.Min(blockSize,region.xMax-bx),Math.Min(blockSize,region.yMax-bz));
@@ -28,16 +30,23 @@ namespace LocalTerrainPrototype
                     for(int z=block.yMin;z<block.yMax;z++)for(int x=block.xMin;x<block.xMax;x++)
                     {
                         float px=rect.xMin+rect.width*x/(size-1),pz=rect.yMin+rect.height*z/(size-1);int at=z*size+x;
+                        LTRoadMath.Hit sampled=default;
+                        bool haveSample=rasterRoad>=0&&raster.TrySample(rasterRoad,at,out sampled);
                         if(scores!=null)
                         {
-                            road.TrySample(px,pz,out var hit);result.queries++;
+                            var hit=sampled;if(!haveSample){road.TrySample(px,pz,out hit);result.queries++;}
                             // Coverage first, distance second; last hierarchy contributor
                             // wins exact ties. Stable across frames and neighbouring chunks.
-                            float score=road.PaintWeight(px,pz)*10000-Math.Min(9999,hit.radialDistance/Math.Max(.01f,road.width));
+                            float weight;
+                            if(haveSample)road.PaintWeights(hit,px,pz,out weight,out _);else weight=road.PaintWeight(px,pz);
+                            float score=weight*10000-Math.Min(9999,hit.radialDistance/Math.Max(.01f,road.width));
                             if(score<scores[at])continue;scores[at]=score;
                         }
-                        if(!road.TryTextureCoordinates(px,pz,out var uv,out var right))throw new InvalidOperationException("Invalid shared road UV.");
-                        result.queries++;right*=owner+1;result.coordinates[at]=new Color(uv.x,uv.y,right.x,right.y);
+                        Vector2 uv,right;
+                        if(haveSample)road.TextureCoordinates(sampled,px,pz,out uv,out right);
+                        else
+                        {if(!road.TryTextureCoordinates(px,pz,out uv,out right))throw new InvalidOperationException("Invalid shared road UV.");result.queries++;}
+                        right*=owner+1;result.coordinates[at]=new Color(uv.x,uv.y,right.x,right.y);
                     }
                 }
             }

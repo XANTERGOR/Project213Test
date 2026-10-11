@@ -6,6 +6,20 @@ using UnityEngine.Rendering;
 
 namespace LocalTerrainPrototype
 {
+    internal static class LTTextureContentHash
+    {
+        public static Hash128 Get(Texture2D texture)
+        {
+            // Imported content hashes exist only in the Editor. In a Player,
+            // track runtime texture updates; callers track texture identity too.
+#if UNITY_EDITOR
+            return texture.imageContentsHash;
+#else
+            return new Hash128(texture.updateCount, 0, 0, 0);
+#endif
+        }
+    }
+
     public enum LTArrayResolution { R256=256, R512=512, R1024=1024, R2048=2048, R4096=4096 }
 
     // One palette per world, NOT per chunk. GPU-only conversion, owned transient resources.
@@ -84,15 +98,16 @@ namespace LocalTerrainPrototype
                 {
                     Dispose();borrowed=saved;ownsArrays=false;color=saved.color;normal=saved.normal;mask=saved.mask;
                     for(int i=0;i<palette.Count;i++)slices.Add(palette[i],i);
-                    Bytes=EstimateBytes(palette.Count,color.width,normal.width,mask.width);Revision++;
+                    Bytes=LTLayerArrayStorageUtility.Bytes(color)+LTLayerArrayStorageUtility.Bytes(normal)+LTLayerArrayStorageUtility.Bytes(mask);Revision++;
                 }
-                Status=$"Загружено из asset: {saved.name}; {Count} срезов; GPU ≈ {Bytes/1048576f:F1} МиБ. Упаковка не выполнялась.";
+                Status=$"Загружено из asset: {saved.name}; {Count} срезов; {saved.storage}; GPU ≈ {Bytes/1048576f:F1} МиБ. Упаковка не выполнялась.";
                 return true;
             }
             if(!ownsArrays)Dispose();
             bool result=Ensure(palette,(int)world.arrayColorResolution,(int)world.arrayNormalResolution,(int)world.arrayMaskResolution,
                 world.arrayMemoryBudgetMiB,world.arrayPackRevision,world.arrayTrilinear,world.arrayAnisotropy);
             if(saved)Status+=" "+(valid?"Временный предпросмотр. Для сохранения нажмите «Запечь и сохранить».":reason);
+            if(world.arrayStorage!=LTLayerArrayStorage.RGBA32)Status+=" Предпросмотр RGBA32; сжатие выполняется только через «Запечь и сохранить».";
             return result;
         }
         public bool Ensure(List<LTSurfaceLayer> palette,int c,int n,int m,int budgetMiB,int revision,bool trilinear,int anisotropy)
@@ -107,7 +122,7 @@ namespace LocalTerrainPrototype
             var key=new StringBuilder().Append(c).Append('/').Append(n).Append('/').Append(m).Append('/')
                 .Append(budgetMiB).Append('/').Append(revision).Append('/').Append(QualitySettings.activeColorSpace);
             void TextureKey(Texture2D texture)
-            {if(!texture){key.Append("/null");return;}key.Append('/').Append(texture.GetInstanceID()).Append(':').Append(texture.imageContentsHash).Append(':').Append(texture.updateCount);}
+            {if(!texture){key.Append("/null");return;}key.Append('/').Append(texture.GetInstanceID()).Append(':').Append(LTTextureContentHash.Get(texture)).Append(':').Append(texture.updateCount);}
             foreach(var layer in palette)
             {key.Append('|').Append(layer.GetInstanceID());TextureKey(layer.baseColorMap);TextureKey(layer.normalMap);TextureKey(layer.maskMap);}
             string next=key.ToString();

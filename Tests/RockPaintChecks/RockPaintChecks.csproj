@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTPaintRocks.cs" Link="Production/LTPaintRocks.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTPaintWeightPending.cs" Link="Production/LTPaintWeightPending.cs" />
+    <Compile Include="../../Assets/TerrainSystem/LocalTerrain/LTPaintCpuCapture.cs" Link="Production/LTPaintCpuCapture.cs" />
+  </ItemGroup>
+</Project>

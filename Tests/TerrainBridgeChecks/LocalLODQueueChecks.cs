@@ -79,13 +79,15 @@ partial class Checks
         LocalLODGeometryChecks();LocalRoadInputChecks();
         var source=File.ReadAllText("Assets/TerrainSystem/LocalTerrain/Editor/LTEditor.cs");
         var deferred=source.Substring(source.IndexOf("static IEnumerable<LTBuildStep> DeferredChunkLODs"));
-        deferred=deferred.Substring(0,deferred.IndexOf("[MenuItem("));
+        // Menu visibility is independent of the deferred-build method boundary.
+        deferred=deferred.Substring(0,deferred.IndexOf("public static void ValidateCurrentMeshBridges("));
         Require(deferred.Contains("new LTBalancedForest(1,1,")&&deferred.Contains("new HashSet<int>{id},true)"),"local legacy work never builds a world coarse forest");
         Require(!deferred.Contains("updatedAt=")&&!deferred.Contains("state.dirty.Remove")&&!deferred.Contains("chunk.mesh.Clear"),"coarse completion cannot publish LOD0 or acknowledge another edit");
         Require(source.Contains("var requested=new HashSet<int>(affected??state.dirty)")&&source.Contains("bool ownedCoarse=staged&&c.lodsPending&&state.chunkLODs.Contains(id)"),"base owns its request and leaves unrelated pending LODs intact");
         Require(source.Contains("ReadDependencies(new HashSet<int>{id})")&&source.Contains("state.chunkLODs.CaptureVersions(),state.chunkLODs.Version"),"base version guard includes newly discovered seam readers");
         var project=source.Substring(source.IndexOf("EditorApplication.projectChanged +="));project=project.Substring(0,project.IndexOf("EditorApplication.playModeStateChanged"));
         Require(project.Contains("assetInputHashes.Clear()")&&!project.Contains("CancelBuilds"),"generated LOD asset events do not globally cancel independent work");
+        Require(!project.Contains("boundaryCache.Clear()")&&source.Contains("LTBoundaryCacheKey.Compare("),"generated LOD imports keep validated boundary entries");
         Require(source.Contains("AssetInputHash(s.mask)")&&source.Contains("AssetInputHash(sourceMesh)")&&source.Contains("\":source-asset:\"+AssetInputHash(w.source)"),"real source reimports enter input signatures even if dirty counters reset");
         Console.WriteLine("PASS local LOD queue: independent versions/progress, 100 superseding edits, local invalidation, current-seam publication guards, scoped base dependencies and lifecycle barriers. Managed only.");
     }

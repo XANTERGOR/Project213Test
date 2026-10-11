@@ -8,6 +8,7 @@ partial class Checks
         {
             public Mesh mesh;public int dirtyVersion;public Matrix4x4 matrix;
             public Vector3[] points,normals;
+            public Vector3Int[] keys;
             public List<(int count,int a,int b)> edges;
             public Dictionary<Vector3Int,List<int>> pointIndices;
             public ChunkBoundaryData WithNormals(Vector3[] localNormals,int version,Matrix4x4 normalMatrix)
@@ -16,38 +17,49 @@ partial class Checks
                 for(int i=0;i<transformed.Length;i++)
                     transformed[i]=i<localNormals.Length?normalMatrix.MultiplyVector(localNormals[i]).normalized:Vector3.up;
                 return new ChunkBoundaryData{mesh=mesh,dirtyVersion=version,matrix=matrix,
-                    points=points,edges=edges,normals=transformed,pointIndices=pointIndices};
+                    points=points,keys=keys,edges=edges,normals=transformed,pointIndices=pointIndices};
             }
         }
         static ChunkBoundaryData BuildChunkBoundary(Vector3[] vertices,Vector3[] normals,int[] indices,Matrix4x4 matrix,Matrix4x4 normalMatrix)
         {
             var data=new ChunkBoundaryData{matrix=matrix,points=new Vector3[vertices.Length],normals=new Vector3[vertices.Length]};
+            var relative=new Vector3[vertices.Length];
+            data.keys=new Vector3Int[vertices.Length];var offset=new Vector3(matrix.m03,matrix.m13,matrix.m23);
             var ids=new int[vertices.Length];var positions=new Dictionary<Vector3Int,int>();
+            var referenced=new bool[vertices.Length];foreach(int index in indices)referenced[index]=true;
             data.pointIndices=new Dictionary<Vector3Int,List<int>>();
             for(int i=0;i<vertices.Length;i++)
             {
                 var p=data.points[i]=matrix.MultiplyPoint3x4(vertices[i]);
+                relative[i]=matrix.MultiplyVector(vertices[i]);
                 data.normals[i]=i<normals.Length?normalMatrix.MultiplyVector(normals[i]).normalized:Vector3.up;
-                var key=new Vector3Int(Mathf.RoundToInt(p.x*1000),Mathf.RoundToInt(p.y*1000),Mathf.RoundToInt(p.z*1000));
+                if(!referenced[i])continue;
+                var key=data.keys[i]=LocalTerrainPrototype.LTRoadGeometryBoundary.TranslatedKey(relative[i],offset);
                 if(!data.pointIndices.TryGetValue(key,out var uses))data.pointIndices[key]=uses=new List<int>();
                 uses.Add(i);
-                if(!positions.TryGetValue(key,out int id))positions[key]=id=i;
+                var localKey=LocalTerrainPrototype.LTRoadGeometryBoundary.PointKey(relative[i]);
+                if(!positions.TryGetValue(localKey,out int id))positions[localKey]=id=i;
                 ids[i]=id;
             }
             var edges=new Dictionary<long,(int count,int a,int b)>(EdgeKeyComparer.Instance);
-            for(int i=0;i+2<indices.Length;i+=3)for(int k=0;k<3;k++)
+            for(int i=0;i+2<indices.Length;i+=3)
             {
-                int a=ids[indices[i+k]],b=ids[indices[i+(k+1)%3]];long key=MeshEdge(a,b);
-                edges.TryGetValue(key,out var use);edges[key]=(use.count+1,a,b);
+                int x=ids[indices[i]],y=ids[indices[i+1]],z=ids[indices[i+2]];
+                if(x==y||y==z||z==x)continue;
+                for(int k=0;k<3;k++)
+                {
+                    int a=ids[indices[i+k]],b=ids[indices[i+(k+1)%3]];long key=MeshEdge(a,b);
+                    edges.TryGetValue(key,out var use);edges[key]=(use.count+1,a,b);
+                }
             }
             // Keep counts > 1 too: another chunk must not turn an internal or
             // non-manifold edge into an apparent opening during global merging.
-            data.edges=edges.Values.ToList();return data;
+            data.edges=LocalTerrainPrototype.LTRoadGeometryBoundary.NormalizeChunkEdges(relative,edges.Values.ToList());return data;
         }
 
     static void ChunkBoundaryChecks()
     {
-        Vector3Int Key(Vector3 p)=>new Vector3Int(Mathf.RoundToInt(p.x*1000),Mathf.RoundToInt(p.y*1000),Mathf.RoundToInt(p.z*1000));
+        Vector3Int Key(Vector3 p)=>LocalTerrainPrototype.LTRoadGeometryBoundary.PointKey(p);
         var chunks=new List<(Vector3[] v,Vector3[] n,int[] t,Matrix4x4 m)>();
         for(int chunk=0;chunk<4;chunk++)
         {
@@ -78,7 +90,7 @@ partial class Checks
             }
             return edges;
         }
-        void Check(){var full=Gather(false);var cached=Gather(true);Require(full.Count==cached.Count&&full.All(e=>cached[e.Key]==e.Value),"cached/full boundary edge mismatch");}
+        void Check(){var full=Gather(false);var cached=Gather(true);Require(full.Count==cached.Count&&full.All(e=>cached[e.Key].count==e.Value.count),"cached/full undirected boundary edge/count mismatch");}
         Check();
         // Update only one chunk; unchanged entries must remain reusable.
         var old=cache[1];var changed=chunks[0];changed.t=changed.t.Skip(6).ToArray();chunks[0]=changed;

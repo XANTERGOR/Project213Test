@@ -47,7 +47,7 @@ namespace LocalTerrainPrototype
             if(!globalBakeShader||!globalBakeShader.isSupported)
                 return false;
             int size=Mathf.Clamp(Mathf.NextPowerOfTwo(world.globalLayerResolution),256,Mathf.Min(8192,SystemInfo.maxTextureSize));
-            int layout=Mix(world.source.size.GetHashCode(),Mix(world.chunksX,world.chunksZ));
+            int layout=Mix(world.TerrainRect.GetHashCode(),Mix(world.chunksX,world.chunksZ));
             if(!globalColor||!globalNormal||!globalColor.IsCreated()||!globalNormal.IsCreated()||globalColor.width!=size||layout!=globalLayout)
             {
                 DestroyOwned(globalColor);DestroyOwned(globalNormal);globalColor=null;globalNormal=null;
@@ -58,6 +58,13 @@ namespace LocalTerrainPrototype
                 foreach(var state in chunks.Values)state.globallyBaked=false;
             }
             world.globalAlbedoPreview=globalColor;world.globalNormalPreview=globalNormal;
+            // Sparse cells have no draw. Never retain old or uninitialized texels in those slots.
+            using(var commands=new CommandBuffer{name="Clear sparse terrain atlas"})
+            {
+                commands.SetRenderTarget(globalColor);commands.ClearRenderTarget(false,true,world.baseLayer?world.baseLayer.tint.linear:Color.gray);
+                commands.SetRenderTarget(globalNormal);commands.ClearRenderTarget(false,true,new Color(.5f,.5f,1,1));
+                Graphics.ExecuteCommandBuffer(commands);
+            }
             foreach(var state in chunks.Values)state.globallyBaked=false;
             return true;
         }
@@ -69,7 +76,7 @@ namespace LocalTerrainPrototype
             BindRoadProjection(state.bakeMaterial,state);
             state.bakeMaterial.shaderKeywords=System.Array.Empty<string>();
             int size=globalColor.width;
-            var xr=LTPaintMath.AtlasRange(chunk.x,world.chunksX,size);var yr=LTPaintMath.AtlasRange(chunk.z,world.chunksZ,size);
+            var xr=LTPaintMath.AtlasRange(chunk.x-world.chunkOrigin.x,world.chunksX,size);var yr=LTPaintMath.AtlasRange(chunk.z-world.chunkOrigin.y,world.chunksZ,size);
             int x0=xr.x,x1=xr.y,y0=yr.x,y1=yr.y;
             state.bakeMaterial.SetVector("_LTBakeRect",new Vector4((float)x0/size,(float)y0/size,(float)(x1-x0)/size,(float)(y1-y0)/size));
             // The bake shader places a six-vertex tile directly in atlas UV space.
@@ -130,10 +137,10 @@ namespace LocalTerrainPrototype
             }
             if(tilesBaked>0){globalColor.GenerateMips();globalNormal.GenerateMips();}
             if(tilesBaked>0)world.globalBakeRevision++;
-            int layout=Mix(world.source.size.GetHashCode(),Mix(world.chunksX,world.chunksZ));
+            int layout=Mix(world.TerrainRect.GetHashCode(),Mix(world.chunksX,world.chunksZ));
             bool live=hasGlobalBake&&globalColor&&globalNormal&&globalColor.IsCreated()&&globalNormal.IsCreated();
             var saved=world.savedGlobalBake;
-            bool useSaved=!live&&saved&&saved.albedo&&saved.normal;
+            bool useSaved=!live&&saved&&saved.FormatsSupported;
             Texture colorMap=live?(Texture)globalColor:useSaved?saved.albedo:null;
             Texture normalMap=live?(Texture)globalNormal:useSaved?saved.normal:null;
             bool projectionMatches=live?globalTriplanar==world.triplanarTexturing:useSaved&&saved.triplanar==world.triplanarTexturing;
@@ -156,8 +163,10 @@ namespace LocalTerrainPrototype
 #endif
             }
             float start=Mathf.Max(0,world.globalLayerStart),end=Mathf.Max(start+1,world.globalLayerEnd);
-            var globalParams=new Vector4(globalsReady?1:0,start,end,0);
-            var farSurface=new Vector4(world.farLayerSmoothness,world.farLayerMetallic,0,0);
+            var globalParams=new Vector4(globalsReady?1:0,start,end,LTGlobalBakeAsset.NormalEncoding(normalMap));
+            // Store brightness minus one: existing materials/defaults with z=0 stay neutral.
+            // Display-only correction, deliberately excluded from the atlas bake/signature.
+            var farSurface=new Vector4(world.farLayerSmoothness,world.farLayerMetallic,Mathf.Clamp(world.farLayerBrightness,0,4)-1,0);
             using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.GlobalMaterials))
             {
                 foreach(var state in chunks.Values)
@@ -188,6 +197,7 @@ namespace LocalTerrainPrototype
                         state.farMaterialDirty=false;
                         state.boundGlobalParams=globalParams;state.boundFarSurface=farSurface;
                         state.boundGlobalColor=colorMap;state.boundGlobalNormal=normalMap;state.globalBindingReady=true;
+                        unchecked{state.diagnosticMaterialRevision++;}
                         world.paintCpu.GlobalUpdated(globalsReady);
                     }
                     // Keep restoration independent of binding changes (e.g. another camera/save).
@@ -199,25 +209,80 @@ namespace LocalTerrainPrototype
             }
             if(!world.enableGlobalLayerMaps)world.globalLayerStatus="Глобальные карты выключены.";
             else if(colorMap&&!projectionMatches)world.globalLayerStatus="Режим проекции изменён. Запеките и сохраните карты заново; до этого используются детальные слои.";
-            else if(globalsReady)world.globalLayerStatus=$"{(useSaved?"Сохранённые карты":"Запекание в памяти (не сохранено)")}: {colorMap.width}×{colorMap.height}. "+(stale?"Карты устарели. Вдали используется предыдущий результат — запеките и сохраните новые карты.":"Карты актуальны.");
+            else if(!live&&saved&&!saved.FormatsSupported)world.globalLayerStatus="Сохранённые карты отсутствуют или их формат не поддерживается GPU. Используйте совместимое запекание.";
+            else if(globalsReady)world.globalLayerStatus=$"{(useSaved?$"Сохранённые карты {saved.albedo.format}/{saved.normal.format}, {saved.TextureBytes/(1024.0*1024):0.0} МиБ GPU":"Запекание в памяти RGBA32 (без сжатия)")}: {colorMap.width}×{colorMap.height}. "+(stale?"Карты устарели. Вдали используется предыдущий результат — запеките и сохраните новые карты.":"Карты актуальны.");
             else world.globalLayerStatus="Запеките и сохраните глобальные карты. Пока используются детальные слои; также проверьте соответствие размеров мира сохранённому запеканию.";
             if(failed)world.globalLayerStatus=$"Запекание не выполнено: проверьте готовность всех чанков, лимит {LayerCapacity} слоёв и шейдер запекания. "+world.globalLayerStatus;
         }
         void SelectGlobalMaterials(ScriptableRenderContext context,Camera camera)
         {
+            // Inspector/asset preview cameras render their own objects, not this
+            // terrain. They must not replace shared chunk materials with Far or
+            // No displacement while the Scene view is using the near variant.
+            // Keep per-view selection for real renders, including reflections.
+            if(!camera||camera.cameraType==CameraType.Preview)return;
             if(!globalWorld||globalWorld.paintBenchmarkRunning||!arraysAvailable)return;
             using var cameraTimer=globalWorld.paintCpu.CameraScope();
             float end=Mathf.Max(Mathf.Max(0,globalWorld.globalLayerStart)+1,globalWorld.globalLayerEnd);
+            bool diagnostic=LTTerrainFrameDiagnostic.Active;
+            bool layerComparison=diagnostic&&LTTerrainDiagnosticMaterials.IsLayerComparison(LTTerrainFrameDiagnostic.Mode);
+            var diagnosticSettings=diagnostic?new Vector4(Mathf.Clamp(globalWorld.fastLayerBlendBudget,0,.15f),
+                Mathf.Clamp(globalWorld.fastLayerProjectionCutoff,0,.15f),0,0):Vector4.zero;
+            int diagnosticPaired=0,diagnosticUnpaired=0;
+            int diagnosticNear=0,diagnosticFar=0,diagnosticSkipped=0,diagnosticForced=0,diagnosticUnavailable=0;
             foreach(var state in chunks.Values)
             {
                 if(!state.renderer)continue;
                 // Nearest point of the complete mesh bounds: only fully distant chunks use far-only.
                 float distanceSquared=state.renderer.bounds.SqrDistance(camera.transform.position);
+                if(diagnostic&&(!state.coverageActive||layerComparison))
+                {
+                    state.diagnosticMaterials??=new LTTerrainDiagnosticMaterials(state.renderer);
+                    distanceSquared=state.diagnosticMaterials.DistanceSquared(camera.transform.position);
+                }
                 bool far=globalsReady&&state.farMaterial&&distanceSquared>=end*end;
                 float displacementEnd=DisplacementEnd(globalWorld);
                 var selected=far?state.farMaterial:state.displacementActive&&state.flatMaterial&&distanceSquared>=displacementEnd*displacementEnd?state.flatMaterial:state.material;
+                if(diagnostic)
+                {
+                    // Layer comparison modes change fragment material parameters only;
+                    // keep tessellation/deformation and its full-layer heights intact.
+                    // Clones belong only to terrain chunks; shared road/grass sampling keeps the originals.
+                    if(state.coverageActive&&!layerComparison){state.diagnosticMaterials?.Dispose();diagnosticSkipped++;}
+                    else if(selected)
+                    {
+                        if(far)diagnosticFar++;else diagnosticNear++;
+                        state.diagnosticMaterials??=new LTTerrainDiagnosticMaterials(state.renderer);
+                        state.diagnosticMaterials.SetRestoreMaterial(selected);
+                        selected=state.diagnosticMaterials.Select(selected,state.diagnosticMaterialRevision,
+                            far?LTTerrainDiagnosticMode.Normal:LTTerrainFrameDiagnostic.Mode,far,out bool refreshed,
+                            diagnosticSettings,roadProjections.TryGetValue(state,out _)||asphaltStates.TryGetValue(state,out _));
+                        if(refreshed)BindRoadProjection(selected,state);
+                        if(layerComparison&&!far&&selected.GetFloat("_LTBaseOnly")<.5f)
+                        {
+                            if(state.ready&&LTTerrainDiagnosticMaterials.LayerModeBound(selected,LTTerrainFrameDiagnostic.Mode))diagnosticPaired++;
+                            else diagnosticUnpaired++;
+                        }
+                        // Warm the far copy in EVERY mode to keep ownership stable.
+                        Material diagnosticFarMaterial=null;
+                        if(globalsReady&&state.farMaterial)
+                        {
+                            diagnosticFarMaterial=state.diagnosticMaterials.Select(state.farMaterial,state.diagnosticMaterialRevision,
+                                LTTerrainDiagnosticMode.Normal,true,out bool farRefreshed,
+                                diagnosticSettings,roadProjections.TryGetValue(state,out _)||asphaltStates.TryGetValue(state,out _));
+                            if(farRefreshed)BindRoadProjection(diagnosticFarMaterial,state);
+                        }
+                        if(LTTerrainFrameDiagnostic.Mode==LTTerrainDiagnosticMode.ForceFar&&!far)
+                        {
+                            if(diagnosticFarMaterial){selected=diagnosticFarMaterial;diagnosticForced++;}
+                            else diagnosticUnavailable++;
+                        }
+                    }
+                }
+                else state.diagnosticMaterials?.Dispose();
                 if(state.renderer.sharedMaterial!=selected)state.renderer.sharedMaterial=selected;
             }
+            if(diagnostic)LTTerrainFrameDiagnostic.Observe(camera,diagnosticNear,diagnosticFar,diagnosticSkipped,diagnosticForced,diagnosticUnavailable,diagnosticPaired,diagnosticUnpaired);
         }
     }
 }

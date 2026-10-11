@@ -1,5 +1,54 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!114 &-6614639332704579535
+MonoBehaviour:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 56b145d2b9ee1ac4f846968484e7485a, type: 3}
+  m_Name: ContactShadows
+  m_EditorClassIdentifier: Unity.RenderPipelines.HighDefinition.Runtime::UnityEngine.Rendering.HighDefinition.ContactShadows
+  active: 1
+  quality:
+    m_OverrideState: 1
+    m_Value: 3
+  enable:
+    m_OverrideState: 1
+    m_Value: 1
+  length:
+    m_OverrideState: 1
+    m_Value: 0.15
+  opacity:
+    m_OverrideState: 0
+    m_Value: 1
+  distanceScaleFactor:
+    m_OverrideState: 1
+    m_Value: 0.5
+  maxDistance:
+    m_OverrideState: 1
+    m_Value: 500
+  minDistance:
+    m_OverrideState: 0
+    m_Value: 0
+  fadeDistance:
+    m_OverrideState: 0
+    m_Value: 5
+  fadeInDistance:
+    m_OverrideState: 0
+    m_Value: 0
+  rayBias:
+    m_OverrideState: 1
+    m_Value: 1
+  thicknessScale:
+    m_OverrideState: 1
+    m_Value: 0.3
+  m_SampleCount:
+    m_OverrideState: 1
+    m_Value: 8
 --- !u!114 &-6396619852491696027
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -713,7 +762,7 @@ MonoBehaviour:
       m_Value: 1
     castShadows:
       m_OverrideState: 1
-      m_Value: 1
+      m_Value: 0
   layerB:
     cloudMap:
       m_OverrideState: 1
@@ -1004,6 +1053,7 @@ MonoBehaviour:
   - {fileID: -4506549091772158827}
   - {fileID: 6593916302066371320}
   - {fileID: -1230473261820802128}
+  - {fileID: -6614639332704579535}
 --- !u!114 &237768412122792286
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -1020,7 +1070,7 @@ MonoBehaviour:
   interCascadeBorders: 1
   maxShadowDistance:
     m_OverrideState: 1
-    m_Value: 300
+    m_Value: 150
   directionalTransmissionMultiplier:
     m_OverrideState: 0
     m_Value: 1
@@ -1029,7 +1079,7 @@ MonoBehaviour:
     m_Value: 2
   cascadeShadowSplit0:
     m_OverrideState: 1
-    m_Value: 0.25
+    m_Value: 0.26666668
   cascadeShadowSplit1:
     m_OverrideState: 1
     m_Value: 0.072590426
@@ -1038,10 +1088,10 @@ MonoBehaviour:
     m_Value: 0.12
   cascadeShadowBorder0:
     m_OverrideState: 1
-    m_Value: 0.2
+    m_Value: 0.49999994
   cascadeShadowBorder1:
     m_OverrideState: 1
-    m_Value: 0.10666667
+    m_Value: 0.09090909
   cascadeShadowBorder2:
     m_OverrideState: 1
     m_Value: 0.63596463

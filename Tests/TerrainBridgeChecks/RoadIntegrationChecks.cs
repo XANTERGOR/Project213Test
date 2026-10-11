@@ -31,7 +31,7 @@ partial class Checks
 
         const string root="Assets/TerrainSystem/LocalTerrain/";
         var runtime=File.ReadAllText(root+"LTPaintRuntime.cs");
-        foreach(var hook in new[]{"BakeRoadProjection(world,rect,stamps,layers,state,asphaltInputs)","ReleaseRoadProjection(state);",
+        foreach(var hook in new[]{"BakeRoadProjection(world,rect,stamps,layers,state,asphaltInputs,raster)","ReleaseRoadProjection(state);",
             "BindRoadProjection(material,state);","TryRoadProjectionUV(state,i,px,pz","roads[i].PaintWeights(point.x,point.z",
             "asphaltInputs","RoadDisplacementMultiplier(state,px,pz)"})Require(runtime.Contains(hook),"road painter integration missing "+hook);
         var details=File.ReadAllText(root+"LTDetailRenderer.cs");
@@ -55,7 +55,7 @@ partial class Checks
             Require(terrainEditor.Contains(hook),"old/new road dirty-region/normal halo integration missing "+hook);
         Require(roadProjection.Contains("road.TryTextureCoordinates(x, z, out uv, out right)"),"road texture bake uses the endpoint-extending UV query");
         var projectionMath=File.ReadAllText(root+"LTRoadProjectionMath.cs");
-        Require(roadProjection.Contains("LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize)")&&
+        Require(roadProjection.Contains("LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize,raster)")&&
             projectionMath.Contains("TextureBakeRegion(rect,size)")&&projectionMath.Contains("TextureBakeBlockIntersects(rect,size,block)")&&
             projectionMath.Contains("z=block.yMin;z<block.yMax;z++")&&projectionMath.Contains("x=block.xMin;x<block.xMax;x++"),"UV baker evaluates only intersecting guarded blocks in the road region");
         Require(mapping.Contains("slots[slot&3]")&&mapping.Contains("_LTRoadProjectionSlots2"),"all twelve slot indices must stay inside float4 bounds");

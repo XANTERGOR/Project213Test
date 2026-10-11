@@ -1,0 +1,44 @@
+Road/junction shoulder coordination (2026-10-10)
+
+Opt-in on Road Junction > mesh foundation (LOD0) > Согласовать обочины дорог.
+Default OFF. Existing scene settings and disabled-mode snapshots retain old behavior.
+Длина согласования is in metres and capped to Прямой въезд. Applies to connected
+Asphalt ends only, not free ends, circular/procedural foundations or intersections
+inferred from overlapping meshes. No authored/generated asphalt deformation is added:
+width, points, triangles, UV, LOD meshes and socket fit rules stay unchanged.
+
+Road snapshots carry an immutable terrain-only handoff. Shoulder/blend widths and
+their cross-section transition from junction to road. Reference terrain heights
+compose after the junction with residual alpha, avoiding double-strength flattening.
+For paint, residual compensation requires the same active ground layer on both sides;
+different layers retain intentional ordered layer compositing, not a colour-match promise.
+Grass/stones respect the corresponding removal flags. Displacement suppression and
+foundation gizmos follow local widths. Hole/interior foundation geometry stays LOD0.
+Selecting an opted-in junction also displays its connected roads' foundation outlines.
+
+Jobs retain their normal paths away from the connected end. The small end region
+uses the existing exact-reference height fallback for footprint-dependent weights;
+paint composite jobs receive precomputed joined-road masks, as for mesh junctions.
+All region keys, bounds and saved detail-placement identity include joining inputs.
+Overlapping handoff regions at two junctions are rejected before output publication.
+
+Rebuild the junction, then Apply Pending Changes at LT World if Auto Update is off.
+Undo/disable returns to the previous settings through normal rebuild handling.
+The feature does not save scenes or migrate source prefabs automatically.
+
+Managed check: --road-shoulder-joins
+Native isolated menu: Tools > Local Terrain > Validate Road Shoulder Joins (no scene changes)
+Log tag: [Road Shoulder Joins v1]. It checks source LOD immutability, identical output
+asphalt vertices/UV, snapshot caching, endpoint heights and disable round-trip in an
+owned preview scene, plus source/settings/scene hashes and dirty/root guards.
+Managed and C# checks do not verify Unity import, Burst execution or live appearance.
+
+Verification this turn:
+- C# editor build: 0 errors (existing project warnings remain).
+- --road-shoulder-regressions: PASS, including 230312 joining assertions, height-job
+  scalar/reference parity, mesh junction foundations, gizmos, handles and road network.
+- Native preview menu and live scene appearance: not executed by the agent.
+- An additional general harness run stopped at StagedBuildChecks.cs:69. Its source
+  assertion expects the literal OnDisable(){ReleaseLODPreview();} / OnDestroy(){...}
+  strings, while LTChunk now also releases legacy seams / notifies layout changes.
+  LTChunk and this unrelated check were not changed in this task. Full suite not green.

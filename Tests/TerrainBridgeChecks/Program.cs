@@ -78,11 +78,116 @@ partial class Checks
                 string.Join(";",tangents.Select(v=>$"{v.x:R},{v.y:R},{v.z:R},{v.w:R}"));
         return(p.Count,meshes.Sum(m=>m.Count)/3);
     }
-    static void Main()
+    static void Main(string[] args)
     {
+        if(args.Contains("--compressed-arrays")){CompressedLayerArrayChecks();LayerTextureArrayContracts();return;}
+        if(args.Contains("--surface-projection")){SurfaceProjectionChecks();return;}
+        if(args.Contains("--editor-reload")){EditorReloadChecks();return;}
+        if(args.Contains("--editor-tick")){EditorTickChecks();return;}
+        if(args.Contains("--editor-capture")){EditorCaptureChecks();return;}
+        if(args.Contains("--local-lod-queue")){LocalLODQueueChecks();return;}
+        if(args.Contains("--lod-jobs")){LODJobChecks();return;}
+        if(args.Contains("--mesh-stamp-cache")){MeshStampCacheChecks();return;}
+        if(args.Contains("--detail-placement")){DetailPlacementChecks();return;}
+        if(args.Contains("--detail-gpu")){DetailGpuChecks();return;}
+        if(args.Contains("--asphalt-connected")){ConnectedAsphaltChecks();return;}
+        if(args.Contains("--asphalt-connected-inset")){Console.WriteLine(LocalTerrainPrototype.LTRoadInsetCheck.Run(VerifyAsphaltBoundaryCache,damaged:true,connected:true));return;}
+        if(args.Contains("--asphalt-connected-strong")){Console.WriteLine(LocalTerrainPrototype.LTRoadInsetCheck.Run(VerifyAsphaltBoundaryCache,2,damaged:true,connected:true));return;}
+        if(args.Contains("--asphalt-connected-boundary")){Console.WriteLine(LocalTerrainPrototype.LTRoadGeometryBoundaryCheck.Run(VerifyAsphaltBoundaryCache,resolutions:new[]{8,32,64,128},connected:true));return;}
+        if(args.Contains("--asphalt-connected-preset")){Console.WriteLine(LocalTerrainPrototype.LTRoadInsetCheck.Run(VerifyAsphaltBoundaryCache,damaged:true,connected:true,wornPreset:true));return;}
+        if(args.Contains("--asphalt-connected-stress"))
+        {
+            for(int seed=0;seed<8;seed++)
+            {
+                Console.WriteLine("SEED "+seed+": "+LocalTerrainPrototype.LTRoadInsetCheck.Run(VerifyAsphaltBoundaryCache,seed%2==0?1:2,damaged:true,connected:true,seedOffset:seed,wornPreset:true));
+                Console.WriteLine(LocalTerrainPrototype.LTRoadGeometryBoundaryCheck.Run(VerifyAsphaltBoundaryCache,seedOffset:seed,resolutions:new[]{8,32,64,128},connected:true));
+            }
+            return;
+        }
+        if(args.Contains("--road-module")){RoadModuleChecks();RoadModuleEndChecks();return;}
+        if(args.Contains("--road-ground-blend")){RoadGroundBlendChecks();return;}
+        if(args.Contains("--road-batcher-wait")){RoadBatcherWaitChecks();return;}
+        if(args.Contains("--road-collars")){RoadCollarChecks();return;}
+        if(args.Contains("--road1-collars")){Road1CollarChecks();return;}
+        if(args.Contains("--road-auto-joints")){RoadAutomaticJointChecks();return;}
+        if(args.Contains("--road-fuse")){RoadFuseChecks();return;}
+        if(args.Contains("--road-junction-prefab")){RoadJunctionPrefabChecks();return;}
+        if(args.Contains("--junction-foundation")){JunctionFoundationChecks();return;}
+        if(args.Contains("--road-foundation-gizmo")){RoadFoundationGizmoChecks();return;}
+        if(args.Contains("--road-dimension-handles")){RoadDimensionHandleChecks();return;}
+        if(args.Contains("--road-shoulder-joins")){RoadShoulderJoinChecks();return;}
+        if(args.Contains("--road-shoulder-regressions")){RoadShoulderJoinChecks();HeightJobChecks();JunctionFoundationChecks();RoadFoundationGizmoChecks();RoadDimensionHandleChecks();RoadNetworkChecks();return;}
+        if(args.Contains("--road-junction-fit")){RoadJunctionFitChecks();return;}
+        if(args.Contains("--road-foundation-lod")){RoadFoundationLODChecks();return;}
+        if(args.Contains("--junction-foundation-lod")){JunctionFoundationLODChecks();return;}
+        if(args.Contains("--road-auto-lod")){RoadAutoLODChecks();RoadModuleChecks();RoadModuleEndChecks(readLegacyAsset:false);RoadModuleMixChecks(readLegacyAsset:false);RoadFootprintChecks();return;}
+        if(args.Contains("--road-module-mix")){RoadModuleChecks();RoadModuleEndChecks();RoadModuleMixChecks();RoadFootprintChecks();return;}
+        if(args.Contains("--asphalt-bevel")){AsphaltBevelChecks();return;}
+        if(args.Contains("--asphalt-bevel-inset-strong")){Console.WriteLine(LocalTerrainPrototype.LTRoadInsetCheck.Run(VerifyAsphaltBoundaryCache,2,damaged:true,beveled:true));return;}
+        if(args.Contains("--asphalt-bevel-inset-unreduced")){Console.WriteLine(LocalTerrainPrototype.LTRoadInsetCheck.Run(VerifyAsphaltBoundaryCache,0,damaged:true,beveled:true));return;}
+        if(args.Contains("--asphalt-bevel-inset")){Console.WriteLine(LocalTerrainPrototype.LTRoadInsetCheck.Run(VerifyAsphaltBoundaryCache,damaged:true,beveled:true));return;}
+        if(args.Contains("--asphalt-bevel-boundary")){Console.WriteLine(LocalTerrainPrototype.LTRoadGeometryBoundaryCheck.Run(VerifyAsphaltBoundaryCache,resolutions:new[]{8,32,64,128},beveled:true));return;}
+        if(args.Contains("--inset-road")){InsetRoadChecks();return;}
+        if(args.Contains("--asphalt-micro-corner")){Console.WriteLine(LocalTerrainPrototype.LTRoadGeometryBoundaryCheck.MicroCorner(VerifyAsphaltBoundaryCache));return;}
+        if(args.Contains("--inset-road-unreduced")){Console.WriteLine(LocalTerrainPrototype.LTRoadInsetCheck.Run(VerifyAsphaltBoundaryCache,0));return;}
+        if(args.Contains("--asphalt-boundary")){Console.WriteLine("PASS "+LocalTerrainPrototype.LTRoadGeometryBoundaryCheck.Run(VerifyAsphaltBoundaryCache,resolutions:new[]{8,32,64,128}));return;}
+        if(args.Contains("--asphalt-boundary-stress")||args.Contains("--asphalt-bevel-stress"))
+        {
+            for(int seed=0;seed<20;seed++)
+            {
+                Console.WriteLine("Boundary stress seed offset "+seed);
+                Console.WriteLine(LocalTerrainPrototype.LTRoadGeometryBoundaryCheck.Run(VerifyAsphaltBoundaryCache,seedOffset:seed,resolutions:new[]{8,32,64,128},beveled:args.Contains("--asphalt-bevel-stress")));
+            }
+            return;
+        }
+        if(args.Contains("--geometric-asphalt")){GeometricAsphaltChecks();return;}
+        if(args.Contains("--terrain-asphalt")){TerrainAsphaltChecks();RoadTerrainLODChecks();RoadPaintCacheChecks();HeightJobChecks();return;}
+        if(args.Contains("--chunk-grid")){ChunkGridChecks();return;}
+        if(args.Contains("--grid-regressions")){PaintWeightChecks();PaintReuseChecks();SurfaceProjectionChecks();StagedBalanceChecks();CachedBalanceChecks();StitchSnapshotChecks();DetailChecks();return;}
+        if(args.Contains("--road-projection")){RoadMathChecks.Run();RoadNetworkChecks();RoadMixedProjectionChecks();RoadWheelTracksChecks();RoadTilingVegetationChecks();RoadVariationChecks();RoadRasterChecks();return;}
+        if(args.Contains("--rock-transition")){RockTransitionChecks();return;}
+        if(args.Contains("--saved-rock-far")){SavedRockFarProbe();return;}
+        if(args.Contains("--saved-rock-before-atlas")){SavedRockFarProbe(true);return;}
+        if(args.Contains("--rock-far")){Console.WriteLine(LocalTerrainPrototype.LTRockFarLODCheck.Run());return;}
+        if(args.Contains("--rock-terrain-lod")){RockTerrainLODChecks();return;}
+        if(args.Contains("--rock-joint-seam")){Console.WriteLine(LocalTerrainPrototype.LTRockSeamCheck.Run());return;}
+        if(args.Contains("--spatial-lod")){SpatialLODChecks();return;}
+        if(args.Contains("--saved-rock-seam")){SavedRockSeamProbe();return;}
+        if(args.Contains("--detail-batch")){DetailBatchEditChecks();DetailMaskScaleChecks();return;}
+        if(args.Contains("--stamp-manager")){StampManagerChecks();return;}
+        if(args.Contains("--hole-volume")){HoleMeshVolumeChecks();Console.WriteLine("PASS "+LocalTerrainPrototype.LTHoleVolumeLODCheck.Run());return;}
+        if(args.Contains("--hole-volume-contour")){HoleVolumeContourChecks();return;}
+        if(args.Contains("--stamp-size")){StampSizeChecks();return;}
+        if(args.Contains("--stamp-preview")){StampPreviewChecks();return;}
+        if(args.Contains("--lod-flight-replay")){LODFlightReplayChecks(args);return;}
+        if(args.Contains("--lod-neighbour-replay")){LODNeighbourReplayChecks(args);return;}
+        if(args.Contains("--lod-index-copy-replay")){LODIndexCopyReplayChecks(args);return;}
+        if(args.Contains("--saved-hole-contour")){SavedHoleContourProbe(args);return;}
+        if(args.Contains("--hole-stamp")){HoleStampChecks();return;}
+        if(args.Contains("--hole-lod-regression")){HoleStampChecks();LODJobChecks();RoadTerrainLODChecks();SpatialLODChecks();LocalLODQueueChecks();return;}
+        if(args.Contains("--density-mask")){DensityMaskChecks();RegularMaskGridChecks();return;}
+        if(args.Contains("--lod-camera")){LODCameraChecks();LODCaptureChecks();SpatialLODChecks();return;}
+        if(args.Contains("--four-stages")){FourStageMathChecks.Run();return;}
+        if(args.Contains("--stitch-snapshot")){StitchSnapshotChecks();return;}
+        if(args.Contains("--emit-diagnostics")){EmitDiagnosticsChecks();return;}
+        if(args.Contains("--stamp-emitter")){StampEmitterChecks();return;}
+        if(args.Contains("--boundary-invalidation")){BoundaryInvalidationChecks();return;}
+        FourStageMathChecks.Run();
+        StampPreviewChecks();
+        StampSizeChecks();
+        DensityMaskChecks();
+        HoleStampChecks();
+        HoleMeshVolumeChecks();
+        StampEmitterChecks();
+        StitchSnapshotChecks();
+        EmitDiagnosticsChecks();
+        PaintWeightChecks();
+        RoadRasterChecks();
         RoadMathChecks.Run();
         RoadNetworkChecks();
         SpatialLODChecks();
+        LODCameraChecks();
+        LODCaptureChecks();
         StagedBuildChecks();
         LocalLODQueueChecks();
         LODJobChecks();
@@ -92,16 +197,21 @@ partial class Checks
         LODPreparationChecks();
         RoadTerrainLODChecks();
         RoadVariationChecks();
+        TerrainAsphaltChecks();
         RoadWheelTracksChecks();
         RoadPaintCacheChecks();
         RoadTilingVegetationChecks();
         RoadModuleChecks();
+        RoadAutoLODChecks();
+        RoadModuleEndChecks();
+        RoadModuleMixChecks();RoadFootprintChecks();
         RoadIntegrationChecks();
         PaintChecks();
         EdgeBenchmark();
         CutRowsChecks();
         ChunkBoundaryChecks();
         BoundaryDeltaChecks();
+        BoundaryInvalidationChecks();
         LocalBalanceChecks();
         CachedBalanceChecks();
         GeometryHashChecks();

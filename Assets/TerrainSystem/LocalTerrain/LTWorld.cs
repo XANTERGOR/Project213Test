@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace LocalTerrainPrototype
 {
@@ -13,8 +14,27 @@ namespace LocalTerrainPrototype
         {simplificationSteps=steps;maxHeightError=error;startDistance=distance;}
     }
     [ExecuteAlways]
-    public sealed class LTWorld : MonoBehaviour
+    public sealed partial class LTWorld : MonoBehaviour
     {
+        static readonly Unity.Profiling.ProfilerMarker LodUpdateMarker = new Unity.Profiling.ProfilerMarker("LT.LOD.Update");
+        static readonly Unity.Profiling.ProfilerMarker LodCacheMarker = new Unity.Profiling.ProfilerMarker("LT.LOD.Cache");
+        static readonly Unity.Profiling.ProfilerMarker LodTerrainMarker = new Unity.Profiling.ProfilerMarker("LT.LOD.TerrainApply");
+        static readonly Unity.Profiling.ProfilerMarker LodRoadMarker = new Unity.Profiling.ProfilerMarker("LT.LOD.Roads");
+        static readonly Unity.Profiling.ProfilerMarker LodSetupMarker = new Unity.Profiling.ProfilerMarker("LT.LOD.TopologySetup");
+        static readonly Unity.Profiling.ProfilerMarker LodSelectionMarker = new Unity.Profiling.ProfilerMarker("LT.LOD.Selection");
+        static readonly Unity.Profiling.ProfilerMarker LodBalanceMarker = new Unity.Profiling.ProfilerMarker("LT.LOD.Balance");
+        static readonly Unity.Profiling.ProfilerMarker LodRockSeamMarker = new Unity.Profiling.ProfilerMarker("LT.LOD.RockSeams");
+        [HideInInspector] public LTRockSeamAsset rockSeams;
+        [System.NonSerialized] public bool rockSeamBakePending;
+        readonly LTRockSeamRuntime rockSeamRuntime=new LTRockSeamRuntime();
+        System.Func<Mesh,LTRockSeamIndices.Plan> rockSeamLookup;
+        bool rockSeamFailed;
+        public void InvalidateRockSeams(){rockSeamRuntime.Dispose();rockSeamFailed=false;}
+        public int ResolveRockSeamChunkLOD(LTChunk chunk)
+        {
+            if(!enableLODs||(!Application.isPlaying&&!previewLODs&&forceLOD<0)||IsRegularMaskGridChunk(chunk.x,chunk.z))return 0;
+            var camera=ResolveLODCamera();return camera?SelectLOD(Mathf.Sqrt(chunk.mesh.bounds.SqrDistance(chunk.transform.InverseTransformPoint(camera.transform.position))),chunk.currentLOD,lods,lodHysteresis):0;
+        }
         public LTSource source;
         public Material material;
         public LTSurfaceLayer baseLayer;
@@ -55,6 +75,8 @@ namespace LocalTerrainPrototype
         public LTArrayResolution arrayColorResolution=LTArrayResolution.R1024;
         public LTArrayResolution arrayNormalResolution=LTArrayResolution.R1024;
         public LTArrayResolution arrayMaskResolution=LTArrayResolution.R1024;
+        [Tooltip("Storage of the next saved bake. BC7 color/mask + BC5 normals; transient preview remains RGBA32. Source textures are unchanged.")]
+        public LTLayerArrayStorage arrayStorage=LTLayerArrayStorage.RGBA32;
         public bool arrayTrilinear=true;
         [Range(1,16)] public int arrayAnisotropy=4;
         [Min(16)] public int arrayMemoryBudgetMiB=512;
@@ -68,6 +90,8 @@ namespace LocalTerrainPrototype
         [Range(256,8192)] public int globalLayerResolution=2048;
         [Min(0)] public float globalLayerStart=150;
         [Min(1)] public float globalLayerEnd=300;
+        [Range(0,4), Tooltip("Яркость запечённого дальнего цвета: 1 — исходная, 0 — чёрный. Не требует повторного запекания; ближние слои не меняются.")]
+        public float farLayerBrightness=1;
         [Range(0,1)] public float farLayerSmoothness=.3f;
         [Range(0,1)] public float farLayerMetallic;
         public LTGlobalBakeAsset savedGlobalBake;
@@ -80,6 +104,8 @@ namespace LocalTerrainPrototype
         [System.NonSerialized] public LTPaintCpuCapture paintCpu=new LTPaintCpuCapture();
         LTPaintRuntime paintRuntime;
         internal LTPaintRuntime DetailPaintRuntime=>paintRuntime;
+        public string GrassTerrainStatus=>paintRuntime?.GrassTerrainStatus??"Ожидание покраски террейна.";
+        public string RoadTerrainBlendStatus=>paintRuntime?.RoadTerrain.Status??"Ожидание покраски terrain и перестройки дороги.";
         [System.NonSerialized] public bool showDisplacementCoverage;
         [System.NonSerialized] public bool forceHullOneDiagnostic;
         [System.NonSerialized] public bool uniformHullDiagnostic;
@@ -110,6 +136,7 @@ namespace LocalTerrainPrototype
         [System.NonSerialized] public readonly LTPaintMath.TerrainAuthoringRevisions displacementGeometry=new LTPaintMath.TerrainAuthoringRevisions();
         [System.NonSerialized] public string lastEditorUpdateCycle;
         [System.NonSerialized] public string lastEditorPaintStages;
+        [System.NonSerialized] public string lastEditorPaintCycleStages;
 #if UNITY_EDITOR
         // Installed by the editor engine. Automatic worlds have one update owner:
         // geometry first, paint second. Runtime/manual worlds keep their usual path.
@@ -127,7 +154,8 @@ namespace LocalTerrainPrototype
             paintRuntime.RequestGlobalBake();paintRuntime.Tick(this);
         }
         public void UpdatePainting()=>UpdatePainting(false);
-        public void UpdatePainting(bool afterGeometryUpdate)
+        public bool PaintingPending=>paintRuntime!=null&&paintRuntime.PendingRoadSampling;
+        public void UpdatePainting(bool afterGeometryUpdate,bool backgroundRoadSampling=false)
         {
             if(!isActiveAndEnabled||paintBenchmarkRunning)return;
 #if UNITY_EDITOR
@@ -138,7 +166,7 @@ namespace LocalTerrainPrototype
             if(!Application.isPlaying&&!afterGeometryUpdate&&EditorOwnsPainting!=null&&EditorOwnsPainting(this))return;
 #endif
             if(paintRuntime==null)paintRuntime=new LTPaintRuntime();
-            paintRuntime.Tick(this,afterGeometryUpdate);
+            paintRuntime.Tick(this,afterGeometryUpdate,backgroundRoadSampling&&!Application.isPlaying);
         }
         [ContextMenu("Сбросить визуальное продавливание")]
         public void ClearDeformation(){paintRuntime?.ClearDeformation();}
@@ -149,10 +177,11 @@ namespace LocalTerrainPrototype
             var result=new System.Collections.Generic.List<LTPaintStamp>();
             void Walk(Transform parent)
             {
-                foreach(Transform child in parent)
+                for(int childIndex=0;childIndex<parent.childCount;childIndex++)
                 {
-                    if(child==generatedRoot||child.GetComponent<LTWorld>()||child.GetComponent<LTRoadGenerated>()||child.GetComponent<LTRoadJunctionGenerated>())continue;
-                    var stamp=child.GetComponent<LTPaintStamp>();if(stamp)result.Add(stamp);
+                    var child=parent.GetChild(childIndex);
+                    if(child==generatedRoot||child.TryGetComponent<LTWorld>(out _)||child.TryGetComponent<LTRoadGenerated>(out _)||child.TryGetComponent<LTRoadJunctionGenerated>(out _))continue;
+                    if(child.TryGetComponent<LTPaintStamp>(out var stamp))result.Add(stamp);
                     Walk(child);
                 }
             }
@@ -162,7 +191,7 @@ namespace LocalTerrainPrototype
             var nodes=result.FindAll(s=>s.Junction);result.RemoveAll(s=>s.Junction);result.AddRange(nodes);
             return result;
         }
-        [Range(1, 16)] public int chunksX = 3, chunksZ = 3;
+        [Range(1, LTChunkGrid.MaxAxis)] public int chunksX = 3, chunksZ = 3;
         [Range(8, 128)] public int cellsPerChunk = 32;
         public bool adaptive = true;
         [HideInInspector]
@@ -204,118 +233,224 @@ namespace LocalTerrainPrototype
         int spatialColumns,spatialRows,spatialDivisions;
         bool spatialFailed;
         [System.NonSerialized] public string spatialLODStatus;
-        double nextLODUpdate;
-        public void RefreshLODCache(){cachedChunks=null;cachedRoadLODs=null;spatialTopology=null;spatialChunks=null;spatialFailed=false;spatialLODStatus=null;nextLODUpdate=0;}
-        void OnEnable(){RefreshLODCache();}
+        [System.NonSerialized] public readonly LTLODCpuCapture lodCpu=new LTLODCpuCapture();
+        [System.NonSerialized] public string lodCpuReportPath;
+        readonly LTLODCameraSchedule lodCameraSchedule=new LTLODCameraSchedule();
+        double nextColliderLODUpdate;
+        public void RefreshLODCache(){InvalidateRockSeams();cachedChunks=null;cachedRoadLODs=null;spatialTopology=null;spatialChunks=null;spatialFailed=false;spatialLODStatus=null;lodCameraSchedule.Invalidate();nextColliderLODUpdate=0;}
+        void OnEnable()
+        {
+            RefreshLODCache();
+            RenderPipelineManager.beginCameraRendering-=BeforeCameraRendering;
+            RenderPipelineManager.beginCameraRendering+=BeforeCameraRendering;
+        }
+        // OnValidate may run off the main thread: only invalidate managed state.
+        void OnValidate(){lodCameraSchedule.Invalidate();}
         void OnDisable()
         {
+            InvalidateRockSeams();
+            if(lodCpu.Stop("world disabled"))PublishLODCpuReport();
+            RenderPipelineManager.beginCameraRendering-=BeforeCameraRendering;
+            lodCameraSchedule.Invalidate();
             ReleasePainting();
             if(generatedRoot)foreach(var c in generatedRoot.GetComponentsInChildren<LTChunk>())
-            {c.ReleaseLODPreview();c.ShowLOD(0);}
+            {c.SetRockSeamMaps(null);c.ReleaseLODPreview();c.ShowLOD(0);}
             foreach(var road in GetComponentsInChildren<LTRoadLOD>())road.Show(0);
         }
-        void Update(){UpdateLOD();UpdatePainting();paintCpu.Poll();}
+        void Update(){UpdateLOD();UpdatePainting();paintCpu.Poll();PollLODCpuCapture();}
+        public void StartLODCpuCapture()
+        {
+            if(lodCpu.Running)return;
+            lodCpuReportPath=null;
+            var camera=ResolveLODCamera();
+            lodCpu.Start(name,Application.isPlaying?"Play":"Edit",
+                $"mode={terrainLODMode}; enabled={enableLODs}; preview={previewLODs}; Force LOD={forceLOD}; patches={SpatialLODDivisions}; chunks={chunksX}x{chunksZ}; camera={(camera?camera.name:"none")}; Unity={Application.unityVersion}");
+        }
+        public void PollLODCpuCapture(){if(lodCpu.Poll())PublishLODCpuReport();}
+        public void StopLODCpuCapture(){if(lodCpu.Stop())PublishLODCpuReport();}
+        void PublishLODCpuReport()
+        {
+            // Never serialize/log from the rendering callback: finishing a capture
+            // must not create the hitch that we are trying to diagnose.
+#if UNITY_EDITOR
+            try
+            {
+                string folder=System.IO.Path.GetFullPath("Logs/LocalTerrainLODCaptures");
+                System.IO.Directory.CreateDirectory(folder);
+                lodCpuReportPath=System.IO.Path.Combine(folder,System.DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff")+"-"+System.Guid.NewGuid().ToString("N")+".json");
+                System.IO.File.WriteAllText(lodCpuReportPath,JsonUtility.ToJson(lodCpu.LastReport,true));
+            }
+            catch(System.Exception error){lodCpuReportPath="Не удалось сохранить отчёт: "+error.Message;}
+#endif
+            Debug.Log(lodCpu.Status+"\n"+lodCpuReportPath,this);
+        }
         public void UpdateLOD()
         {
-            if(paintBenchmarkRunning)return;
-            double now=Time.realtimeSinceStartupAsDouble;
-            if(now<nextLODUpdate)return;
-            nextLODUpdate=now+.1;
-            if(!generatedRoot)return;
-            if(cachedChunks==null)cachedChunks=generatedRoot.GetComponentsInChildren<LTChunk>();
+            if(!isActiveAndEnabled||paintBenchmarkRunning||!lodCameraSchedule.PollDue(Time.realtimeSinceStartupAsDouble))return;
+            UpdateLOD(ResolveLODCamera(),false);
+        }
+        void BeforeCameraRendering(ScriptableRenderContext context,Camera renderingCamera)
+        {
+            if(!isActiveAndEnabled||paintBenchmarkRunning||!renderingCamera||!LTLODCameraSchedule.IsRenderCamera(renderingCamera.cameraType))return;
+            // Keep one LOD driver for this world, even if HDRP renders multiple
+            // cameras. Reflection/preview cameras must never change its topology.
+            UpdateLOD(ResolveLODCamera(),true);
+        }
+        Camera ResolveLODCamera()
+        {
             Camera camera=lodCamera;
 #if UNITY_EDITOR
             if(!Application.isPlaying && previewLODs && UnityEditor.SceneView.lastActiveSceneView)
                 camera=UnityEditor.SceneView.lastActiveSceneView.camera;
 #endif
             if(!camera)camera=Camera.main;
-            bool spatialRequested=UseSpatialLODs&&(Application.isPlaying||previewLODs||forceLOD>=0)&&(camera||forceLOD>=0);
+            return camera;
+        }
+        void UpdateLOD(Camera camera,bool beforeRender)
+        {
+            if(!generatedRoot)return;
+            double now=Time.realtimeSinceStartupAsDouble;
+            if(!lodCameraSchedule.TryBegin(now,camera?camera.GetInstanceID():0,camera?camera.transform.position:Vector3.zero,beforeRender))return;
+            using var lodProfile = LodUpdateMarker.Auto();
+            var capturePosition=lodCpu.Running&&camera?camera.transform.position:Vector3.zero;
+            using var capture=lodCpu.BeginUpdate(lodCpu.Running&&camera?camera.GetInstanceID():0,capturePosition.x,capturePosition.y,capturePosition.z,beforeRender,forceLOD);
+            // Camera-rate visual selection must not increase collider maintenance.
+            bool updateColliders=Application.isPlaying&&now>=nextColliderLODUpdate;
+            if(updateColliders)nextColliderLODUpdate=now+.1;
+            using(LodCacheMarker.Auto())
+            using(lodCpu.Measure(LTLODCpuCapture.Stage.Cache))
+                if(cachedChunks==null)cachedChunks=generatedRoot.GetComponentsInChildren<LTChunk>();
+            int terrainForce=TerrainForcedLOD;
+            bool spatialRequested=UseSpatialLODs&&(Application.isPlaying||previewLODs||terrainForce>=0)&&(camera||terrainForce>=0);
             bool spatialReady=spatialRequested&&UpdateSpatialTopology(camera);
-            foreach(var c in cachedChunks)
+            using(LodRockSeamMarker.Auto())
+            if(!rockSeamFailed)
             {
-                if(!c||!c.mesh)continue;
-                if(Application.isPlaying && camera && colliderMaxDistance > 0)
+                try{rockSeamRuntime.Prepare(this,cachedChunks,spatialTopology,spatialReady);}
+                catch(System.Exception error)
                 {
-                    Vector3 colliderLocal=c.transform.InverseTransformPoint(camera.transform.position);
-                    float colliderDistance=Mathf.Sqrt(c.mesh.bounds.SqrDistance(colliderLocal));
-                    var collider=c.GetComponent<MeshCollider>();
-                    if(collider) collider.enabled=colliderDistance <= colliderMaxDistance;
+                    rockSeamRuntime.Dispose();rockSeamFailed=true;
+                    Debug.LogWarning("Joint rock/terrain LOD disabled for this bake; original matching contours retained: "+error.Message,this);
                 }
-                int level=0;
-                if(enableLODs && (Application.isPlaying||previewLODs||forceLOD>=0))
+            }
+            rockSeamLookup??=rockSeamRuntime.Map;
+            foreach(var c in cachedChunks)if(c)c.SetRockSeamMaps(rockSeamLookup);
+            lodCpu.TerrainState(spatialRequested,spatialReady,cachedChunks.Length);
+            using(LodTerrainMarker.Auto())
+            using(lodCpu.Measure(LTLODCpuCapture.Stage.TerrainApply))
+            {
+                foreach(var c in cachedChunks)
                 {
-                    if(forceLOD>=0)level=forceLOD;
-                    else if(camera && lods!=null)
+                    if(!c||!c.mesh)continue;
+                    if(updateColliders && camera && colliderMaxDistance > 0)
                     {
-                        Vector3 local=c.transform.InverseTransformPoint(camera.transform.position);
-                        float distance=Mathf.Sqrt(c.mesh.bounds.SqrDistance(local));
-                        level=SelectLOD(distance,c.currentLOD,lods,lodHysteresis);
+                        Vector3 colliderLocal=c.transform.InverseTransformPoint(camera.transform.position);
+                        float colliderDistance=Mathf.Sqrt(c.mesh.bounds.SqrDistance(colliderLocal));
+                        var collider=c.GetComponent<MeshCollider>();
+                        if(collider) collider.enabled=colliderDistance <= colliderMaxDistance;
                     }
+                    int level=0;
+                    if(enableLODs && (Application.isPlaying||previewLODs||terrainForce>=0))
+                    {
+                        if(terrainForce>=0)level=terrainForce;
+                        else if(camera && lods!=null)
+                        {
+                            Vector3 local=c.transform.InverseTransformPoint(camera.transform.position);
+                            float distance=Mathf.Sqrt(c.mesh.bounds.SqrDistance(local));
+                            level=SelectLOD(distance,c.currentLOD,lods,lodHysteresis);
+                        }
+                    }
+                    if(spatialReady)
+                    {int id=ChunkId(c.x,c.z);c.ShowSpatialLOD(spatialTopology,id,spatialTopology.DirtyChunks.Contains(id),lodCpu);}
+                    else c.ShowLOD(UseSpatialLODs||IsRegularMaskGridChunk(c.x,c.z)?0:level);
                 }
-                if(spatialReady)
-                {int id=c.z*chunksX+c.x;c.ShowSpatialLOD(spatialTopology,id,spatialTopology.DirtyChunks.Contains(id));}
-                else c.ShowLOD(UseSpatialLODs||IsRegularMaskGridChunk(c.x,c.z)?0:level);
             }
-            if(cachedRoadLODs==null)cachedRoadLODs=GetComponentsInChildren<LTRoadLOD>(true);
-            foreach(var segment in cachedRoadLODs)
+            if(spatialReady)lodCpu.IndexCacheResult(spatialTopology.IndexCacheHits,spatialTopology.IndexCacheBuilds,
+                spatialTopology.IndexCacheCells,spatialTopology.IndexCacheFallbacks,spatialTopology.IndexCacheBytes);
+            using(LodRoadMarker.Auto())
+            using(lodCpu.Measure(LTLODCpuCapture.Stage.Roads))
             {
-                if(!segment||!segment.gameObject.activeInHierarchy)continue;
-                var node=segment.junction;
-                if(node?node.World!=this||!node.isActiveAndEnabled:!segment.owner||segment.owner.World!=this)continue;
-                var settings=node?node.lods:segment.owner.asphaltLODs;
-                int level=0;
-                if((node||segment.owner.asphaltLODMode!=LTRoadLODMode.Disabled)&&(Application.isPlaying||previewLODs||forceLOD>=0))
+                if(cachedRoadLODs==null)cachedRoadLODs=GetComponentsInChildren<LTRoadLOD>(true);
+                foreach(var segment in cachedRoadLODs)
                 {
-                    if(forceLOD>=0)level=forceLOD;
-                    else if(camera)level=SelectLOD(Mathf.Sqrt(segment.bounds.SqrDistance(segment.transform.InverseTransformPoint(camera.transform.position))),segment.current,settings,lodHysteresis);
+                    if(!segment||!segment.gameObject.activeInHierarchy)continue;
+                    var node=segment.junction;
+                    if(node?node.World!=this||!node.isActiveAndEnabled:!segment.owner||segment.owner.World!=this)continue;
+                    var settings=node?node.lods:segment.owner.asphaltLODs;
+                    int level=0;
+                    if((node||segment.owner.asphaltLODMode!=LTRoadLODMode.Disabled)&&(Application.isPlaying||previewLODs||forceLOD>=0))
+                    {
+                        if(forceLOD>=0)level=forceLOD;
+                        else if(camera)
+                        {
+                            float distance=Mathf.Sqrt(segment.bounds.SqrDistance(segment.transform.InverseTransformPoint(camera.transform.position)));
+                            level=node&&!node.Authored?SelectLOD(distance,segment.current,settings,lodHysteresis):
+                                LTRoadLODPolicy.Select(distance,segment.current,settings,segment.meshes?.Length??0,lodHysteresis);
+                        }
+                    }
+                    segment.Show(level);
                 }
-                segment.Show(level);
             }
+            lodCpu.Completed();
         }
         bool UpdateSpatialTopology(Camera camera)
         {
             if(spatialFailed)return false;
             try
             {
-                bool reset=spatialTopology==null||spatialColumns!=chunksX||spatialRows!=chunksZ||spatialDivisions!=SpatialLODDivisions;
-                if(!reset)foreach(var c in cachedChunks)
+                using(LodSetupMarker.Auto())
+                using(lodCpu.Measure(LTLODCpuCapture.Stage.TopologySetup))
                 {
-                    int id=c?c.z*chunksX+c.x:-1;
-                    if(id<0||id>=spatialChunks.Length||spatialChunks[id]!=c||spatialAssets[id]!=c.ActiveSpatialLOD||!c.ActiveSpatialLOD||spatialRevisions[id]!=c.ActiveSpatialLOD.revision){reset=true;break;}
-                }
-                if(reset)
-                {
-                    int count=chunksX*chunksZ;
-                    var ordered=new LTChunk[count];var input=new LTSpatialLODTopology.Chunk[count];
-                    var assets=new LTSpatialLODAsset[count];var revisions=new int[count];
-                    foreach(var c in cachedChunks)
+                    bool reset=spatialTopology==null||spatialColumns!=chunksX||spatialRows!=chunksZ||spatialDivisions!=SpatialLODDivisions;
+                    if(!reset)foreach(var c in cachedChunks)
                     {
-                        if(!c||c.x<0||c.z<0||c.x>=chunksX||c.z>=chunksZ)throw new System.InvalidOperationException("Некорректная сетка чанков.");
-                        int id=c.z*chunksX+c.x;var asset=c.ActiveSpatialLOD;
-                        if(ordered[id]||!asset||!asset.vertexBank||asset.formatVersion!=LTSpatialLODMath.Version||asset.divisions!=SpatialLODDivisions)
-                            throw new System.InvalidOperationException("Нужна однократная перестройка геометрии: данные адаптивных стыков LOD отсутствуют или устарели.");
-                        ordered[id]=c;assets[id]=asset;revisions[id]=asset.revision;
-                        input[id]=new LTSpatialLODTopology.Chunk{cells=asset.cells,patches=asset.patches};
+                        int id=c?ChunkId(c.x,c.z):-1;
+                        if(id<0||id>=spatialChunks.Length||spatialChunks[id]!=c||spatialAssets[id]!=c.ActiveSpatialLOD||!c.ActiveSpatialLOD||spatialRevisions[id]!=c.ActiveSpatialLOD.revision){reset=true;break;}
                     }
-                    spatialTopology=new LTSpatialLODTopology(chunksX,chunksZ,SpatialLODDivisions,input);
-                    spatialChunks=ordered;spatialAssets=assets;spatialRevisions=revisions;
-                    spatialColumns=chunksX;spatialRows=chunksZ;spatialDivisions=SpatialLODDivisions;
-                }
-                for(int id=0;id<spatialChunks.Length;id++)
-                {
-                    var c=spatialChunks[id];var patches=spatialAssets[id].patches;
-                    var local=camera?c.transform.InverseTransformPoint(camera.transform.position):Vector3.zero;
-                    bool fixedLOD=IsRegularMaskGridChunk(c.x,c.z);
-                    for(int p=0;p<patches.Length;p++)
+                    if(reset)
                     {
-                        int level=fixedLOD?0:forceLOD>=0?forceLOD:SelectLOD(Mathf.Sqrt(patches[p].bounds.SqrDistance(local)),spatialTopology.Requested(id,p),lods,lodHysteresis);
-                        spatialTopology.SetLevel(id,p,level);
+                        if(!Grid.Valid)throw new System.InvalidOperationException("Некорректный размер сетки чанков.");
+                        int count=chunksX*chunksZ;
+                        var ordered=new LTChunk[count];var input=new LTSpatialLODTopology.Chunk[count];
+                        var assets=new LTSpatialLODAsset[count];var revisions=new int[count];
+                        foreach(var c in cachedChunks)
+                        {
+                            if(!c||!Grid.Contains(c.x,c.z))throw new System.InvalidOperationException("Некорректная сетка чанков.");
+                            int id=ChunkId(c.x,c.z);var asset=c.ActiveSpatialLOD;
+                            if(ordered[id]||!asset||!asset.vertexBank||asset.formatVersion!=LTSpatialLODMath.Version||asset.divisions!=SpatialLODDivisions)
+                                throw new System.InvalidOperationException("Нужна однократная перестройка геометрии: данные адаптивных стыков LOD отсутствуют или устарели.");
+                            ordered[id]=c;assets[id]=asset;revisions[id]=asset.revision;
+                            input[id]=new LTSpatialLODTopology.Chunk{cells=asset.cells,patches=asset.patches};
+                        }
+                        spatialTopology=new LTSpatialLODTopology(chunksX,chunksZ,SpatialLODDivisions,input);
+                        spatialChunks=ordered;spatialAssets=assets;spatialRevisions=revisions;
+                        spatialColumns=chunksX;spatialRows=chunksZ;spatialDivisions=SpatialLODDivisions;
+                        lodCpu.TopologyBuilt();
                     }
                 }
-                spatialTopology.Update();spatialLODStatus=null;return true;
+                using(LodSelectionMarker.Auto())
+                using(lodCpu.Measure(LTLODCpuCapture.Stage.Selection))
+                {
+                    for(int id=0;id<spatialChunks.Length;id++)
+                    {
+                        var c=spatialChunks[id];if(!c)continue;var patches=spatialAssets[id].patches;
+                        var local=camera?c.transform.InverseTransformPoint(camera.transform.position):Vector3.zero;
+                        bool fixedLOD=IsRegularMaskGridChunk(c.x,c.z);
+                        for(int p=0;p<patches.Length;p++)
+                        {
+                            int level=fixedLOD?0:TerrainForcedLOD>=0?TerrainForcedLOD:SelectLOD(Mathf.Sqrt(patches[p].bounds.SqrDistance(local)),spatialTopology.Requested(id,p),lods,lodHysteresis);
+                            spatialTopology.SetLevel(id,p,level);
+                        }
+                    }
+                }
+                using(LodBalanceMarker.Auto())
+                using(lodCpu.Measure(LTLODCpuCapture.Stage.Balance))spatialTopology.Update();
+                lodCpu.TopologyResult(spatialTopology.DirtyChunks.Count,spatialTopology.ResetPatches,spatialTopology.ProcessedCells);
+                spatialLODStatus=null;return true;
             }
             catch(System.Exception e)
             {
+                lodCpu.TopologyFailed();
                 // Never mix incompatible old/new seam data across neighbouring chunks.
                 // A successful bake calls RefreshLODCache and permits a fresh attempt.
                 spatialFailed=true;spatialTopology=null;spatialLODStatus=e.Message+" Пока отображается LOD0.";

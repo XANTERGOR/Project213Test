@@ -13,11 +13,12 @@ partial class Checks
         const float width=16,extent=32;
         var tolerances=new[]{0f,.04f,.15f,.5f};
         int samples=0;
-        foreach(string scenario in new[]{"flat offroad","rutted/banked offroad","varied offroad","offroad junction","asphalt"})
+        foreach(string scenario in new[]{"flat offroad","rutted/banked offroad","varied offroad","offroad junction","asphalt","terrain asphalt"})
         {
             bool flat=scenario=="flat offroad",junction=scenario=="offroad junction";
             var settings=LTRoadMath.Settings.Default;
             settings.mode=scenario=="asphalt"?LTRoadMode.Asphalt:LTRoadMode.Offroad;
+            if(scenario=="terrain asphalt")settings.mode=LTRoadMode.TerrainAsphalt;
             settings.width=3;settings.shoulderWidth=.5f;settings.blendWidth=1.5f;
             settings.terrainCellSize=.25f;settings.sampleSpacing=.5f;settings.edgeNoise=0;
             settings.pattern=flat?LTRoadPattern.Solid:LTRoadPattern.Tracks;settings.rutDepth=.12f;
@@ -139,10 +140,11 @@ partial class Checks
         }
         var source=File.ReadAllText("Assets/TerrainSystem/LocalTerrain/Editor/LTEditor.cs");
         Require(source.Contains("fixedRoadSurface=LTLODMesh.RequiresFixedRoadSurface(node.surface)")&&source.Contains("fixedRoadSurface=LTLODMesh.RequiresFixedRoadSurface(snapshot.mode)"),"production roads/nodes capture the tested policy");
-        Require(source.Split("s.fixedRoadSurface&&s.road!=null").Length==4&&source.Split("s.fixedRoadSurface&&s.junction!=null").Length==4,"manual and per-chunk deferred LOD paths filter protected roads and junctions");
-        Require(source.Contains("return protectedRegions.Any(")&&source.Contains("||roads.Any(road=>road.Intersects(area))"),"spatial fixed masks use the filtered protection too");
+        var protection=File.ReadAllText("Assets/TerrainSystem/LocalTerrain/Editor/LTHoleStampEditor.cs");
+        Require(source.Split("PrepareLODProtectedArea(local,").Length==4&&protection.Contains("s.fixedRoadSurface&&s.road!=null")&&source.Split("s.fixedRoadSurface&&s.junction!=null").Length==4,"manual and per-chunk deferred LOD paths filter protected roads and junctions");
+        Require(source.Contains("return protectedRegions.Any(")&&source.Contains("||(protectedArea?.Invoke(area)??false)")&&protection.Contains("||roads.Any(road=>road.Intersects(area))"),"spatial fixed masks use the filtered protection too");
         Require(source.Contains("offroad-height-error-lod-v1")&&source.Contains("snapshot.hash+\":\"+node.surface"),"LOD policy and node surface changes invalidate old plans");
-        Require(source.Contains("GetComponent<MeshCollider>().sharedMesh=c.mesh;"),"colliders remain on terrain LOD0");
+        Require(source.Contains("GetComponent<MeshCollider>().sharedMesh=c.mesh&&")&&source.Contains("c.mesh.GetIndexCount(0)>0?c.mesh:null"),"colliders remain on terrain LOD0, or null for a fully cut chunk");
         Console.WriteLine($"PASS road terrain LOD regression: {samples} emitted-surface height comparisons; no Unity native meshes or live-scene performance measurements.");
     }
 

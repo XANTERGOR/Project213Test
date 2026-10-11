@@ -5,7 +5,7 @@ $reportDir = Join-Path $projectDir ('Logs/LayerArrayChecks/' + [Guid]::NewGuid()
 New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
 Write-Output ('Reduced HLSL compile only, not Unity/HDRP draw. Reports: ' + $reportDir)
 $nl=[Environment]::NewLine
-$inputs=@('LTEightLayerProperties.hlsl','LTLayerBlendCore.hlsl','LTRoadProjection.hlsl','LTProjectedLayers.hlsl','LTLayerTessellation.hlsl')
+$inputs=@('LTEightLayerProperties.hlsl','LTLayerBlendCore.hlsl','LTRoadProjection.hlsl','LTRoadAsphalt.hlsl','LTRoadAsphaltProperties.hlsl','LTRockMaterialProperties.hlsl','LTProjectedLayers.hlsl','LTLayerTessellation.hlsl')
 $before=@{}
 foreach($name in $inputs){$before[$name]=(Get-FileHash (Join-Path $shaderDir $name)).Hash}
 $before | ConvertTo-Json | Set-Content (Join-Path $reportDir 'hashes-before.json')
@@ -50,6 +50,10 @@ public static class NativeHlsl {
 $properties=Get-Content -Raw (Join-Path $shaderDir 'LTEightLayerProperties.hlsl')
 $uniforms=($properties -split 'CBUFFER_START\(UnityPerMaterial\)',2)[1]
 $uniforms=($uniforms -split '// shared constant between lit and layered lit',2)[0]
+$asphaltProperties=Get-Content -Raw (Join-Path $shaderDir 'LTRoadAsphaltProperties.hlsl')
+$uniforms=[regex]::Replace($uniforms,'(?m)^#include.*LTRoadAsphaltProperties.*$',[System.Text.RegularExpressions.MatchEvaluator]{param($m) $asphaltProperties})
+$rockProperties=Get-Content -Raw (Join-Path $shaderDir 'LTRockMaterialProperties.hlsl')
+$uniforms=[regex]::Replace($uniforms,'(?m)^#include.*LTRockMaterialProperties.*$',[System.Text.RegularExpressions.MatchEvaluator]{param($m) $rockProperties})
 $preamble=@'
 #define SAMPLER(n) SamplerState n
 #define SAMPLE_TEXTURE2D_ARRAY_LOD(t,s,u,i,l) t.SampleLevel(s,float3(u,i),l)
@@ -71,6 +75,8 @@ $core=Get-Content -Raw (Join-Path $shaderDir 'LTLayerBlendCore.hlsl')
 $core=[regex]::Replace($core,'(?m)^#include.*GlobalSamplers.*\r?\n','')
 $road=Get-Content -Raw (Join-Path $shaderDir 'LTRoadProjection.hlsl')
 $core=[regex]::Replace($core,'(?m)^#include.*LTRoadProjection.*$',[System.Text.RegularExpressions.MatchEvaluator]{param($m) $road})
+$asphalt=Get-Content -Raw (Join-Path $shaderDir 'LTRoadAsphalt.hlsl')
+$core=[regex]::Replace($core,'(?m)^#include.*LTRoadAsphalt\.hlsl.*$',[System.Text.RegularExpressions.MatchEvaluator]{param($m) $asphalt})
 $projected=Get-Content -Raw (Join-Path $shaderDir 'LTProjectedLayers.hlsl')
 $tess=Get-Content -Raw (Join-Path $shaderDir 'LTLayerTessellation.hlsl')
 $common=$preamble+$nl+'cbuffer UnityPerMaterial {'+$nl+$uniforms+$nl+'};'+$nl+$core+$nl+$projected

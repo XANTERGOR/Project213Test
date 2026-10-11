@@ -170,7 +170,7 @@ static class NextOptimizationChecks
             "zero-weight and texture-free slots skip unused road UV work");
         string mapping=File.ReadAllText(root+"LTPaintRoadProjection.cs");
         Require(mapping.Contains("road.DisplacementSuppression(px, pz, guard)")&&
-            mapping.Contains("LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize)")&&
+            mapping.Contains("LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize,raster)")&&
             File.ReadAllText(root+"LTRoadProjectionMath.cs").Contains("TextureBakeBlockIntersects(rect,size,block)"),"tested road math is wired into the production baker");
         var capture=File.ReadAllText(root+"LTPaintCpuCapture.cs");
         Require(runtime.Contains("Measure(LTPaintCpuCapture.Stage.DisplacementBake)")&&

@@ -11,6 +11,7 @@ namespace LocalTerrainPrototype
         // owner/frame map; a single road retains its original one-slice fast path.
         // Base/world stamps still require a separate layer asset.
         const int RoadProjectionSize = 257;
+        readonly List<LTRoadJunctionMath.Snapshot> asphaltJunctions=new List<LTRoadJunctionMath.Snapshot>();
         static readonly ConditionalWeakTable<ChunkState, RoadProjection> roadProjections =
             new ConditionalWeakTable<ChunkState, RoadProjection>();
 
@@ -20,6 +21,7 @@ namespace LocalTerrainPrototype
             public Texture2DArray texture;
             public Texture2D suppression;
             public LTRoadMath.Snapshot[] asphalt = Array.Empty<LTRoadMath.Snapshot>();
+            public LTRoadJunctionMath.Snapshot[] junctions=Array.Empty<LTRoadJunctionMath.Snapshot>();
             public Vector4 slots0, slots1, slots2; // 0 = world; abs(value)-1 = slice; negative = network + Jacobian
             public readonly LTRoadMath.Snapshot[][] sources = new LTRoadMath.Snapshot[LayerCapacity][];
             public readonly LTSurfaceLayer[] layers = new LTSurfaceLayer[LayerCapacity];
@@ -34,6 +36,22 @@ namespace LocalTerrainPrototype
             readonly Color32[] suppression;
             public readonly int hash;
             internal Rect Rect => rect;
+            string contentKey;
+            internal string ContentKey
+            {
+                get
+                {
+                    if(contentKey!=null)return contentKey;
+                    var f=new LTPaintMath.GeometryFingerprint();f.Add(rect.x);f.Add(rect.y);f.Add(rect.width);f.Add(rect.height);
+                    void Maps(Color[][] all)
+                    {
+                        f.Add(all==null?-1:all.Length);if(all==null)return;
+                        foreach(var map in all)
+                        {f.Add(map==null?-1:map.Length);if(map!=null)foreach(var c in map){f.Add(c.r);f.Add(c.g);f.Add(c.b);f.Add(c.a);}}
+                    }
+                    Maps(maps);Maps(derivatives);return contentKey=f.ToString();
+                }
+            }
             internal RoadProjectionSnapshot(Rect rect, Color[][] maps, Color[][] derivatives, Color32[] suppression, int hash)
             { this.rect = rect; this.maps = maps; this.derivatives = derivatives; this.suppression = suppression; this.hash = hash; }
 
@@ -89,7 +107,8 @@ namespace LocalTerrainPrototype
         // baking. Returns true when mapping changed, including removal. Validation
         // precedes replacement so invalid authoring never publishes a partial map.
         static bool BakeRoadProjection(LTWorld world, Rect rect, List<LTPaintStamp> stamps,
-            List<LTSurfaceLayer> layers, ChunkState state, List<LTRoadMath.Snapshot> asphaltInputs)
+            List<LTSurfaceLayer> layers, ChunkState state, List<LTRoadMath.Snapshot> asphaltInputs,LTRoadRasterSet raster=null,
+            IReadOnlyList<LTRoadJunctionMath.Snapshot> junctionInputs=null)
         {
             var sources = new List<LTRoadMath.Snapshot>[LayerCapacity];
             var contributors = new int[LayerCapacity];
@@ -102,9 +121,11 @@ namespace LocalTerrainPrototype
                 {
                     int slot=layers.IndexOf(layer);if(slot<0||slot>=LayerCapacity)return;
                     contributors[slot]++;
-                    if(!road||road.projection!=LTRoadProjection.Spline)return;
+                    if(!road)return;
+                    var snapshot=road.CapturePaintProjection(world,wheels);
+                    if(snapshot==null)return;
                     if(sources[slot]==null){sources[slot]=new List<LTRoadMath.Snapshot>();count++;}
-                    var snapshot=road.Capture(world);sources[slot].Add(wheels?snapshot.WheelLayerProjection():snapshot);
+                    sources[slot].Add(snapshot);
                 }
                 Add(stamp.EffectiveLayer,false);Add(stamp.SecondaryLayer,true);
             }
@@ -117,7 +138,9 @@ namespace LocalTerrainPrototype
             // Captured once per paint tick; do not traverse the hierarchy per chunk/rock.
             foreach (var snapshot in asphaltInputs)
                 if (Touches(rect, snapshot.bounds)) asphalt.Add(snapshot);
-            if (count == 0 && asphalt.Count == 0)
+            var junctions=new List<LTRoadJunctionMath.Snapshot>();
+            if(junctionInputs!=null)foreach(var snapshot in junctionInputs)if(snapshot.Intersects(rect))junctions.Add(snapshot);
+            if (count == 0 && asphalt.Count == 0 && junctions.Count == 0)
             {
                 bool existed = roadProjections.TryGetValue(state, out _);
                 ReleaseRoadProjection(state); return existed;
@@ -128,6 +151,8 @@ namespace LocalTerrainPrototype
             bool same = old != null && old.cpu.Rect == rect;
             same = same && old.asphalt.Length == asphalt.Count;
             for (int i = 0; same && i < asphalt.Count; i++) same = SameRoadProjection(old.asphalt[i], asphalt[i]);
+            same=same&&old.junctions.Length==junctions.Count;
+            for(int i=0;same&&i<junctions.Count;i++)same=old.junctions[i].hash==junctions[i].hash;
             for (int slot = 0; same && slot < LayerCapacity; slot++)
                 same = SameRoadProjections(old.sources[slot], sources[slot]) &&
                     old.layers[slot] == (slot < layers.Count ? layers[slot] : null);
@@ -135,7 +160,7 @@ namespace LocalTerrainPrototype
             if (count > 0 && (!SystemInfo.supports2DArrayTextures || !SystemInfo.SupportsTextureFormat(TextureFormat.RGBAFloat)))
                 throw new InvalidOperationException("Spline terrain projection requires RGBAFloat texture arrays.");
 
-            var next = new RoadProjection { asphalt = asphalt.ToArray() };
+            var next = new RoadProjection { asphalt = asphalt.ToArray(),junctions=junctions.ToArray() };
             var maps = new Color[LayerCapacity][];var derivatives = new Color[LayerCapacity][];
             int slices=0;foreach(var group in sources)if(group!=null)slices+=group.Count>1?2:1;
             Color32[] suppression = null;
@@ -158,7 +183,7 @@ namespace LocalTerrainPrototype
                     if (sources[slot] == null) continue;
                     LTRoadProjectionMath.Map baked;
                     using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVCompute))
-                        baked=LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize);
+                        baked=LTRoadProjectionMath.Bake(sources[slot],rect,RoadProjectionSize,raster);
                     maps[slot]=baked.coordinates;derivatives[slot]=baked.derivatives;
                     using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVUpload))
                         next.texture.SetPixels(baked.coordinates,slice,0);
@@ -177,12 +202,13 @@ namespace LocalTerrainPrototype
                 }
                 using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVUpload))
                     if (next.texture) next.texture.Apply(false, true); // Retain only the explicit managed CPU snapshot.
-                if (asphalt.Count > 0)
+                if (asphalt.Count > 0 || junctions.Count > 0)
                 {
                     using(world.paintCpu.Measure(LTPaintCpuCapture.Stage.RoadUVCompute))
                     {
                     suppression = new Color32[RoadProjectionSize * RoadProjectionSize];
                     foreach (var road in asphalt) hash = Mix(hash, road.paintHash);
+                    foreach(var junction in junctions)hash=Mix(hash,junction.hash);
                     // Pad the full-strength core by one cell diagonal. Every corner
                     // of a cell intersecting asphalt is then fully suppressed, so
                     // bilinear interpolation cannot leak displacement under its edge.
@@ -195,6 +221,7 @@ namespace LocalTerrainPrototype
                         float weight = 0;
                         foreach (var road in asphalt)
                             weight = Mathf.Max(weight, road.DisplacementSuppression(px, pz, guard));
+                        foreach(var junction in junctions)weight=Mathf.Max(weight,junction.FootprintWeight(px,pz,guard));
                         byte value = (byte)Mathf.RoundToInt(Mathf.Clamp01(weight) * 255);
                         suppression[z * RoadProjectionSize + x] = new Color32(value, 0, 0, 255);
                     }

@@ -1,4 +1,5 @@
 #pragma kernel Cull
+#pragma kernel CullMany
 #pragma target 5.0
 struct LTDetailGpuData
 {
@@ -52,4 +53,58 @@ void Cull(uint3 tid:SV_DispatchThreadID)
     // Keep offscreen casters; frustum-only culling would drop their visible shadows.
     if(!Visible(item.center.xyz,item.extents.xyz) && mode==0)return;
     _LTVisible.Append(i);
+}
+
+// Eight UAVs fit D3D11's compute limit. Each slot retains its own append counter,
+// instance list and indirect draw. No changes to raster shaders or draw arguments.
+AppendStructuredBuffer<uint> _LTVisible0, _LTVisible1, _LTVisible2, _LTVisible3;
+AppendStructuredBuffer<uint> _LTVisible4, _LTVisible5, _LTVisible6, _LTVisible7;
+float4 _Selections[8]; // LOD, prefab shadow mode, draw shadow mode, enabled
+void AppendSelection(uint slot,uint instance)
+{
+    switch(slot)
+    {
+        case 0: _LTVisible0.Append(instance); break;
+        case 1: _LTVisible1.Append(instance); break;
+        case 2: _LTVisible2.Append(instance); break;
+        case 3: _LTVisible3.Append(instance); break;
+        case 4: _LTVisible4.Append(instance); break;
+        case 5: _LTVisible5.Append(instance); break;
+        case 6: _LTVisible6.Append(instance); break;
+        case 7: _LTVisible7.Append(instance); break;
+    }
+}
+[numthreads(64,1,1)]
+void CullMany(uint3 tid:SV_DispatchThreadID)
+{
+    uint i=tid.x;
+    if(i>=_Count)return;
+    LTDetailGpuData item=_LTInstances[i];
+    float distanceSq=dot(item.positionSize.xyz-_CameraPosition.xyz,item.positionSize.xyz-_CameraPosition.xyz);
+    if(distanceSq>=_Distance.x*_Distance.x)return;
+    float range=_Distance.x-min(_Distance.y,_Distance.x);
+    float fade=range>0?saturate((sqrt(distanceSq)-min(_Distance.y,_Distance.x))/range):0;
+    if(_Thin!=0 && item.lodPositionRandom.w>=lerp(1,_Distance.z,fade))return;
+    int lod=0;
+    if(_HasLod!=0)
+    {
+        float depth=dot(item.lodPositionRandom.xyz-_CameraPosition.xyz,_CameraForward.xyz);
+        float denominator=_Projection.x!=0?max(.001,2*_Projection.y):2*max(.001,depth)*_Projection.y;
+        float height=item.positionSize.w*max(.01,_Projection.z)/denominator;
+        for(;lod<_LodCount;lod++)if(height>=_LodThresholds[lod].x)break;
+        if(lod==_LodCount)return;
+        lod=min(_LodCount-1,max(lod,(int)_Projection.w));
+    }
+    bool shadowsInRange=_LimitShadows==0 || distanceSq<_Distance.w*_Distance.w;
+    bool visible=Visible(item.center.xyz,item.extents.xyz);
+    [unroll] for(uint slot=0;slot<8;slot++)
+    {
+        float4 selection=_Selections[slot];
+        if(selection.w==0 || lod!=(int)selection.x)continue;
+        int prefabMode=(int)selection.y;
+        int mode=shadowsInRange?prefabMode:0;
+        if(mode!=(int)selection.z || (prefabMode==3 && mode==0))continue;
+        if(!visible && mode==0)continue;
+        AppendSelection(slot,i);
+    }
 }

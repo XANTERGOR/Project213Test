@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 partial class Checks
 {
-        static Vector3Int BoundaryPointKey(Vector3 p)=>new Vector3Int(Mathf.RoundToInt(p.x*1000),Mathf.RoundToInt(p.y*1000),Mathf.RoundToInt(p.z*1000));
+        static Vector3Int BoundaryPointKey(Vector3 p)=>LocalTerrainPrototype.LTRoadGeometryBoundary.PointKey(p);
         static (Vector3Int a,Vector3Int b) BoundaryEdgeKey(Vector3 a,Vector3 b)
         {
             var x=BoundaryPointKey(a);var y=BoundaryPointKey(b);
@@ -22,7 +22,7 @@ partial class Checks
             {
                 foreach(var edge in data.edges)
                 {
-                    var key=BoundaryEdgeKey(data.points[edge.a],data.points[edge.b]);
+                    var ordered=new LocalTerrainPrototype.LTRoadGeometryBoundary.Edge(data.keys[edge.a],data.keys[edge.b]);var key=(ordered.a,ordered.b);
                     edgeTotals.TryGetValue(key,out int total);total+=sign*edge.count;
                     if(total<0)throw new InvalidOperationException("Negative cached boundary edge count.");
                     if(total==0)edgeTotals.Remove(key);else edgeTotals[key]=total;

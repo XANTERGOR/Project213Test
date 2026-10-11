@@ -316,11 +316,11 @@ namespace LocalTerrainPrototype
         void MarkActivityArea(LTWorld world,Rect area)
         {
                     // Only visit chunks overlapped by this footprint plus its apron.
-                    float chunkX=world.source.size.x/world.chunksX,chunkZ=world.source.size.z/world.chunksZ;
-                    int cx0=Mathf.Clamp(Mathf.FloorToInt(area.xMin/chunkX)-1,0,world.chunksX-1);
-                    int cx1=Mathf.Clamp(Mathf.FloorToInt(area.xMax/chunkX)+1,0,world.chunksX-1);
-                    int cz0=Mathf.Clamp(Mathf.FloorToInt(area.yMin/chunkZ)-1,0,world.chunksZ-1);
-                    int cz1=Mathf.Clamp(Mathf.FloorToInt(area.yMax/chunkZ)+1,0,world.chunksZ-1);
+                    float chunkX=world.ChunkSize.x,chunkZ=world.ChunkSize.y;
+                    int cx0=Mathf.Clamp(Mathf.FloorToInt(area.xMin/chunkX)-1,world.chunkOrigin.x,world.chunkOrigin.x+world.chunksX-1);
+                    int cx1=Mathf.Clamp(Mathf.FloorToInt(area.xMax/chunkX)+1,world.chunkOrigin.x,world.chunkOrigin.x+world.chunksX-1);
+                    int cz0=Mathf.Clamp(Mathf.FloorToInt(area.yMin/chunkZ)-1,world.chunkOrigin.y,world.chunkOrigin.y+world.chunksZ-1);
+                    int cz1=Mathf.Clamp(Mathf.FloorToInt(area.yMax/chunkZ)+1,world.chunkOrigin.y,world.chunkOrigin.y+world.chunksZ-1);
                     for(int cz=cz0;cz<=cz1;cz++)for(int cx=cx0;cx<=cx1;cx++)
                     {
                         if(!deformationChunks.TryGetValue(new Vector2Int(cx,cz),out var state))continue;
@@ -409,8 +409,9 @@ namespace LocalTerrainPrototype
                 var primary=stamp.EffectiveLayer;var secondary=stamp.SecondaryLayer;
                 if(!(primary&&primary.deformation&&primary.deformationDepth>0)&&!(secondary&&secondary.deformation&&secondary.deformationDepth>0))continue;
                 var rect=StampBounds(world,stamp);
-                rect=Rect.MinMaxRect(Mathf.Max(0,rect.xMin),Mathf.Max(0,rect.yMin),
-                    Mathf.Min(world.source.size.x,rect.xMax),Mathf.Min(world.source.size.z,rect.yMax));
+                var extent=world.TerrainRect;
+                rect=Rect.MinMaxRect(Mathf.Max(extent.xMin,rect.xMin),Mathf.Max(extent.yMin,rect.yMin),
+                    Mathf.Min(extent.xMax,rect.xMax),Mathf.Min(extent.yMax,rect.yMax));
                 if(rect.width<=0||rect.height<=0)continue;
                 int width=LTDeformationMath.Resolution(rect.width,stamp.deformationStepCm,stamp.deformationMaxResolution);
                 int height=LTDeformationMath.Resolution(rect.height,stamp.deformationStepCm,stamp.deformationMaxResolution);
@@ -422,7 +423,10 @@ namespace LocalTerrainPrototype
                 }
                 reserved+=bytes;live.Add(stamp);
                 int signature=Mix(rect.GetHashCode(),Mix(width,height));
-                signature=Mix(signature,JsonUtility.ToJson(stamp).GetHashCode());
+                // Color-only grass edits must not discard existing ground tracks.
+                foreach(int input in CoverageInputs(world,stamp))signature=Mix(signature,input);
+                signature=Mix(signature,stamp.deformationStepCm.GetHashCode());
+                signature=Mix(signature,stamp.deformationMaxResolution);
                 foreach(var pair in chunks)
                     if(pair.Value.deformation!=null&&rect.Overlaps(pair.Value.deformation.rect))
                         signature=Mix(signature,pair.Value.densityInputHash);
@@ -450,8 +454,8 @@ namespace LocalTerrainPrototype
         }
         Vector4 RegionControl(LTWorld world,float x,float z)
         {
-            int cx=Mathf.Clamp(Mathf.FloorToInt(x/world.source.size.x*world.chunksX),0,world.chunksX-1);
-            int cz=Mathf.Clamp(Mathf.FloorToInt(z/world.source.size.z*world.chunksZ),0,world.chunksZ-1);
+            int cx=Mathf.Clamp(Mathf.FloorToInt(x/world.ChunkSize.x),world.chunkOrigin.x,world.chunkOrigin.x+world.chunksX-1);
+            int cz=Mathf.Clamp(Mathf.FloorToInt(z/world.ChunkSize.y),world.chunkOrigin.y,world.chunkOrigin.y+world.chunksZ-1);
             if(!deformationChunks.TryGetValue(new Vector2Int(cx,cz),out var state)||!state.displacementActive)return Vector4.zero;
             var d=state.deformation;
             if(d==null||x<d.rect.xMin||x>d.rect.xMax||z<d.rect.yMin||z>d.rect.yMax)return Vector4.zero;

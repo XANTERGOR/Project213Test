@@ -4,23 +4,6 @@ using UnityEditor;
 using UnityEngine;
 namespace LocalTerrainPrototype
 {
-    // Build-scene copies must not retain an editor preview's non-persistent mesh.
-    public sealed class LTSpatialLODBuildGuard : UnityEditor.Build.IProcessSceneWithReport
-    {
-        public int callbackOrder=>0;
-        public void OnProcessScene(UnityEngine.SceneManagement.Scene scene,UnityEditor.Build.Reporting.BuildReport report)
-        {
-            foreach(var root in scene.GetRootGameObjects())
-            {
-                foreach(var chunk in root.GetComponentsInChildren<LTChunk>(true))
-                {
-                    if(chunk.lodsPending)throw new UnityEditor.Build.BuildFailedException("Local Terrain: finish rebuilding chunk LODs before building the player.");
-                    chunk.ShowLOD(0);
-                }
-                foreach(var road in root.GetComponentsInChildren<LTRoadLOD>(true))road.Show(0);
-            }
-        }
-    }
     [InitializeOnLoad]
     public static class LTSpatialLODBake
     {
@@ -75,8 +58,9 @@ namespace LocalTerrainPrototype
             chunk.ReleaseSpatialLOD();
             var normals=asset.vertexBank.normals;var vertices=asset.vertexBank.vertices;
             var fine=new Dictionary<Vector3,Vector3>();var baseVertices=chunk.mesh.vertices;var baseNormals=chunk.mesh.normals;
-            for(int i=0;i<baseVertices.Length;i++)fine[baseVertices[i]]=baseNormals[i];
-            for(int i=0;i<vertices.Length;i++)if(fine.TryGetValue(vertices[i],out var shared))normals[i]=shared;
+            // A pit rim has coincident top/wall vertices with distinct normals.
+            for(int i=0;i<baseVertices.Length;i++)if(Math.Abs(baseNormals[i].y)>=.000001f)fine[baseVertices[i]]=baseNormals[i];
+            for(int i=0;i<vertices.Length;i++)if(Math.Abs(normals[i].y)>=.000001f&&fine.TryGetValue(vertices[i],out var shared))normals[i]=shared;
             asset.vertexBank.normals=normals;asset.vertexBank.tangents=LTStampMesh.TerrainTangents(normals);asset.revision++;
             EditorUtility.SetDirty(asset.vertexBank);EditorUtility.SetDirty(asset);
         }

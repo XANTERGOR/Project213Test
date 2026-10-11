@@ -11,18 +11,40 @@ namespace LocalTerrainPrototype
         {
             public Vector3 centre;public Vector2[] outline;public Rect bounds;
             public float coreRadius,blend,cellSize;public int hash;
+            public LTRoadFootprint footprint;
+            public float shoulder;
             public float Weight(float x,float z)
             {
+                if(footprint!=null)return FootprintWeight(x,z,0);
                 float dx=x-centre.x,dz=z-centre.z;
                 return 1-Mathf.SmoothStep(0,1,(Mathf.Sqrt(dx*dx+dz*dz)-coreRadius)/Math.Max(.001f,blend));
             }
             public float ApplyHeight(float x,float z,float height)=>Mathf.Lerp(height,centre.y,Weight(x,z));
             public bool Intersects(Rect rect)
             {
+                if(footprint!=null)return footprint.Influences(rect,shoulder+blend);
                 float x=Math.Max(rect.xMin,Math.Min(rect.xMax,centre.x))-centre.x;
                 float z=Math.Max(rect.yMin,Math.Min(rect.yMax,centre.z))-centre.z;
                 return x*x+z*z<=(coreRadius+blend)*(coreRadius+blend);
             }
+            public float FootprintWeight(float x,float z,float padding)
+            {
+                float core=shoulder+padding;
+                float d=footprint.SurfaceDistance(x,z,core+blend);
+                if(d<=core)return 1;
+                if(blend<=0||float.IsPositiveInfinity(d))return 0;
+                return 1-Mathf.SmoothStep(0,1,(d-core)/blend);
+            }
+        }
+        public static Snapshot MeshFoundation(Vector3 centre,LTRoadFootprint footprint,float shoulder,float blend,float cellSize,int dependencyHash)
+        {
+            if(footprint==null||footprint.Empty||!Finite(shoulder)||shoulder<0||!Finite(blend)||blend<0||!Finite(cellSize)||cellSize<=0||
+                !Finite(centre.x)||!Finite(centre.y)||!Finite(centre.z))throw new ArgumentException("Некорректное основание по мешу перекрёстка.");
+            var b=footprint.Bounds;float pad=shoulder+blend;
+            return new Snapshot{centre=centre,outline=Array.Empty<Vector2>(),footprint=footprint,shoulder=shoulder,blend=blend,cellSize=cellSize,
+                coreRadius=Math.Max(b.width,b.height)*.5f,
+                bounds=Rect.MinMaxRect(b.xMin-pad,b.yMin-pad,b.xMax+pad,b.yMax+pad),
+                hash=unchecked(dependencyHash*397^footprint.ContentKey.GetHashCode()^shoulder.GetHashCode()*17^blend.GetHashCode()*31^cellSize.GetHashCode()*43^centre.GetHashCode())};
         }
         public static Port MakePort(Vector3 centre,Vector3 anchor,float radius,float width)
         {
@@ -30,6 +52,17 @@ namespace LocalTerrainPrototype
             var direction=new Vector3(anchor.x-centre.x,0,anchor.z-centre.z);
             if(direction.sqrMagnitude<=(radius+.05f)*(radius+.05f))throw new ArgumentException("Следующая точка дороги должна находиться за радиусом перекрёстка.");
             direction.Normalize();return new Port{centre=centre+direction*radius,right=new Vector3(direction.z,0,-direction.x),width=width};
+        }
+        // Explicit legacy circular foundation. The authored default uses MeshFoundation.
+        public static Snapshot Foundation(Vector3 centre,float radius,float blend,float cellSize,int dependencyHash)
+        {
+            if(!Finite(radius)||radius<=0||!Finite(blend)||blend<0||!Finite(cellSize)||cellSize<=0||
+                !Finite(centre.x)||!Finite(centre.y)||!Finite(centre.z))throw new ArgumentException("Некорректное основание перекрёстка.");
+            var outline=new Vector2[32];
+            for(int i=0;i<outline.Length;i++){double a=i*Math.PI*2/outline.Length;outline[i]=new Vector2(centre.x+radius*(float)Math.Cos(a),centre.z+radius*(float)Math.Sin(a));}
+            return new Snapshot{centre=centre,outline=outline,coreRadius=radius,blend=blend,cellSize=cellSize,
+                hash=unchecked(dependencyHash*397^centre.GetHashCode()^radius.GetHashCode()*17^blend.GetHashCode()*31^cellSize.GetHashCode()*43),
+                bounds=new Rect(centre.x-radius-blend,centre.z-radius-blend,2*(radius+blend),2*(radius+blend))};
         }
         public static Snapshot Build(Vector3 centre,IReadOnlyList<Port> ports,float blend,float cellSize)
         {

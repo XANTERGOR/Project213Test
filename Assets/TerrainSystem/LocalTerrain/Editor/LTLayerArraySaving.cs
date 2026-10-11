@@ -10,7 +10,7 @@ using UnityEngine.SceneManagement;
 
 namespace LocalTerrainPrototype
 {
-    public static class LTLayerArraySaving
+    public static partial class LTLayerArraySaving
     {
         const string Root="Assets/LocalTerrainGenerated/LayerArrays";
         static LTWorld pendingWorld;
@@ -80,11 +80,15 @@ namespace LocalTerrainPrototype
                 var palette=LTLayerArrayBakeAsset.Palette(world);
                 string signature=LTLayerArrayBakeAsset.Signature(world,palette);
                 long bytes=LTLayerTextureArrays.EstimateBytes(palette.Count,(int)world.arrayColorResolution,(int)world.arrayNormalResolution,(int)world.arrayMaskResolution);
-                long preview=world.arrayColorPreview&&world.arrayNormalPreview&&world.arrayMaskPreview?
-                    LTLayerTextureArrays.EstimateBytes(world.arrayColorPreview.depth,world.arrayColorPreview.width,world.arrayNormalPreview.width,world.arrayMaskPreview.width):0;
+                long preview=LTLayerArrayStorageUtility.Bytes(world.arrayColorPreview)+LTLayerArrayStorageUtility.Bytes(world.arrayNormalPreview)+LTLayerArrayStorageUtility.Bytes(world.arrayMaskPreview);
+                long savedBytes=LTLayerArrayStorageUtility.Estimate(palette.Count,(int)world.arrayColorResolution,(int)world.arrayNormalResolution,(int)world.arrayMaskResolution,world.arrayStorage);
                 long staging=LTLayerTextureArrays.EstimateBytes(1,Math.Max((int)world.arrayColorResolution,Math.Max((int)world.arrayNormalResolution,(int)world.arrayMaskResolution)),1,1);
-                if(preview+2*bytes+staging>(long)world.arrayMemoryBudgetMiB*1048576)
-                    throw new InvalidOperationException($"Для сохранения нужен GPU-бюджет ≈ {(preview+2*bytes+staging)/1048576f:F1} МиБ (предпросмотр + упаковка + сохраняемые массивы). Увеличьте бюджет или уменьшите разрешение. Дополнительно нужна CPU-память для сериализации.");
+                // Conservative peak: old preview + RGBA pack + saved output +
+                // staging/one compression slice. Does not include source textures.
+                long peak=preview+bytes+savedBytes+2*staging;
+                if(peak>(long)world.arrayMemoryBudgetMiB*1048576)
+                    throw new InvalidOperationException($"Для сохранения нужен GPU-бюджет ≈ {peak/1048576f:F1} МиБ (предпросмотр + упаковка + сохраняемые массивы + staging). Увеличьте бюджет или уменьшите разрешение. Дополнительно нужна CPU-память для сериализации.");
+                if(world.arrayStorage==LTLayerArrayStorage.BC7_BC5)RequireCompressionSupport();
                 if(!pendingPack.Ensure(palette,(int)world.arrayColorResolution,(int)world.arrayNormalResolution,(int)world.arrayMaskResolution,
                     world.arrayMemoryBudgetMiB,0,world.arrayTrilinear,world.arrayAnisotropy))
                 {
@@ -106,9 +110,12 @@ namespace LocalTerrainPrototype
                 {
                     var bake=ScriptableObject.CreateInstance<LTLayerArrayBakeAsset>();owned.Add(bake);
                     bake.name=world.name+" — массивы слоёв";
-                    bake.color=ReadForSaving(pack.color,"Color");owned.Add(bake.color);
-                    bake.normal=ReadForSaving(pack.normal,"Normal");owned.Add(bake.normal);
-                    bake.mask=ReadForSaving(pack.mask,"Mask");owned.Add(bake.mask);
+                    bake.storage=world.arrayStorage;
+                    Texture2DArray SaveArray(Texture2DArray source,string label,int kind)=>bake.storage==LTLayerArrayStorage.RGBA32?
+                        ReadForSaving(source,label):ReadCompressedForSaving(source,label,LTLayerArrayStorageUtility.Format(bake.storage,kind));
+                    bake.color=SaveArray(pack.color,"Color",0);owned.Add(bake.color);
+                    bake.normal=SaveArray(pack.normal,"Normal",1);owned.Add(bake.normal);
+                    bake.mask=SaveArray(pack.mask,"Mask",2);owned.Add(bake.mask);
                     bake.colorDataHash=DataHash(bake.color);bake.normalDataHash=DataHash(bake.normal);bake.maskDataHash=DataHash(bake.mask);
                     bake.layers=palette.ToArray();bake.sourceColors=new Texture2D[palette.Count];
                     bake.sourceNormals=new Texture2D[palette.Count];bake.sourceMasks=new Texture2D[palette.Count];
@@ -132,7 +139,8 @@ namespace LocalTerrainPrototype
                     PrefabUtility.RecordPrefabInstancePropertyModifications(world);EditorUtility.SetDirty(world);
                     if(world.gameObject.scene.IsValid())EditorSceneManager.MarkSceneDirty(world.gameObject.scene);
                     world.UpdatePainting();EditorGUIUtility.PingObject(loaded);
-                    Debug.Log("Массивы сохранены: "+folder+". Сохраните сцену, чтобы сохранить ссылку LTWorld. Предыдущие версии не удалены.",world);
+                    long savedBytes=LTLayerArrayStorageUtility.Bytes(loaded.color)+LTLayerArrayStorageUtility.Bytes(loaded.normal)+LTLayerArrayStorageUtility.Bytes(loaded.mask);
+                    Debug.Log($"Массивы сохранены: {folder}. {loaded.storage}; GPU ≈ {savedBytes/1048576f:F1} МиБ, читаемая CPU-копия примерно такого же объёма. Сохраните сцену, чтобы сохранить ссылку LTWorld. Предыдущие версии не удалены.",world);
                 }
             }
             catch(OperationCanceledException){Debug.Log("Сохранение массивов отменено. Ссылка LTWorld не изменена.",world);}
@@ -147,10 +155,12 @@ namespace LocalTerrainPrototype
         {
             if(!array||!array.isReadable)throw new InvalidOperationException("Нет сериализованных CPU-данных массива.");
             var hash=new Hash128();hash.Append(array.width);hash.Append(array.height);hash.Append(array.depth);
+            // Preserve legacy RGBA32 hashes exactly; compressed payloads include their format.
+            if(array.format!=TextureFormat.RGBA32)hash.Append((int)array.format);
             for(int mip=0;mip<array.mipmapCount;mip++)for(int slice=0;slice<array.depth;slice++)
             {
                 var bytes=array.GetPixelData<byte>(mip,slice);
-                if(bytes.Length!=Math.Max(1,array.width>>mip)*Math.Max(1,array.height>>mip)*4)
+                if(bytes.Length!=LTLayerArrayStorageUtility.MipBytes(Math.Max(1,array.width>>mip),Math.Max(1,array.height>>mip),array.format))
                     throw new InvalidOperationException("Неполные данные сохранённого массива.");
                 hash.Append(bytes);
             }
@@ -161,7 +171,7 @@ namespace LocalTerrainPrototype
             if(DataHash(bake.color)!=bake.colorDataHash||DataHash(bake.normal)!=bake.normalDataHash||DataHash(bake.mask)!=bake.maskDataHash)
                 throw new InvalidOperationException("Контрольная сумма сохранённых массивов не совпала.");
         }
-        [MenuItem("Tools/Local Terrain/Validate Saved Layer Arrays")]
+        // Archived validation menu: Tools/Local Terrain/Validate Saved Layer Arrays
         public static void ValidateSelected()
         {
             var bake=Selection.activeObject as LTLayerArrayBakeAsset;

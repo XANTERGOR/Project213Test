@@ -5,7 +5,7 @@ namespace LocalTerrainPrototype
     // Value 3 avoids interpreting legacy RaiseOnly (1) / LowerOnly (2) as Cave.
     public enum LTMeshConformMode { Union = 0, Cave = 3 }
 
-    [DisallowMultipleComponent]
+    [ExecuteAlways, DisallowMultipleComponent]
     [RequireComponent(typeof(MeshFilter))]
     public sealed class LTMeshStamp : MonoBehaviour, ISerializationCallbackReceiver
     {
@@ -26,8 +26,23 @@ namespace LocalTerrainPrototype
         public float weldDistance = .1f;
         [Tooltip("Generate an instance mesh with the part below the terrain surface removed. The source mesh asset is never modified.")]
         public bool trimRockInsideTerrain = true;
-        [Tooltip("Use terrain layers on this rock (world-space projection, no rock displacement). Disable to restore the object's materials; the bridge keeps the terrain preview material.")]
+        [Tooltip("Use terrain layers on the rock, or preserve the original material/UV0. A separate collar blends supported original materials into the terrain. No rock displacement.")]
         public bool useTerrainMaterial = true;
+        [Min(.01f), Tooltip("Width in world metres along the rock surface, above the bridge. Original UVs are retained in this collar.")]
+        public float materialBlendWidth = 2;
+        [Range(0,1)] public float materialBlendSoftness = 1;
+        public bool simplifyDistantMaterial = true;
+        [Min(1)] public float materialFarStart = 100;
+        [Min(2)] public float materialFarEnd = 200;
+        [Range(128,2048)] public int materialFarResolution = 512;
+        public bool enableMeshLODs = true;
+        [Min(.01f), Tooltip("World-space endpoint collapse budget for LOD1; doubles each level. Shared rims and UV chart borders remain fixed.")]
+        public float meshLodError = .25f;
+        [Min(0), Tooltip("Shared terrain/transition endpoint budget in metres at LOD1, doubled each level. Zero preserves the contact contour. LOD0 and colliders are unchanged.")]
+        public float terrainSeamLodError = 1;
+        [System.NonSerialized] public LTRockRenderOutput renderOutput;
+        [System.NonSerialized] public string renderStatus;
+        [SerializeField, HideInInspector] public LTRockRenderAsset renderAsset;
         [Tooltip("Show detected open/invalid edges in red when selected. Expected terrain contact edges are not errors.")]
         public bool showGeometryIssues = false;
         [SerializeField, HideInInspector] public Material[] objectMaterials;
@@ -48,7 +63,33 @@ namespace LocalTerrainPrototype
             rockRetopoHeight=Mathf.Max(.01f,rockRetopoHeight);
             weldDistance=Mathf.Max(0,weldDistance);
             gridDensityMultiplier=Mathf.Max(.1f,gridDensityMultiplier);
+            materialBlendWidth=Mathf.Max(.01f,materialBlendWidth);
+            meshLodError=Mathf.Max(.01f,meshLodError);
+            terrainSeamLodError=Mathf.Max(0,terrainSeamLodError);
+            materialFarStart=Mathf.Max(1,materialFarStart);materialFarEnd=Mathf.Max(materialFarStart+1,materialFarEnd);
+            materialFarResolution=Mathf.Clamp(Mathf.NextPowerOfTwo(materialFarResolution),128,2048);
         }
+
+        void OnEnable()
+        {
+            UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering-=BeforeCameraRendering;
+            UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering+=BeforeCameraRendering;
+            if(renderOutput!=null||!renderAsset||!renderAsset.Valid||!affectHeight||(!trimRockInsideTerrain&&mode!=LTMeshConformMode.Cave))return;
+            var world=GetComponentInParent<LTWorld>(true);
+            renderOutput=new LTRockRenderOutput(this,renderAsset,world?world.material:null);renderOutput.Publish();
+            var collider=GetComponent<MeshCollider>();if(collider)collider.sharedMesh=renderAsset.combined;
+        }
+        void OnDisable()
+        {
+            UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering-=BeforeCameraRendering;
+            if(renderOutput!=null&&renderOutput.owner==this)renderOutput.Dispose();renderOutput=null;
+        }
+        void BeforeCameraRendering(UnityEngine.Rendering.ScriptableRenderContext context,Camera camera)
+        {
+            if(camera&&LTLODCameraSchedule.IsRenderCamera(camera.cameraType)&&renderOutput!=null&&renderOutput.owner==this)
+                renderOutput.UpdateLOD();
+        }
+        void Update(){if(renderOutput!=null&&renderOutput.owner==this)renderOutput.UpdateLOD();}
 
         void NormalizeMode(){if(mode!=LTMeshConformMode.Cave)mode=LTMeshConformMode.Union;}
         public void OnBeforeSerialize(){}

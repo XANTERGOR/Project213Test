@@ -39,7 +39,8 @@ namespace LocalTerrainPrototype
                 if(!node||!node.isActiveAndEnabled)return;
                 if(node.surface!=LTRoadMode.Asphalt)throw new ArgumentException("Асфальтовому въезду нужен узел Asphalt.");
                 var port=node.Port(road,start);float y=port.centre.y+node.surfaceOffset;
-                if(Mathf.Abs(road.surfaceOffset-node.surfaceOffset)>.0001f)throw new ArgumentException("Surface Offset дороги и перекрёстка должен совпадать.");
+                if(!node.OwnHierarchy&&Mathf.Abs(road.surfaceOffset-node.surfaceOffset)>.0001f)throw new ArgumentException("Surface Offset дороги и перекрёстка должен совпадать.");
+                if(node.Authored){LTRoadJunctionPrefab.MatchRoad(node,road,start,prepared);return;}
                 var outward=new Vector3(-port.right.z,0,port.right.x);
                 var matrix=node.World.transform.worldToLocalMatrix*road.transform.localToWorldMatrix;
                 foreach(var level in prepared.levels)

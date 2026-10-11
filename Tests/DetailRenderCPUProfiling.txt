@@ -1,0 +1,395 @@
+Detail render CPU profiling (2026-10-10)
+
+Scope: existing Unity Editor / Scene View five-second flight profiler. No scene,
+quality, density, draw distance, shadow distance, LOD or GPU backend setting changes.
+Deferred standalone-player vegetation performance/streaming/memory and quality
+presets remain deferred. Real reload acceptance is also paused at user request.
+
+The available October 9 flight predates the mesh-stamp capture cache and later
+scene/code edits. Its Tick / RenderCPU numbers are historical, not current timings.
+Do not claim a cache-only speedup or a current bottleneck without a new flight.
+The older capture was partial and reached the report's sample limit.
+
+Added allocation-free ProfilerMarker.Auto scopes around existing operations:
+  LT.Details.GPU.BeginCPU       backend initialization and per-frame preparation
+  LT.Details.GPU.TryRenderCPU   indirect path attempt, including fallback checks
+  LT.Details.CPU.LevelSetup    eligible color/shadow parts by LOD
+  LT.Details.CPU.Selection     per-instance distance/frustum/shadow/LOD selection
+  LT.Details.CPU.BatchFlush    flush pending combined draw batches
+  LT.Details.CPU.InstanceData  grass properties and static motion-matrix payload
+
+These are CPU timings, even when they submit GPU commands. TryRenderCPU is nested
+inside RenderCPU; BeginCPU precedes it, matching the existing RenderCPU scope.
+Submit includes InstanceData / GraphicsSubmit / BatchFlush; do not add their
+inclusive totals together. A TryRenderCPU call can be a no-op when GPU is disabled,
+or fall back to CPU selection. Marker calls are per camera/group/batch, never per
+individual plant. Selection results and operation order are unchanged.
+
+Existing LT.Editor.Capture / Detect / MeshStamp.CacheHit / CacheMissBuild /
+ContentAudit markers show which idle editor work remains after the geometry cache.
+
+Verification: removing the six marker declarations/scopes and their two comments
+from the updated source reproduces the original source exactly modulo whitespace.
+Frame Profiler managed tests: PASS 74 assertions. This does not run native Unity.
+Hash comparison: only LTDetailRenderer.cs changed among 308 scene/source/settings/
+package files. The actual visual scene and performance still require user capture.
+
+Capture: after compilation, wait for terrain and vegetation to settle. Open
+Tools > Local Terrain > Frame Profiler (5 seconds), select SceneView, disable
+"Record GPU" for this CPU investigation, then Start and fly the familiar route.
+Disable only the profiler's GPU recording, NOT the scene's GPU Details option.
+Do not change quality/LOD/render settings. Profiler Deep Profile / Call Stacks must
+be off and another profiler recording must not be active.
+
+Read the new Logs/FrameProfiles report and marker CSV. Verify partial-capture flags
+and recording context before ranking costs. Capture conditions differ from the
+older GPU-enabled profile, so no direct causal speedup percentage is justified.
+
+GPU submission breakdown added 2026-10-10 (instrumentation only)
+-------------------------------------------------------------
+Baseline flight: Logs/FrameProfiles/flight-20261010-003815-917-73463ebe.txt
+322 available/analyzed frames, CPU frame mean 9.34 ms including waits;
+RenderCPU about 2.677 ms, nested TryRenderCPU about 1.954 ms (both Scene View
+repaint paths summed). Recording GPU was disabled. Partial history/sample-cap
+limitations apply; these are Editor observations, not packaged-player results.
+
+New static, value-scope markers in LTDetailGpuRenderer use the prefix
+LT.Details.GPU.Stage. and suffix CPU:
+  Plan                 cached pass-plan lookup/build
+  MaterialCheck        cached/native material checks (including checks in Plan)
+  PrepareBuffers       readiness, allocation and initial instance/argument upload
+  CameraParameters     actual camera uniform binding, not every group
+  RecipeParameters     LOD threshold/count binding when recipe changes
+  GroupParameters      distance/density/shadow/count/instance-buffer binding
+  CullSubmit           counter reset, selection bindings, compute dispatch submit
+  Draw                 CopyCount, terrain map, adapted material, RenderParams, submit
+  CopyCount            GPU-visible-count to indirect-argument copy SUBMISSION
+  TerrainBind          terrain-map material-property binding when needed
+  MaterialAdapt        material adapter lookup/create/sync
+  DrawSubmit           Graphics.RenderMeshIndirect SUBMISSION only
+
+These are all CPU-side measurements, NOT GPU execution times. No GPU readbacks,
+quality/density/distance/shadow/LOD/buffer policy or render order changes.
+Plan includes nested MaterialCheck, Draw includes its nested stages. Do not sum
+their inclusive totals. Draw Self leaves RenderParams/general preparation work.
+Cached CameraParameters normally occurs in PrepareCameraPass outside TryRenderCPU;
+the full marker paths keep that distinction. Unmarked TryRenderCPU Self still
+contains initial eligibility/group/view lookup/creation and general bookkeeping.
+Markers do not run once per plant. Static initialization/Profiler overhead exists;
+wait for terrain/grass to settle and compare like-for-like instrumented captures.
+
+The .txt report now has a separate main-thread CPU vegetation-stage section (up
+to 64 paths, not the generic top-20). Both Scene View paths stay distinct. The
+existing CSV still retains all aggregated paths; missing markers are not zeros.
+Capture history, 5-second duration, raw-data handling and the 500000 analysis
+sample cap remain unchanged. A new flight may still be partial.
+
+Verification:
+- Removing only the new Profile declaration, Auto scopes and wrapper blocks from
+  LTDetailGpuRenderer reproduces the pre-change source modulo whitespace.
+- Logs/DetailGPUStageMarkers-checks.log: PASS 8694 managed assertions, 4842
+  dispatch/draw payload comparisons against frozen legacy code; all 12 stages,
+  count/nesting/balance including early return and injected upload failure.
+  The legacy uniform-write reduction printed by this test predates these markers;
+  it is NOT a new optimization or performance gain from instrumentation.
+- Logs/DetailGPUStageMarkers-report-checks.log: PASS 107 report/lifecycle/safety
+  assertions, including stage paths beyond the generic top-20, absent frames,
+  two repaint paths and exclusion of GPU/parallel-thread samples.
+- Logs/DetailGPUStageMarkers-build.log: C# build PASS, 0 errors, 6 existing warnings.
+- SHA-256 audit of 286 existing source/test/scene/settings/package files: only
+  LTDetailGpuRenderer.cs, LTFrameProfileReport.cs and the two managed test Program.cs
+  files changed; test-only ProfilerStubs.cs added. Scene/settings/packages unchanged.
+
+Subsequent user flight flight-20261010-005021-572-bd48fa13.txt contains all stage
+markers: 331 analyzed frames, partial capture/sample cap, GPU recording OFF.
+Both repaint paths summed: MaterialAdapt 0.492 ms, CullSubmit 0.156 ms,
+DrawSubmit 0.125 ms, TerrainBind 0.108 ms, PrepareBuffers 0.014 ms. Draw includes
+MaterialAdapt; these inclusive parents/children must not be added. Different
+camera travel and submission counts prevent a causal speedup comparison.
+
+Material adaptation optimization (2026-10-10)
+--------------------------------------------
+LTDetailGpuRenderer now retains the adapted handle in its per-Begin dictionary.
+Warm prepared-camera hits perform one dictionary lookup without repeating the
+persistent-material lookup, native clock read or last-use dictionary write.
+Direct/unprepared calls preserve per-draw last-use touches. Begin and Dispose
+clear the handle cache; expiration still destroys only renderer-owned materials.
+An entry is published only after successful synchronization, allowing copy errors
+to retry without leaving a falsely initialized adapter.
+
+Full CopyPropertiesFromMaterial is STILL performed on first use in every Begin,
+including unchanged materials. No cross-frame dirty/CRC-based cache was added.
+Thus arbitrary script/animation/Inspector edits remain visible on the next pass,
+without requiring SetDirty or change notifications. Shader replacement is checked.
+After the copy, the actual target instancing/pass flags are read; setters execute
+only when a value differs. This deliberately does not assume whether native Unity
+property copying also copies those flags. Source materials are never changed.
+
+Three new CPU scopes, in addition to the original 12:
+  MaterialAdapt -> MaterialSync -> MaterialCopy / MaterialPasses
+MaterialAdapt includes cache hits; MaterialSync is actual first-use sync; Copy
+isolates the full property copy and Passes isolates flag comparisons/writes.
+All are CPU-only, nested, and included automatically by the existing report.
+No culling/LOD, density, shadows, draw order, settings, shaders or GPU data changed.
+
+Verification:
+- Logs/DetailGPUMaterialAdapt-checks.log: PASS 17754 managed assertions, 10218
+  dispatch/draw command payload comparisons against frozen legacy code. Tests
+  retain the original full-copy count, check all 6 pass flags, unchanged/edited/
+  mixed materials, camera switching, direct callers, lifetime/Dispose, shader
+  replacement, copy-failure retry and all 15 profiler scopes. Mock property copying
+  is exercised both with and without copying pass/instancing state (4 combinations).
+- Example 24 warm groups sharing one material: full copies 1 -> 1, pass setters
+  6 -> 0, instancing setters 1 -> 0, total native clock reads 529 -> 50. These
+  are mock call counts, NOT milliseconds or FPS; earlier uniform-binding and
+  material-eligibility cache improvements are not attributed to this change.
+- Logs/DetailGPUMaterialAdapt-report-checks.log: PASS 107 managed assertions.
+- Logs/DetailGPUMaterialAdapt-build.log: Unity-reference C# build, 0 errors and
+  6 pre-existing warnings. This does not prove native import/graphics or timings.
+- Removing only the adaptation/cache/marker changes reproduces the pre-change
+  renderer modulo whitespace; all other renderer logic is identical.
+
+Existing Tools > Local Terrain > Validate GPU Detail CPU Preparation (no scene
+changes) is now v2. Besides native selection/argument parity, it compares adapter
+properties, keywords, settings and pass flags against an independent old-style
+full-copy reference, including edits without dirty notifications. It uses owned
+temporary materials/meshes/cameras in a preview scene and checks scene/file safety;
+it does not save scenes or assets. No new Validate menu entry was added.
+
+Native v2 validation and post-optimization timings are pending the user. After
+validation passes, use the same five-second profiler, Record GPU OFF, scene GPU
+Details ON. Keep quality/LOD settings and camera route comparable. Real benefit,
+including extra flag-read/marker overhead, must be measured; no speedup promised.
+
+Native acceptance and material fingerprint investigation (2026-10-10)
+------------------------------------------------------------------
+User ran GPU Detail CPU Preparation v2: PASS 2757 native checks. Material state
+matched the independent full-copy reference; test scene/assets/settings unchanged.
+The next flight flight-20261010-011243-113-21bf903c.txt analyzed 325 frames (partial,
+500000 sample limit, GPU OFF). MaterialAdapt 0.585 ms contains MaterialCopy 0.541 ms
+(11 calls/frame), MaterialPasses 0.016 ms. Indirect draws rose from about 142 to
+202/frame and triangles from about 507k to 629k; this is not a controlled speedup
+comparison. Full property copying is the main measured material-adaptation cost.
+
+The user authorized investigating reliable cross-frame change detection. ONLY
+the existing native validation was extended to v3 in this step. The production
+renderer, shaders, scenes, materials, packages and settings have not been changed.
+Do not claim that unchanged material copies are now skipped across frames.
+
+Candidate-only fingerprint in LTDetailGpuCpuCheck combines native Material.ComputeCRC,
+material/shader/adapter dirty counts and identities, queue/GI/instancing settings
+and explicit pass flags. It is NOT used by LTDetailGpuRenderer. Native coverage
+must be established before deciding whether/how to implement a cache.
+Unity documents CRC as a material-content hash, but does not enumerate coverage:
+https://docs.unity3d.com/6000.3/Documentation/ScriptReference/Material.ComputeCRC.html
+Full copy includes serialized/runtime properties, keywords, queue and GI flags:
+https://docs.unity3d.com/6000.3/Documentation/ScriptReference/Material.CopyPropertiesFromMaterial.html
+
+v3 adds isolated native mutations of each declared float/range/int/color/vector,
+2D texture binding, texture offset/scale, each valid local keyword, flags, queue,
+runtime-only scalar/matrix/arrays/buffer binding, override tag, source shader,
+serialized Inspector-style float write and serialized restoration. Buffers are
+owned fixture resources; only their handles are compared, no GPU data readback.
+It compares source fingerprints with values actually changed by native full-copy:
+raw-CRC misses, candidate-key misses, values not copied by the reference, and
+unprobed texture dimensions are reported separately. Unchanged captures must be
+stable; mutations must change the observed source value (no vacuous passes).
+Unsupported candidates FAIL the TEST, not scene rendering: no runtime cache exists.
+
+Serialized restore is an Undo-shaped data test, NOT actual Undo/Redo. The test
+deliberately does not record/perform/clear Undo because that would alter the user's
+undo/redo history. Actual Undo/Redo, reimport and all possible custom runtime data
+remain unproven. A passing fixture is not a proof of universal CRC coverage or
+collision freedom. No mocked ComputeCRC correctness test substitutes for Unity.
+
+Verification before handing off v3:
+- Logs/DetailGPUMaterialFingerprint-build-2.log: Unity-reference C# build PASS,
+  0 errors, 3 existing warnings (incremental build).
+- Initial build log is preserved: Material.GetBuffer returns GraphicsBufferHandle
+  on this Unity version; the fixture now compares handles directly.
+- Logs/DetailGPUMaterialFingerprint-regression.log: existing renderer tests PASS
+  17754 managed assertions / 10218 command comparisons; this is regression coverage,
+  NOT execution or validation of the new native fingerprint probe.
+- Native v3 probe is pending user execution via the EXISTING Tools > Local Terrain >
+  Validate GPU Detail CPU Preparation (no scene changes). No new menu item.
+
+Native v3 result and runtime snapshot investigation (2026-10-10)
+-------------------------------------------------------------
+User ran v3. Native fingerprint v1: 253 mutations, 252 full-copy reference changes.
+The CRC + dirty-count candidate FAILED for runtime float, matrix, float array,
+vector array and matrix array. Raw CRC additionally missed runtime buffer binding;
+the combined fingerprint did catch that binding. Instancing did not change the
+full-copy reference because the adapter forces it on. Three Tex2DArray bindings
+were explicitly unprobed. This failure was an experimental coverage rejection,
+not a rendering failure: the production renderer still performs full copying.
+
+User authorized a separate runtime-state tracker/cost investigation. Existing
+GPU Detail CPU Preparation is now v4; ONLY its editor fixture and this note changed.
+No production material cache, renderer, shader, scene or settings change.
+
+RuntimeMaterialSnapshot in the fixture enumerates every MaterialPropertyType via
+GetPropertyNames on EVERY capture, sorts names ordinally, and compares exact value
+streams (float bits, matrices, arrays, texture identities/transforms, buffer handles).
+Reusable lists hold values, but native discovery allocates string arrays; those
+allocations are included in the cost measurement. No fixture property names are
+seeded into discovery. Native discovery of runtime arrays is NOT assumed proven.
+The original fingerprint still participates for other material/shader state. This
+is a candidate, not a general proof of complete state or CRC collision freedom.
+
+v4 tests both introduction of new runtime names and value changes; array tail
+changes ensure a scalar/first-element-only comparison cannot pass. Includes runtime
+integer/vector/color/color-array/texture, a declared float name with an array, and
+Tex2DArray bindings where supported. An independent native full-copy reference
+defines observable sync obligations. Original fingerprint misses, augmented misses,
+undiscovered names, untested texture dimensions and conservative fallbacks are
+reported separately. Native read errors fail the fixture, not silently pass it.
+
+RenderTexture subelements and constant-buffer byte ranges cannot be recovered
+from the public binding getters used here. Their presence demands FULL COPY even
+if the handle is unchanged. The fixture tests those fallback decisions with owned
+resources; it does NOT claim GPU proof of the range/subelement copied. Actual
+Undo/Redo, shader reimport and universal custom-data coverage remain unproven.
+
+Two bounded native CPU microbenchmarks use plain and runtime-rich temporary GrassWind
+materials. Each warms 24 operations, then alternates copy/track order over 7 batches
+of 64 operations. Full sync is CopyPropertiesFromMaterial plus the production-like
+conditional instancing/pass setters. Tracking includes CRC/dirty counts, discovery,
+snapshot and exact comparison. Reports median/min/max microseconds and managed
+bytes per material operation; no forced GC, no FPS/GPU/native-memory claim. Setup,
+assertions, delegates and log formatting are outside the measured interval. A
+runtime-rich cost report is skipped if the preceding native probe logged errors.
+
+Verification before native v4 execution:
+- Unity-reference C# build: Logs/DetailGPUMaterialRuntimeSnapshot-build.log (initial)
+  and -build-2.log (final revision): 0 errors, existing reference/importer warnings.
+- Logs/DetailGPUMaterialRuntimeSnapshot-regression.log: existing renderer regression
+  PASS 17754 managed assertions / 10218 command comparisons. Does NOT run the native
+  snapshot probe or measure performance.
+- Logs/DetailGPUMaterialRuntimeSnapshot-report-checks.log: PASS 107 managed assertions.
+- Native v4 correctness and cost are pending user execution of the SAME menu item.
+  The fixture owns preview objects, checks scene/file safety, does not save scenes,
+  import assets, touch Undo, change global rendering settings or enable a live cache.
+
+v4 result and explicit-notification experiment (2026-10-10)
+---------------------------------------------------------
+Native v4 did NOT pass. Historical excerpt is preserved in
+Logs/DetailGPUMaterialRuntimeSnapshot-native-v4.txt. Plain GrassWind full sync:
+10.413 us median [10.178..10.644]; discovery/snapshot/fingerprint: 66.894 us
+[65.041..71.659], about 6.4x slower in this isolated fixture. These are NOT frame
+times or FPS. Both allocation deltas reported zero without calibration, so they
+must not be presented as a proven allocation-free path. Runtime-rich coverage and
+timing stopped at GetTexture(_LTCacheProbeTexture): the fixture tried reading an
+undeclared shader texture. This was a test bug, not a broken user material. The
+rejected full-enumeration/CRC experiment has been replaced, NOT declared fixed or
+accepted. Its failed result and earlier coverage limitations remain recorded here.
+
+The user authorized investigating explicit change notifications. Source audit:
+LTDetailPrefab.TryBuild reads renderer.sharedMaterials into recipes. The renderer
+does not exclusively own these material assets. LTGrassMaterialBatch changes
+assets via our editor controls and sets dirty, but native Inspector, animation and
+arbitrary external script writers are not covered by that route. No evidence that
+a material is unchanged is treated as proof of exclusive ownership. No real prefab
+material is opted in, and no renderer or existing material-writing code was edited.
+
+Existing GPU Detail CPU Preparation is now v5. Editor-only
+LTDetailMaterialRevisionProbe<T> is a separate contract prototype with identity-keyed
+exclusive ownership, version tickets, NotifyChanged, guarded Mutate and revocation.
+Unowned/default/revoked/in-progress states always demand full copy. Re-registration
+uses a new identity. Partial/throwing and nested writes invalidate receipts; version
+exhaustion revokes instead of wrapping. NotifyChanged alone is valid only after a
+completed write and BEFORE another consumer renders. Mutate is preferred when a
+write can throw or re-enter rendering. There are no global/static event hooks,
+automatic material registrations, source scans, CRCs or runtime integration.
+
+The native fixture compares a prototype consumer to an independent unconditional
+full-copy oracle: declared values/textures/transforms, keywords, passes, queue/GI,
+instancing, runtime scalar, matrix, float/vector/matrix arrays and buffer handles.
+It tests unchanged reuse, notification, two independent consumers, ownership loss,
+re-registration, re-entrant/throwing writes, failed sync retry, notification during
+copy, source/adapter/target shader identities and destroyed adapter recreation.
+Texture tests now use an actual declared property (not the invalid v4 runtime name).
+A deliberate negative control CONFIRMS that direct writes without notification
+are not detectable while a material is claimed. That limitation is part of the
+result, not hidden by a PASS. Shader identity guards do not detect same-object
+shader reimports. RevokeAll simulates loss of certainty; actual Undo/Redo, reimport
+and editor-event integration are NOT exercised and do not affect the user's Undo.
+
+Cost measurement compares four complete paths: unconditional full sync, unchanged
+explicitly owned reuse, unowned fallback, notification plus sync every operation.
+Plain and runtime-rich GrassWind fixtures each warm 24 operations per path then
+rotate execution order for 7 x 64 measured operations. Reports median/min/max us/op
+and managed B/op only when a known 4096-byte managed allocation calibrates the
+counter successfully; otherwise reports UNAVAILABLE. No forced GC, no GPU or
+native-memory measurement, no five-second flight and no real-scene speedup claim.
+
+Verification:
+- Logs/DetailGPUMaterialNotification-checks.log: 18029 managed assertions, including
+  275 new contract checks; previous 10218 renderer command comparisons retained.
+  These test the pure contract and unchanged renderer, NOT native material copying.
+- Unity-reference C# build: Logs/DetailGPUMaterialNotification-build.log,
+  -build-2.log and -build-3.log; 0 errors, existing reference/importer warnings.
+- Native v5 correctness and timings require running the SAME menu command in Unity.
+  Scene/assets/settings safety checks and temporary-resource cleanup are retained.
+  Passing it will not prove notification coverage for shared live-scene materials;
+  production cross-frame caching remains OFF with full copies per camera pass.
+
+2026-10-10: native v5 result and opt-in live notification integration
+------------------------------------------------------------------
+User-run native v5 passed 6656 checks. The separate temporary-material prototype
+reported 20 non-vacuous notified edits. Plain GrassWind median us/op:
+full sync 11.133, owned unchanged 0.116, unowned fallback 11.405,
+notified + copy 11.498. Runtime-rich: 10.330 / 0.114 / 10.427 / 10.616.
+Managed allocation calibration failed: B/op is UNAVAILABLE, not zero.
+These are PROTOTYPE microbenchmarks, not timings of the live integration below,
+not flight/FPS gains and not proof of real Inspector/Undo/reimport event coverage.
+
+Implemented a separate explicit live mode on LTDetailRenderer:
+- "Кэш материалов по уведомлениям" (gpuMaterialNotifications), default FALSE.
+- "Материалы с уведомлениями" (gpuNotifiedMaterials), default empty allowlist.
+  Both opt-in and a listed source are required; prefabs are never auto-enrolled.
+  No serialized scene/prefab/material is changed or saved to enable it.
+- Unlisted/default sources retain full property copying once per camera pass.
+  Listed materials reuse a receipt across passes only while notification revision,
+  global invalidation epoch and source/adapter/target shader guards match.
+  Synchronous same-pass hits retain the cheap path; writes must notify before
+  another consumer renders. The first use in each pass checks shader identities.
+- LTDetailMaterialNotifications.NotifyChanged(material) after a completed write;
+  prefer Mutate(material, m => { ... }) when a write may throw/re-enter rendering.
+  Mutate invalidates before/after and prevents receipt publication during a write.
+  NotifyChanged is the low-overhead completed-write path; Mutate uses a temporary
+  registration and callers may also allocate a delegate. No zero-GC claim.
+- Registration is per consumer with shared ref-counted source state. Disabling,
+  list changes and Dispose release registrations; final release drops static
+  references. Target expiration clears receipts. Failed sync never publishes one.
+- Before each Editor camera pass, registered materials' and shaders' dirty counts
+  are checked (NOT property enumeration or CRC). Undo/Redo, play-mode transitions,
+  assembly reload and asset imports invalidate; imports also reload the adapter map.
+  These signals do NOT detect arbitrary unnotified third-party runtime Set* calls.
+  Such materials must remain OUT of the allowlist. A negative control tests this.
+- Inspector counters are successful full copies / reuse calls in the last camera
+  pass, not frame time or independent materials saved. Reuse includes same-pass hits.
+
+Verification of live code (not native Unity execution):
+- Logs/DetailGPULiveNotifications-checks-4.log: 20968 managed assertions;
+  12046 dispatch/draw payload comparisons against frozen legacy implementation.
+  Previous default-mode comparisons retained; opt-in adds two cameras, unchanged
+  reuse, notified edits, unlisted script edits, fallback and disabling comparisons.
+  Actual backend tests also cover failed/during-copy notification, nested/throwing
+  writes, partial list replacement, refcount lifetime, shader guards and expiration.
+- The -checks-2 log is a preserved test failure: its second-consumer assertion held
+  an expired adapter handle after advancing the test clock. The check now examines
+  the actual returned replacement; no lifetime rule was relaxed. Subsequent checks
+  pass. No working-project damage, cleanup or scene recovery was involved.
+- Logs/DetailGPULiveNotifications-report-checks.log: 107 managed report assertions.
+- Unity-reference C# builds -build-1 and -build-2: zero errors; existing reference
+  and unused-field warnings. No native import or real rendering claim from these.
+
+SAME menu command "Validate GPU Detail CPU Preparation (no scene changes)" is v6.
+It retains v5 and adds native tests of actual LTDetailGpuRenderer on temporary
+materials: explicit list/default OFF, unchanged reuse, foreign fallback, arbitrary
+properties/textures/keywords/pass state, runtime arrays/matrices/buffer bindings,
+two consumers, failures during writes, Inspector-style SetDirty, disabling and
+adapter recreation. Uses an independent unconditional native full-copy oracle.
+Undo/import callbacks are SIMULATED: no real Undo/Redo, import, save or user asset
+edit is invoked. Native v6, real editor-event delivery and live-scene speedup remain
+UNVERIFIED until separately checked. Source/scene/settings hashes are retained.

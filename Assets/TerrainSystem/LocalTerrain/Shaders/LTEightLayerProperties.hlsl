@@ -93,16 +93,24 @@ SAMPLER(sampler_LayerInfluenceMaskMap);
 #endif
 
 CBUFFER_START(UnityPerMaterial)
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTRoadGroundProperties.hlsl"
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTRoadAsphaltProperties.hlsl"
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTRockMaterialProperties.hlsl"
 float4 _LTLayerSlices0, _LTLayerSlices1, _LTLayerSlices2;
 float4 _LTGlobalParams; // enabled, transition start, transition end
-float4 _LTFarSurface; // smoothness, metallic
+float4 _LTFarSurface; // smoothness, metallic, far albedo brightness minus one, reserved
 // Identical per-material layout in every pass; never use global per-chunk uniforms.
 float4 _LTRect;
 float4 _LTWorldSize;
+float4 _LTGlobalRect;
 float _LTTriplanar;
 float _LTRockProjection;
 float4x4 _LTSurfaceWorldToLocal;
 float _LTHeightBlend;
+// Unconditional layout: SRP Batcher must see the same buffer in every variant.
+// x: soft pruning budget; y: projection cutoff; z: top two;
+// w: 0 after height, 1 strict pre-height pair, 2 pre-height pair + color-only remainder.
+float4 _LTFastLayerParams;
 float4 _LTDisplacementRect;
 float _LTDisplacementCells;
 float _LTDebugCoverage;

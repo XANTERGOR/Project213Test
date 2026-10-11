@@ -32,9 +32,11 @@ namespace LocalTerrainPrototype
     public sealed class LTPaintStamp : MonoBehaviour
     {
         public LTSurfaceLayer layer;
-        public LTRoad Road=>GetComponent<LTRoad>();
-        public LTRoadJunction Junction=>GetComponent<LTRoadJunction>();
-        public LTSurfaceLayer EffectiveLayer {get {var road=Road;var node=Junction;return road?road.groundLayer:node?node.groundLayer:layer;}}
+        // Optional companions: query live (including disabled components), without
+        // GetComponent's Editor missing-component diagnostic allocations.
+        public LTRoad Road {get{TryGetComponent<LTRoad>(out var road);return road;}}
+        public LTRoadJunction Junction {get{TryGetComponent<LTRoadJunction>(out var node);return node;}}
+        public LTSurfaceLayer EffectiveLayer {get {var road=Road;var node=Junction;return road?road.PaintGroundLayer:node?node.groundLayer:layer;}}
         public LTSurfaceLayer SecondaryLayer {get {var road=Road;return road?road.ActiveWheelLayer:null;}}
         public bool HasPaintLayers=>EffectiveLayer||SecondaryLayer;
         // Full palettes include assigned-but-disabled layers; live chunk palettes

@@ -2,6 +2,7 @@
 #include "Assets/TerrainSystem/LocalTerrain/Shaders/LTLayerBlendCore.hlsl"
 TEXTURE2D(_LTGlobalAlbedo);
 TEXTURE2D(_LTGlobalNormal);
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTGlobalNormalEncoding.hlsl"
 #include "Assets/TerrainSystem/LocalTerrain/Shaders/LTCoverageCoordinates.hlsl"
 #ifndef LT_OCCUPANCY_TEXTURE_DECLARED
 #define LT_OCCUPANCY_TEXTURE_DECLARED
@@ -15,8 +16,16 @@ float LTDebugCoverageValue(float2 position)
     return SAMPLE_TEXTURE2D_LOD(_LTDisplacementOccupancy,sampler_PointClamp,uv,0).r;
 }
 #include "Assets/TerrainSystem/LocalTerrain/Shaders/LTProjectedLayers.hlsl"
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTRockSurface.hlsl"
+#include "Assets/TerrainSystem/LocalTerrain/Shaders/LTRoadGroundSurface.hlsl"
 void LTApplyLayers(FragInputs input, inout SurfaceData surfaceData, out float3 normalTS, out float3 sampledNormalTS)
 {
+#if defined(_LT_ROAD_BLEND)
+    LTApplyRoadGroundSurface(input,surfaceData,normalTS,sampledNormalTS);return;
+#endif
+#if defined(_LT_ROCK_SURFACE)
+    LTApplyRockSurface(input,surfaceData,normalTS,sampledNormalTS);return;
+#endif
     sampledNormalTS=float3(0,0,1);
     if(abs(_LTDebugCoverage)>.5 && _LTDebugCoverage<6.5)
     {
@@ -61,13 +70,17 @@ void LTApplyLayers(FragInputs input, inout SurfaceData surfaceData, out float3 n
 #endif
     if(fade > 0)
     {
+        float2 atlasUV=(position-_LTGlobalRect.xy)/_LTGlobalRect.zw;
 #if defined(SHADER_STAGE_RAY_TRACING)
-        float3 farColor=SAMPLE_TEXTURE2D_LOD(_LTGlobalAlbedo,sampler_LinearClamp,input.texCoord0.xy,0).rgb;
-        float3 farNormal=SAMPLE_TEXTURE2D_LOD(_LTGlobalNormal,sampler_LinearClamp,input.texCoord0.xy,0).xyz*2-1;
+        float3 farColor=SAMPLE_TEXTURE2D_LOD(_LTGlobalAlbedo,sampler_LinearClamp,atlasUV,0).rgb;
+        float3 farNormal=LTGlobalNormalRGB(SAMPLE_TEXTURE2D_LOD(_LTGlobalNormal,sampler_LinearClamp,atlasUV,0).xyz,_LTGlobalParams.w)*2-1;
 #else
-        float3 farColor=SAMPLE_TEXTURE2D_GRAD(_LTGlobalAlbedo,sampler_TrilinearClamp,input.texCoord0.xy,dx/_LTWorldSize.xy,dy/_LTWorldSize.xy).rgb;
-        float3 farNormal=SAMPLE_TEXTURE2D_GRAD(_LTGlobalNormal,sampler_TrilinearClamp,input.texCoord0.xy,dx/_LTWorldSize.xy,dy/_LTWorldSize.xy).xyz*2-1;
+        float3 farColor=SAMPLE_TEXTURE2D_GRAD(_LTGlobalAlbedo,sampler_TrilinearClamp,atlasUV,dx/_LTGlobalRect.zw,dy/_LTGlobalRect.zw).rgb;
+        float3 farNormal=LTGlobalNormalRGB(SAMPLE_TEXTURE2D_GRAD(_LTGlobalNormal,sampler_TrilinearClamp,atlasUV,dx/_LTGlobalRect.zw,dy/_LTGlobalRect.zw).xyz,_LTGlobalParams.w)*2-1;
 #endif
+        // Correct only the decoded linear far albedo, before the distance blend.
+        // z=0 preserves old materials; no extra texture fetch or shader variant.
+        farColor*=max(0,1+_LTFarSurface.z);
         farNormal=normalize(farNormal+float3(0,0,.00001));
         if(projected)
         {

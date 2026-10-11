@@ -32,7 +32,8 @@ namespace LocalTerrainPrototype
             EditorGUI.BeginProperty(position,label,property);
             var prefab=property.FindPropertyRelative("prefab").objectReferenceValue;
             var line=new Rect(position.x,position.y,position.width,EditorGUIUtility.singleLineHeight);
-            property.isExpanded=EditorGUI.Foldout(line,property.isExpanded,
+            var header=LTDetailBatchEditor.DrawSelection(line,property);
+            property.isExpanded=EditorGUI.Foldout(header,property.isExpanded,
                 new GUIContent(prefab?prefab.name:"Объект — префаб не назначен",
                     "Настройки одного типа детализации. Наведите курсор на название параметра для подсказки."),true);
             if(property.isExpanded)
@@ -298,8 +299,10 @@ namespace LocalTerrainPrototype
             EditorGUILayout.LabelField("Детализация",EditorStyles.boldLabel);
             DrawCommonMask(owner);
             DrawDropZone(owner);
+            LTDetailBatchEditor.DrawHeader(owner);
             EditorGUILayout.PropertyField(owner.FindProperty(property),new GUIContent("Объекты детализации",
                 "Набор статических объектов. Можно добавлять записи вручную или перетаскивать несколько префабов в область выше."),true);
+            LTDetailBatchEditor.DrawPanel(owner);
             EditorGUILayout.HelpBox("Для расстановки добавьте Local Terrain / Detail Renderer на объект LTWorld. В материалах нужен Enable GPU Instancing. Тени наследуются из Renderer каждого LOD.",MessageType.Info);
             if(GUILayout.Button("Проверить префабы детализации"))
             {
@@ -328,6 +331,22 @@ namespace LocalTerrainPrototype
         {
             DrawDefaultInspector();
             var renderer=(LTDetailRenderer)target;
+            if(renderer.gpuMaterialNotifications)
+                EditorGUILayout.HelpBox("Кэш включён только для явного списка. Все скрипты записи этих материалов должны уведомлять LTDetailMaterialNotifications (Mutate / NotifyChanged). Чужие SetFloat/SetTexture и другие записи автоматически не обнаруживаются. Не уверены в источнике изменений — удалите материал из списка или выключите опцию. Inspector, Undo/Redo и переимпорт сбрасывают кэш.",MessageType.Warning);
+            EditorGUILayout.HelpBox(renderer.SavedPlacementStatus,MessageType.Info);
+            using(new EditorGUI.DisabledScope(Application.isPlaying||EditorUtility.IsPersistent(renderer)))
+            {
+                if(GUILayout.Button("Запечь зоны детализации"))
+                    EditorApplication.delayCall+=()=>{if(renderer)LTDetailPlacementSaving.BakeWorld(renderer);};
+                if(GUILayout.Button("Проверить расстановку для билда"))
+                    EditorApplication.delayCall+=()=>{if(renderer)LTDetailPlacementSaving.ValidateWorld(renderer);};
+            }
+            EditorGUILayout.HelpBox(renderer.requireBakedPlacementForBuild?
+                "Перед билдом запеките зоны детализации и сохраните сцену. Гарантированно пустые участки пропускаются. Сборка проверяет актуальные зоны и останавливается при отсутствующей, устаревшей или повреждённой расстановке. Ветер и LOD остаются динамическими.":
+                "Запекание для билда необязательно. Если сохранения нет или оно устарело, детализация генерируется во время игры. Готовые сохранённые ячейки могут использоваться, если включена соответствующая опция.",MessageType.Info);
+            using(new EditorGUI.DisabledScope(!renderer.CanSavePlacement))
+                if(GUILayout.Button("Сохранить расстановку"))LTDetailPlacementSaving.Save(renderer);
+            EditorGUILayout.HelpBox("Сохраняются только готовые загруженные ячейки, не весь мир. При следующем запуске совпавшие ячейки загрузятся без повторного расчёта точек. «Перестроить детализацию» принудительно пересчитывает их без чтения сохранения. Ветер, LOD и оттенок от земли остаются динамическими.",MessageType.Info);
             EditorGUILayout.HelpBox(renderer.Status,MessageType.Info);
             EditorGUILayout.LabelField("Ячейки: загружено / зона камер",renderer.CellCount+" / "+renderer.WantedCellCount);
             EditorGUILayout.LabelField("Последняя камера",renderer.LastCamera??"—");
@@ -335,11 +354,12 @@ namespace LocalTerrainPrototype
             if(renderer.gpuDetails)
             {
                 EditorGUILayout.LabelField("GPU: indirect calls / кандидаты",renderer.GpuDrawCalls+" / "+renderer.GpuCandidates);
-                EditorGUILayout.LabelField("GPU: общих проходов отсечения",renderer.GpuCullDispatches.ToString());
+                EditorGUILayout.LabelField("GPU: проходов / объединённых",renderer.GpuCullDispatches+" / "+renderer.GpuUnifiedCullDispatches);
                 EditorGUILayout.LabelField("GPU: буферы / CPU fallback",(renderer.GpuBytes/(1024.0*1024)).ToString("F2")+" МиБ / "+renderer.GpuFallbackGroups+" групп");
                 EditorGUILayout.LabelField("GPU: резерв / пик буферов",(renderer.GpuReservedBytes/(1024.0*1024)).ToString("F2")+" / "+(renderer.GpuPeakBytes/(1024.0*1024)).ToString("F2")+" МиБ");
                 EditorGUILayout.LabelField("GPU: буферы / группы / камеры-группы",renderer.GpuBufferCount+" / "+renderer.GpuGroupCount+" / "+renderer.GpuViewCount);
                 EditorGUILayout.LabelField("GPU: материалы / освобождено",renderer.GpuMaterialCount+" / "+(renderer.GpuReleasedBytes/(1024.0*1024)).ToString("F2")+" МиБ суммарно");
+                Metric("Материалы: список / копии / reuse","Размер явного списка, успешные полные синхронизации и повторные использования адаптера за последний проход камеры. Reuse включает повторные части одного материала в том же проходе. Это счётчики, не время CPU/FPS.",renderer.GpuNotifiedMaterialCount+" / "+renderer.GpuMaterialSyncs+" / "+renderer.GpuMaterialReuses);
                 EditorGUILayout.LabelField("GPU: ждут загрузки (эта камера)",renderer.GpuPendingGroups.ToString());
                 EditorGUILayout.LabelField("GPU upload: МиБ / CPU мс / пик",(renderer.GpuUploadBytes/(1024.0*1024)).ToString("F2")+" / "+renderer.GpuUploadMilliseconds.ToString("F2")+" / "+renderer.GpuPeakUploadMilliseconds.ToString("F2"));
                 EditorGUILayout.HelpBox("Upload-бюджет общий для камер этого мира: игровой кадр или обновление редактора. Пока группа не готова целиком, рисуется CPU. Резерв включает ещё не выделенные буферы; пик и освобождённые байты — с создания GPU backend. Это не полная VRAM. Одна операция драйвера может превысить мягкий бюджет.",MessageType.Info);

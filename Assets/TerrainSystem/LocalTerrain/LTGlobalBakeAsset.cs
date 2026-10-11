@@ -7,10 +7,18 @@ namespace LocalTerrainPrototype
     {
         public Texture2D albedo,normal;
         public Vector3 worldSize;
+        public Rect gridRect;
         public int chunksX,chunksZ,resolution;
         public string signature;
         public bool triplanar;
-        public bool MatchesLayout(LTWorld world)=>world.source&&worldSize==world.source.size&&chunksX==world.chunksX&&chunksZ==world.chunksZ;
+        public bool IsBCCompressed=>albedo&&normal&&albedo.format==TextureFormat.BC7&&normal.format==TextureFormat.BC5;
+        public bool FormatsSupported=>albedo&&normal&&SystemInfo.SupportsTextureFormat(albedo.format)&&SystemInfo.SupportsTextureFormat(normal.format);
+        public long TextureBytes=>Bytes(albedo)+Bytes(normal);
+        static long Bytes(Texture2D texture)=>texture?LTLayerArrayStorageUtility.Bytes(texture.width,texture.height,1,texture.mipmapCount,texture.format):0;
+        // Detect the actual bound texture: old XYZ assets and live RTs use 0.
+        public static float NormalEncoding(Texture normal)=>normal is Texture2D texture&&texture.format==TextureFormat.BC5?1:0;
+        public bool MatchesLayout(LTWorld world)=>world.source&&worldSize==world.source.size&&chunksX==world.chunksX&&chunksZ==world.chunksZ&&
+            (gridRect.width>0?gridRect:new Rect(0,0,worldSize.x,worldSize.z))==world.TerrainRect;
 
 #if UNITY_EDITOR
         public static string Signature(LTWorld world)
@@ -18,6 +26,10 @@ namespace LocalTerrainPrototype
             var text=new System.Text.StringBuilder("LT global bake v3;");
             text.Append("layer-arrays-v1:").Append(LTPaintRuntime.LayerCapacity).Append(';');
             text.Append((int)world.arrayColorResolution).Append('/').Append((int)world.arrayNormalResolution).Append('/').Append((int)world.arrayMaskResolution).Append(';');
+            // A user can select BC7/BC5 while still viewing an RGBA32 preview.
+            // A far bake must fingerprint what it sampled, not just the dropdown.
+            bool compressed=world.arrayNormalPreview?world.arrayNormalPreview.format==TextureFormat.BC5:world.arrayStorage==LTLayerArrayStorage.BC7_BC5;
+            if(compressed)text.Append("array-storage:1;");
             text.Append(world.triplanarTexturing?"triplanar;":"planar;");
             void Number(float value)=>text.Append(value.ToString("R",System.Globalization.CultureInfo.InvariantCulture)).Append(';');
             void Reference(Object value)
@@ -47,6 +59,7 @@ namespace LocalTerrainPrototype
             }
             if(world.source){Number(world.source.size.x);Number(world.source.size.y);Number(world.source.size.z);}
             Number(world.chunksX);Number(world.chunksZ);Number(world.globalLayerResolution);Number(world.layerHeightBlend);
+            Number(world.chunkOrigin.x);Number(world.chunkOrigin.y);Number(world.ChunkSize.x);Number(world.ChunkSize.y);
             Layer(world.baseLayer);
             text.Append(world.lightweightBackground?"light-background;":"full-background;");
             foreach(var stamp in world.CollectPaintStamps())
@@ -60,13 +73,19 @@ namespace LocalTerrainPrototype
                     // Serialized authoring values, never instance IDs or generated ownership fields.
                     text.Append("road;");
                     foreach(var point in road.points){Number(point.position.x);Number(point.position.y);Number(point.position.z);Number(point.bank);}
-                    Number((int)road.mode);Number((int)road.pattern);Number((int)road.projection);
+                    Number((int)road.mode);Number((int)road.pattern);Number((int)road.GroundProjection);
                     Number(road.width);Number(road.shoulderWidth);Number(road.blendWidth);Number(road.rutWidth);Number(road.rutSeparation);
                     Number(road.edgeNoise);Number(road.noiseSize);Number(road.seed);Number(road.sampleSpacing);
                     Number(road.textureRepeatMetres);Number(road.textureOffset.x);Number(road.textureOffset.y);
                     Number(road.textureAcrossMetres);
                     // Include value-only paint settings and point profiles, not generated ownership.
                     text.Append(UnityEngine.JsonUtility.ToJson(road.variation));
+                    if(LTRoadMath.IsTerrainAsphalt(road.mode))
+                    {
+                        text.Append("terrain-asphalt-v1:").Append(UnityEngine.JsonUtility.ToJson(road.asphaltDamage));Reference(road.asphaltCrackMask);Number(road.asphaltCrackRepeat);
+                        if(road.mode==LTRoadMode.GeometricAsphalt&&road.connectedDamage)
+                        {text.Append("connected-damage-v1:");Number(road.connectedFloorAsphalt);Number(road.repairPatchStrength);}
+                    }
                     text.Append(UnityEngine.JsonUtility.ToJson(road.wheelTracks));
                     foreach(var point in road.points)Number(point.VariationStrength);
                     var roadMatrix=world.transform.worldToLocalMatrix*road.transform.localToWorldMatrix;

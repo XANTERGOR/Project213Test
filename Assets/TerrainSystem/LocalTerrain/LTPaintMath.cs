@@ -9,14 +9,14 @@ namespace LocalTerrainPrototype
         public sealed class PixelTerrainCache
         {
             readonly HeightSampler sample;
-            readonly float sizeX,sizeZ;
+            readonly float sizeX,sizeZ,minX,minZ;
             readonly float[] radii,values;
             readonly bool[] valid;
             int count;
             float x,z,height,slope;
             bool sampled,found;
-            public PixelTerrainCache(HeightSampler sample,float sizeX,float sizeZ,int capacity)
-            {this.sample=sample;this.sizeX=sizeX;this.sizeZ=sizeZ;radii=new float[capacity];values=new float[capacity];valid=new bool[capacity];}
+            public PixelTerrainCache(HeightSampler sample,float sizeX,float sizeZ,int capacity,float minX=0,float minZ=0)
+            {this.sample=sample;this.sizeX=sizeX;this.sizeZ=sizeZ;this.minX=minX;this.minZ=minZ;radii=new float[capacity];values=new float[capacity];valid=new bool[capacity];}
             public void Begin(float px,float pz){x=px;z=pz;count=0;sampled=false;}
             public bool Surface(out float h,out float s)
             {
@@ -26,7 +26,7 @@ namespace LocalTerrainPrototype
             public bool Curvature(float radius,out float value)
             {
                 radius=Mathf.Max(.1f,radius);
-                radius=Mathf.Min(radius,Mathf.Min(Mathf.Min(x,sizeX-x),Mathf.Min(z,sizeZ-z)));
+                radius=Mathf.Min(radius,Mathf.Min(Mathf.Min(x-minX,minX+sizeX-x),Mathf.Min(z-minZ,minZ+sizeZ-z)));
                 for(int i=0;i<count;i++)if(radii[i]==radius){value=values[i];return valid[i];}
                 value=0;bool ok=Surface(out float center,out _);
                 if(ok&&radius>=.1f)
@@ -78,6 +78,8 @@ namespace LocalTerrainPrototype
                 int a=triangles[i],b=triangles[i+1],c=triangles[i+2];
                 if(!border[a]&&!border[b]&&!border[c])continue;
                 var normal=Vector3.Cross(points[b]-points[a],points[c]-points[a]);
+                // Vertical asphalt cuts have hard normals, not heightfield seam normals.
+                if(System.Math.Abs(normal.y)<1e-12f)continue;
                 for(int k=0;k<3;k++)
                 {
                     int vertex=triangles[i+k];if(!border[vertex])continue;var p=points[vertex];
@@ -103,10 +105,12 @@ namespace LocalTerrainPrototype
             int[] tiles=System.Array.Empty<int>();
             int countX,countZ,epoch,revision;
             float width,depth;
+            Vector2 origin;
             string config;
-            public void Configure(int x,int z,float tileWidth,float tileDepth,string key)
+            public void Configure(int x,int z,float tileWidth,float tileDepth,string key,Vector2 origin=default)
             {
-                if(x==countX&&z==countZ&&tileWidth==width&&tileDepth==depth&&config==key)return;
+                if(x==countX&&z==countZ&&tileWidth==width&&tileDepth==depth&&config==key&&this.origin==origin)return;
+                this.origin=origin;
                 countX=x;countZ=z;width=tileWidth;depth=tileDepth;config=key;
                 tiles=new int[System.Math.Max(0,x)*System.Math.Max(0,z)];
                 unchecked{epoch++;}revision=0;
@@ -118,6 +122,7 @@ namespace LocalTerrainPrototype
             }
             public int RegionSignature(Rect area,float radius)
             {
+                area.position-=origin;
                 var range=TerrainSampleTileRange(area,radius,width,depth,countX,countZ);
                 int hash=epoch;
                 unchecked

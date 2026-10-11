@@ -83,15 +83,17 @@ partial class Checks
             "palette includes base plus every distinct primary/secondary layer, including disabled stamps");
         Check(!palette.Contains("LayerCapacity")&&!palette.Contains(".Take(")&&!arrays.Contains("LayerCapacity")&&!arrays.Contains(".Take("),
             "world palette is not truncated to the twelve local slots");
-        var invalidation=Between(runtime,"if(arrayRevision!=layerArrays.Revision)","varroadErrors=","array-generation invalidation");
+        var invalidation=Between(runtime,"if(arrayRevision!=layerArrays.Revision||asphaltChanged)","varroadErrors=","array-generation invalidation");
         Check(invalidation.Contains("foreach(varstateinchunks.Values)")&&invalidation.Contains("state.ready=false;")&&
             invalidation.Contains("state.globalBindingReady=false;")&&invalidation.Contains("state.farMaterialDirty=true;")&&
             invalidation.Contains("foreach(varrockinrocks.Values)rock.paint.ready=false;"),"new palette generation invalidates chunk, far/flat and rock bindings");
 
         var fingerprint=Between(arrays,"varkey=","stringnext=","texture fingerprint");
-        foreach(var token in new[]{"texture.GetInstanceID()","texture.imageContentsHash","texture.updateCount","layer.GetInstanceID()",
+        foreach(var token in new[]{"texture.GetInstanceID()","LTTextureContentHash.Get(texture)","texture.updateCount","layer.GetInstanceID()",
             "TextureKey(layer.baseColorMap)","TextureKey(layer.normalMap)","TextureKey(layer.maskMap)"})
             Check(fingerprint.Contains(token),"texture fingerprint includes "+token);
+        Check(arrays.Contains("#ifUNITY_EDITORreturntexture.imageContentsHash;#elsereturnnewHash128(texture.updateCount,0,0,0);#endif"),
+            "content helper retains imported hashes in Editor and update counts in Player");
         var allowed=new[]{"GetInstanceID","baseColorMap","normalMap","maskMap"};
         Check(Regex.Matches(fingerprint,@"\blayer\.(\w+)").Cast<Match>().All(m=>allowed.Contains(m.Groups[1].Value))&&
             !fingerprint.Contains("JsonUtility")&&!fingerprint.Contains("SurfaceHash"),"fingerprint excludes tint, strength, tiling and other scalar surface settings");

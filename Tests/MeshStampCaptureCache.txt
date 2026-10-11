@@ -1,0 +1,77 @@
+Mesh-stamp editor capture cache (2026-10-10)
+
+Scope: editor-only geometry capture in LTEditorEngine.Tick. No vegetation settings,
+rendering paths, shaders, scene assets, package versions or quality settings changed.
+No standalone performance, streaming or memory checks were resumed.
+
+Each LTWorld state retains at most one geometry snapshot per encountered mesh stamp.
+The key includes source identity, dirty revision, vertex/index/submesh counts, exact
+mesh-to-world matrix and the existing asset dependency hash. Settings are captured
+fresh into a NEW Stamp every poll: blend/cut/LOD edits must not be hidden by a geometry
+cache hit. Build-specific contact segments and cut rows are never shared.
+
+Unchanged hits skip reading source arrays, transforming/welding vertices and extracting
+contact faces/edges. A content audit every >=1 second of polling compares vertices and
+all submesh indices using reusable buffers. It detects same-count geometry writes that
+did not mark the source dirty. Such unannounced changes may take up to the next audit
+plus editor scheduling to appear. Exact source content is folded into the stamp signature
+so an audit-detected change also dirties output, rather than only replacing the cache.
+
+Undo clears the cache. Reimports use asset dependency changes. Manual Apply/Refresh,
+scene-save flushing and full rebuild all capture afresh. Disabled/removed stamps are
+pruned after capture; disabled worlds, play entry and assembly shutdown clear entries.
+Read-only preview captures bypass the cache. Unreadable sources cannot use stale hits.
+The retained array payload budget is 64 MiB per world; oversized/full-cache inputs still
+work uncached. This is not a total-memory limit: working builds, entry overhead and shared
+audit scratch buffers are additional. Old snapshots remain valid for in-flight builds.
+
+Profiler markers:
+  LT.Editor.Capture
+  LT.Editor.Detect
+  LT.Editor.MeshStamp.Geometry
+  LT.Editor.MeshStamp.CacheHit
+  LT.Editor.MeshStamp.CacheMissBuild
+  LT.Editor.MeshStamp.ContentAudit
+Whole Tick still performs other polling, JSON signatures, density/layout checks and
+painting. Zero allocation in the pure cache test does NOT mean zero allocation in Tick.
+
+Verification:
+- dotnet C# editor build: PASS, 0 errors; existing project warnings remain.
+- --mesh-stamp-cache: PASS 2031 assertions in v1, 200 exact legacy geometry fixtures,
+  source/key/content invalidation, immutable output, pruning, retention budget and
+  zero allocation across 10000 warm pure-cache cycles.
+- --boundary-invalidation: PASS 4938 checks.
+- --stamp-emitter: PASS 398 exact legacy comparisons and 60 LOD0 prefetch checks.
+- --rock-joint-seam: PASS managed seam/band/topology checks.
+- --road-shoulder-regressions: PASS joining, height kernels, foundations, gizmos,
+  dimension handles and road network checks.
+- --rock-terrain-lod: FAIL at RockTerrainLODChecks.cs:31. Its text assertion expects
+  "split-rock-v3-band-lod:", whereas the source already used
+  "split-rock-v7-lod-before-atlas:" before this change. Unrelated assertion left intact;
+  do not describe the full regression suite as green.
+
+Native validation menu (not run by the agent):
+  Tools > Local Terrain > Validate Mesh Stamp Capture Cache (no scene changes)
+Current log tag: [Mesh Stamp Capture Cache v2]
+Runs actual cached/cold Capture on owned preview objects; checks settings, transforms,
+mesh replacement/revision/audit, source immutability, removal and unreadable input.
+Hashes relevant source/settings/open scene files and checks scene dirty/root counts.
+Does not save assets, operate the user's Undo history or reimport user meshes.
+Actual Undo/reimport UI behaviour and live-frame performance still require Unity checks.
+
+Native v1 was run by the user and failed at "Replacement mesh not captured". The
+replacement fixture carried HideAndDontSave, which intentionally prevents adoption
+as a source. Earlier native assertions completed; the full test did not pass.
+v2 corrects only the fixture: it first verifies that a generated preview is rejected
+without dirtying the stamp, then assigns a separately owned replacement without the
+DontSaveInEditor flag. Both meshes are destroyed in finally; neither is saved.
+Production source-selection protection is unchanged. v2 native execution is pending.
+v2 C# build: PASS, 0 errors / 3 warnings. Managed --mesh-stamp-cache: PASS 2034
+assertions. Production engine/cache source, TerrainTest.unity and both package manifests
+have identical hashes before and after this fixture-only correction.
+
+After native validation, record another Scene View flight with the existing
+Tools > Local Terrain > Frame Profiler (5 seconds), after terrain updates have settled.
+Compare the same route/settings, Tick spikes/GC and the new Capture/Geometry markers.
+The October 9 baseline was partial and predates later road edits; a strict cache-only
+speedup percentage cannot be inferred from that baseline alone.
